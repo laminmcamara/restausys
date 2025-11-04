@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <h1>Clock In/Out</h1>
+    <form method="post" action="{% url 'core:clock_in_out' %}">
+        {% csrf_token %}
+        <button type="submit">Toggle Attendance Status</button>
+    </form>
+</div>
+{% endblock %}

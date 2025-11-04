@@ -1,0 +1,89 @@
+{% extends 'core/base.html' %}
+{% load static %}
+{% block title %}Manager Dashboard{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Manager Dashboard</h1>
+
+<!-- Date Filter Form -->
+<form method="GET" class="mb-4">
+    <div class="form-row">
+        <div class="form-group col-md-5">
+            <label for="start_date">Start Date</label>
+            <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
+        </div>
+        <div class="form-group col-md-5">
+            <label for="end_date">End Date</label>
+            <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
+        </div>
+        <div class="form-group col-md-2">
+            <label>&nbsp;</label>
+            <button type="submit" class="btn btn-primary form-control">Filter</button>
+        </div>
+    </div>
+</form>
+
+
+<div class="row">
+    <div class="col-md-6">
+        <h2>Sales Data</h2>
+        <canvas id="salesChart"></canvas>
+    </div>
+    <div class="col-md-6">
+        <h2>Inventory Levels</h2>
+        <ul class="list-group">
+            {% for item in inventory_levels %}
+                <li class="list-group-item">{{ item.item_name }}: {{ item.quantity }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-12">
+        <h2>Staff Performance</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Staff Member</th>
+                    <th>Performance Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for staff in staff_performance %}
+                    <tr>
+                        <td>{{ staff.staff_member }}</td>
+                        <td>{{ staff.performance_score }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    const salesChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ sales_data.labels|safe }},
+            datasets: [{
+                label: 'Sales Amount',
+                data: {{ sales_data.values|safe }},
+                borderColor: 'rgba(75, 192, 192, 1)',
+                borderWidth: 2,
+                fill: false
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

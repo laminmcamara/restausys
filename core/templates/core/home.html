@@ -1,0 +1,149 @@
+{% extends 'core/base.html' %}
+{% load static %}
+{% block title %}Home - Restaurant Management System{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
+        <div class="text-center text-md-start">
+            <h1 class="display-4">Welcome back, Lamin!</h1>
+            <p class="lead text-muted">Here are your available actions. What would you like to do today?</p>
+        </div>
+        <a href="{% url 'core:logout' %}" class="btn btn-outline-danger"><i class="bi bi-box-arrow-right"></i> Logout</a>
+    </div>
+    
+    <div class="d-flex justify-content-end align-items-center mb-4">
+        <div class="form-check form-switch edit-mode-toggle">
+            <input class="form-check-input" type="checkbox" role="switch" id="editModeToggle">
+            <label class="form-check-label" for="editModeToggle">Enable Editing</label>
+        </div>
+    </div>
+
+    <div class="row" id="dashboard-cards">
+        <!-- My Dashboard -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-person-circle" style="font-size: 3rem; color: #007bff;"></i>
+                    <h5 class="card-title mt-3" data-editable>My Dashboard</h5>
+                    <p class="card-text" data-editable>View your personal information and upcoming shifts.</p>
+                    <a href="{% url 'core:user_dashboard' %}" class="btn btn-primary mt-auto">Go to Dashboard</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Staff Chat -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-chat-dots-fill" style="font-size: 3rem; color: #28a745;"></i>
+                    <h5 class="card-title mt-3" data-editable>Staff Chat</h5>
+                    <p class="card-text" data-editable>Communicate with other staff members in real-time.</p>
+                    <a href="{% url 'core:chat_room' %}" class="btn btn-success mt-auto">Open Chat</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Time Clock -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-clock-history" style="font-size: 3rem; color: #dc3545;"></i>
+                    <h5 class="card-title mt-3" data-editable>Time Clock</h5>
+                    <p class="card-text" data-editable>Manage your work time by clocking in and out.</p>
+                    <a href="{% url 'core:clock' %}" class="btn btn-danger mt-auto">Open Time Clock</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manager Dashboard -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm border-warning">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-speedometer2" style="font-size: 3rem; color: #ffc107;"></i>
+                    <h5 class="card-title mt-3" data-editable>Manager Dashboard</h5>
+                    <p class="card-text" data-editable>Get a high-level overview of restaurant operations.</p>
+                    <a href="{% url 'core:manager_dashboard' %}" class="btn btn-warning mt-auto">View Admin Stats</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manage Shifts -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm border-info">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-calendar-week-fill" style="font-size: 3rem; color: #17a2b8;"></i>
+                    <h5 class="card-title mt-3" data-editable>Manage Shifts</h5>
+                    <p class="card-text" data-editable>Create, assign, and edit employee shifts.</p>
+                    <a href="{% url 'core:manage_shifts' %}" class="btn btn-info mt-auto">Go to Shift Planner</a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Menu Management (Placeholder, not defined in urls.py) -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm border-success">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-journal-richtext" style="font-size: 3rem; color: #198754;"></i>
+                    <h5 class="card-title mt-3" data-editable>Menu Management</h5>
+                    <p class="card-text" data-editable>Update menu items, categories, and pricing.</p>
+                    <!-- Placeholder URL until implemented -->
+                    <a href="#" class="btn btn-success mt-auto disabled">Edit Menu</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Inventory -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm border-primary">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-box-seam" style="font-size: 3rem; color: #0d6efd;"></i>
+                    <h5 class="card-title mt-3" data-editable>Inventory</h5>
+                    <p class="card-text" data-editable>Track stock levels, manage suppliers, and reduce waste.</p>
+                    <a href="{% url 'core:inventory_list' %}" class="btn btn-primary mt-auto">Manage Inventory</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Kitchen Display System -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-display" style="font-size: 3rem; color: #6f42c1;"></i>
+                    <h5 class="card-title mt-3" data-editable>Kitchen Display System</h5>
+                    <p class="card-text" data-editable>View active orders for the kitchen staff.</p>
+                    <a href="{% url 'core:kds' %}" class="btn btn-outline-dark mt-auto">Open KDS</a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Point of Sale (not yet defined in urls.py) -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-cash-coin" style="font-size: 3rem; color: #20c997;"></i>
+                    <h5 class="card-title mt-3" data-editable>Point of Sale (POS)</h5>
+                    <p class="card-text" data-editable>Process new orders and customer payments.</p>
+                    <a href="#" class="btn btn-outline-success mt-auto disabled">Launch POS</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Customer Display -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card h-100 text-center shadow-sm">
+                <div class="card-body d-flex flex-column">
+                    <i class="bi bi-tv" style="font-size: 3rem; color: #fd7e14;"></i>
+                    <h5 class="card-title mt-3" data-editable>Customer Display</h5>
+                    <p class="card-text" data-editable>Show order statuses to waiting customers.</p>
+                    <a href="{% url 'core:customer_display' %}" class="btn btn-outline-warning mt-auto">Open Display</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="alert alert-secondary mt-4 text-center" role="alert">
+        System Info: We currently have <strong>42</strong> active user profiles.
+    </div>
+</div>
+{% endblock %}

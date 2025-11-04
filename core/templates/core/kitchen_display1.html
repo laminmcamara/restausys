@@ -1,0 +1,55 @@
+{% load static %}
+{% extends 'core/base.html' %}
+
+{% block title %}Kitchen Display - Restaurant Management System{% endblock %}
+
+{% block content %}
+<div id="orders">
+    {% if tickets %}
+        {% for ticket in tickets %}
+            <div class="order">
+                Order ID: {{ ticket.order_item.id }}<br> <!-- Accessing the OrderItem ID -->
+                Table: {{ ticket.order_item.table.number }}<br> <!-- Assuming OrderItem has a related Table -->
+                Status: {{ ticket.get_status_display }}<br>
+                Created At: {{ ticket.created_at }}<br>
+                {% if ticket.status == ticket.Status.PENDING %}
+                    <button class="complete-button" data-ticket-id="{{ ticket.id }}">Complete</button>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No tickets available.</p>
+    {% endif %}
+</div>
+
+
+<!-- WebSocket JavaScript -->
+<script>
+    // WebSocket for Kitchen Display Orders
+    const orderSocket = new WebSocket('ws://' + window.location.host + '/ws/orders/');
+
+    orderSocket.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        updateOrderDisplay(data);
+    };
+
+    orderSocket.onclose = function(e) {
+        console.error('Order WebSocket closed unexpectedly');
+    };
+
+    function updateOrderDisplay(data) {
+        const orderElement = document.getElementById(`order-${data.id}`);
+        if (orderElement) {
+            orderElement.querySelector('.status').innerText = data.status;
+        } else {
+            // Optionally handle new orders if needed
+            const orderList = document.getElementById('orderList');
+            const newOrderElement = document.createElement('li');
+            newOrderElement.id = `order-${data.id}`;
+            newOrderElement.className = 'list-group-item d-flex justify-content-between align-items-center';
+            newOrderElement.innerHTML = `Order ${data.id} - Status: <span class="status">${data.status}</span>`;
+            orderList.appendChild(newOrderElement);
+        }
+    }
+</script>
+{% endblock %}

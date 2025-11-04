@@ -1,0 +1,51 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="container">
+    <h1>Point of Sale</h1>
+    <form id="pos-form">
+        <label for="item">Item:</label>
+        <input type="text" id="item" name="item" required>
+        
+        <label for="quantity">Quantity:</label>
+        <input type="number" id="quantity" name="quantity" required>
+
+        <button type="submit">Add to Cart</button>
+    </form>
+    
+    <h2>Cart</h2>
+    <table id="cart">
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Quantity</th>
+                <th>Price</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Cart items will be dynamically added here -->
+        </tbody>
+    </table>
+
+    <h2>Total: <span id="total">0.00</span></h2>
+    <button id="checkout">Checkout</button>
+</div>
+
+<script>
+    // JavaScript for handling cart functionality
+    document.getElementById('pos-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const item = document.getElementById('item').value;
+        const quantity = document.getElementById('quantity').value;
+
+        // Here you would typically send the data to the server
+        // For now, we will just log it to the console
+        console.log(`Item: ${item}, Quantity: ${quantity}`);
+        
+        // Add to cart logic would go here
+    });
+
+    // Additional JavaScript for handling checkout can be added
+</script>
+{% endblock %}

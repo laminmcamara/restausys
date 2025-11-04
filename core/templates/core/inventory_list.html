@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <h1>Inventory List</h1>
+    
+    {% if items %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Item Name</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                    <th>Low Stock Threshold</th>
+                    <th>Last Updated</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                    <tr class="{% if item.is_low_stock %}low-stock{% endif %}">
+                        <td>{{ item.name }}</td>
+                        <td>{{ item.quantity }}</td>
+                        <td>{{ item.unit }}</td>
+                        <td>{{ item.low_stock_threshold }}</td>
+                        <td>{{ item.last_updated|date:"Y-m-d H:i:s" }}</td>
+                        <td>
+                            {% if item.is_low_stock %}
+                                <span class="alert">Low Stock</span>
+                            {% else %}
+                                <span class="ok">In Stock</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No inventory items available.</p>
+    {% endif %}
+</div>
+
+<style>
+    .container {
+        max-width: 800px;
+        margin: auto;
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+        text-align: center;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+    th, td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+    th {
+        background-color: #f2f2f2;
+    }
+    .low-stock {
+        background-color: #ffdddd; /* Light red for low stock items */
+    }
+    .alert {
+        color: red;
+        font-weight: bold;
+    }
+    .ok {
+        color: green;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}

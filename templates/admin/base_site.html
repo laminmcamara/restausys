@@ -1,0 +1,13 @@
+<!-- templates/admin/base_site.html -->
+
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}{{ title }} - My Admin{% endblock %}
+{% block branding %}
+    <h1 id="site-name">My Admin</h1>
+{% endblock %}
+{% block extrahead %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'django_unfold/css/style.css' %}">
+{% endblock %}

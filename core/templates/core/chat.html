@@ -1,0 +1,48 @@
+<!-- core/templates/core/chat.html -->
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Room</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #messages {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 300px;
+            overflow-y: scroll;
+        }
+        #message-input {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Chat Room</h1>
+    <div id="messages">
+        <!-- Chat messages will be displayed here -->
+    </div>
+    <div id="message-input">
+        <input type="text" id="message" placeholder="Type your message here..." />
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+        function sendMessage() {
+            const messageInput = document.getElementById('message');
+            const message = messageInput.value;
+            if (message) {
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML += `<div>${message}</div>`;
+                messageInput.value = '';  // Clear the input field
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;  // Scroll to the bottom
+            }
+        }
+    </script>
+</body>
+</html>
