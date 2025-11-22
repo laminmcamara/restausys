@@ -1,0 +1,41 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Manage Shifts{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <h1>Work Shifts</h1>
+        <p>Define and manage standard work shifts.</p>
+        <a href="{% url 'core:shift-create' %}" class="btn btn-primary mb-3">Create New Shift</a>
+
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Start Time</th>
+                    <th>End Time</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for shift in shift_list %}
+                <tr>
+                    <td>{{ shift.name }}</td>
+                    <!-- Use standard cross-platform time formatting -->
+                    <td>{{ shift.start_time|time:"h:i A" }}</td>
+                    <td>{{ shift.end_time|time:"h:i A" }}</td>
+                    <td>
+                        <a href="{% url 'core:shift-update' pk=shift.pk %}" class="btn btn-sm btn-info">Edit</a>
+                        <a href="{% url 'core:shift-delete' pk=shift.pk %}" class="btn btn-sm btn-danger">Delete</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4">No shifts defined yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <a href="{% url 'core:home' %}" class="btn btn-secondary">Back to Home</a>
+    </div>
+{% endblock %}

@@ -1,0 +1,185 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Order #{{ order.id|slice:":8" }} Details{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 p-6">
+  <div class="max-w-5xl mx-auto">
+    <!-- HEADER -->
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold text-gray-800">
+        Order Details – #{{ order.id|slice:":8" }}
+      </h1>
+      <div class="space-x-3">
+        <a href="{% url 'core:order-list' %}"
+           class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-md transition">
+          Back to List
+        </a>
+        <button id="printTicket" type="button"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md">
+          🖨 Print Ticket
+        </button>
+      </div>
+    </div>
+
+    <!-- ORDER SUMMARY -->
+    <div class="bg-white rounded-md shadow p-6 mb-8">
+      <div class="grid sm:grid-cols-2 gap-6">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-700 mb-2">Order Info</h2>
+          <ul class="text-sm text-gray-600 space-y-1">
+            <li>
+              <strong>Status:</strong>
+              <span id="orderStatus" class="font-semibold text-blue-700">
+                {{ order.get_status_display }}
+              </span>
+            </li>
+            <li><strong>Payment:</strong> {{ order.payment_method|title }}</li>
+            {% if order.table %}
+              <li><strong>Table:</strong> Table {{ order.table.number }}</li>
+            {% endif %}
+            <li><strong>Created:</strong> {{ order.created_at|date:"Y-m-d H:i" }}</li>
+            <li><strong>Last Update:</strong>
+              <span id="lastUpdated">{{ order.updated_at|date:"Y-m-d H:i" }}</span>
+            </li>
+          </ul>
+        </div>
+        <div class="flex flex-col justify-between">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-700 mb-2">Total</h2>
+            <p class="text-2xl font-bold text-indigo-600">
+              ${{ order.total|floatformat:2 }}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ITEMS -->
+    <div class="bg-white rounded-md shadow mb-8">
+      <table class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="px-4 py-3 text-left">Item</th>
+            <th class="px-4 py-3 text-left">Qty</th>
+            <th class="px-4 py-3 text-left">Price</th>
+            <th class="px-4 py-3 text-right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody id="orderItems" class="divide-y divide-gray-100">
+          {% for item in items %}
+            <tr>
+              <td class="px-4 py-3 font-medium text-gray-800">{{ item.menu_item.name }}</td>
+              <td class="px-4 py-3">{{ item.quantity }}</td>
+              <td class="px-4 py-3">${{ item.price|floatformat:2 }}</td>
+              <td class="px-4 py-3 text-right">${{ item.price|floatformat:2|add:item.quantity|floatformat:2 }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="4" class="text-center py-5 text-gray-400 italic">No items.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ACTIONS -->
+    <div class="flex flex-wrap justify-end gap-3">
+      {% if order.status != "COMPLETED" %}
+        <form method="post" action="{% url 'core:order-complete' order.id %}">
+          {% csrf_token %}
+          <button type="submit"
+                  class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-md">
+            Mark as Completed
+          </button>
+        </form>
+      {% endif %}
+      <form method="post" action="{% url 'core:order-delete' order.id %}">
+        {% csrf_token %}
+        <button type="submit"
+                class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-md">
+          Delete
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- PRINTABLE TICKET TEMPLATE -->
+<div id="printableTicket" class="hidden">
+  <style>
+    body { font-family: sans-serif; }
+    .ticket { width: 300px; }
+    .ticket h2 { text-align: center; }
+    .ticket table { width: 100%; border-collapse: collapse; }
+    .ticket td { padding: 4px 0; font-size: 12px; }
+    .ticket tfoot td { border-top: 1px dashed #000; font-weight: bold; }
+  </style>
+  <div class="ticket">
+    <h2>{{ order.restaurant_name|default:"Restaurant POS" }}</h2>
+    <p><strong>Order #{{ order.id|slice:":8" }}</strong><br>
+       {{ order.created_at|date:"Y-m-d H:i" }}</p>
+    <table>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.menu_item.name }}</td>
+          <td>x{{ item.quantity }}</td>
+          <td style="text-align:right">${{ item.price|floatformat:2 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2">Total</td>
+          <td style="text-align:right">${{ order.total|floatformat:2 }}</td>
+        </tr>
+      </tfoot>
+    </table>
+    <p style="text-align:center">Thank you!</p>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------ -->
+<!-- 🧠 WebSocket + Print Integration -->
+<!-- ------------------------------------------------------------ -->
+<script>
+  // 🖨 PRINT TICKET
+  document.getElementById("printTicket").addEventListener("click", () => {
+    const printContent = document.getElementById("printableTicket").innerHTML;
+    const win = window.open("", "Print-Window");
+    win.document.open();
+    win.document.write(`
+      <html><head><title>Order Ticket</title></head><body onload="window.print();window.close()">${printContent}</body></html>
+    `);
+    win.document.close();
+  });
+
+  // 🔌 WebSocket LIVE UPDATES
+  const orderId = "{{ order.id }}";
+  const statusEl = document.getElementById("orderStatus");
+  const updatedEl = document.getElementById("lastUpdated");
+
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const socketUrl = `${protocol}://${window.location.host}/ws/orders/${orderId}/`;
+  const socket = new WebSocket(socketUrl);
+
+  socket.onopen = () => console.info("✅ Connected to Order WebSocket");
+  socket.onclose = () => {
+    console.warn("🔌 WebSocket closed — retrying in 3s");
+    setTimeout(() => window.location.reload(), 3000);
+  };
+
+  socket.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    console.log("📦 Status update:", data);
+    statusEl.textContent = data.status_display;
+    updatedEl.textContent = data.updated_at;
+
+    // UI feedback animation
+    statusEl.classList.add("bg-yellow-100", "transition");
+    setTimeout(() => statusEl.classList.remove("bg-yellow-100"), 800);
+  };
+</script>
+{% endblock %}

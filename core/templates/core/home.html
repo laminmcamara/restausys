@@ -1,149 +1,126 @@
-{% extends 'core/base.html' %}
 {% load static %}
-{% block title %}Home - Restaurant Management System{% endblock %}
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Restaurant Dashboard</title>
 
-{% block content %}
-<div class="container">
-    <div class="d-flex justify-content-between align-items-center flex-wrap mb-4">
-        <div class="text-center text-md-start">
-            <h1 class="display-4">Welcome back, Lamin!</h1>
-            <p class="lead text-muted">Here are your available actions. What would you like to do today?</p>
-        </div>
-        <a href="{% url 'core:logout' %}" class="btn btn-outline-danger"><i class="bi bi-box-arrow-right"></i> Logout</a>
+  <!-- TailwindCSS -->
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.0/dist/tailwind.min.css" rel="stylesheet">
+
+  <style>
+    body {
+      transition: background-color .3s, color .3s;
+      font-size: .875rem; /* smaller base font */
+    }
+    .card {
+      background-color: #fff;
+      border-radius: .5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      transition: transform .2s;
+    }
+    .card:hover { transform: translateY(-2px); }
+    .dark .card { background-color: #1f2937; color: #d1d5db; }
+  </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+
+  <!-- Header -->
+  <header class="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+      <span class="text-xl">🍽️</span>
+      <h1 class="text-lg font-semibold">Dashboard</h1>
     </div>
-    
-    <div class="d-flex justify-content-end align-items-center mb-4">
-        <div class="form-check form-switch edit-mode-toggle">
-            <input class="form-check-input" type="checkbox" role="switch" id="editModeToggle">
-            <label class="form-check-label" for="editModeToggle">Enable Editing</label>
-        </div>
+    <div class="flex items-center space-x-3">
+      {% if user.is_authenticated %}
+        <span class="text-sm">Hi, {{ user.username }}</span>
+        <a href="{% url 'logout' %}" class="text-red-500 hover:underline text-sm">Logout</a>
+      {% else %}
+        <a href="{% url 'login' %}" class="text-blue-500 hover:underline text-sm">Login</a>
+      {% endif %}
+      <button id="theme-toggle" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+        <span id="icon-moon" class="hidden">🌙</span>
+        <span id="icon-sun" class="hidden">☀️</span>
+      </button>
     </div>
+  </header>
 
-    <div class="row" id="dashboard-cards">
-        <!-- My Dashboard -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-person-circle" style="font-size: 3rem; color: #007bff;"></i>
-                    <h5 class="card-title mt-3" data-editable>My Dashboard</h5>
-                    <p class="card-text" data-editable>View your personal information and upcoming shifts.</p>
-                    <a href="{% url 'core:user_dashboard' %}" class="btn btn-primary mt-auto">Go to Dashboard</a>
-                </div>
-            </div>
-        </div>
+  <!-- Main -->
+  <main class="max-w-4xl mx-auto px-4 py-8 space-y-8">
 
-        <!-- Staff Chat -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-chat-dots-fill" style="font-size: 3rem; color: #28a745;"></i>
-                    <h5 class="card-title mt-3" data-editable>Staff Chat</h5>
-                    <p class="card-text" data-editable>Communicate with other staff members in real-time.</p>
-                    <a href="{% url 'core:chat_room' %}" class="btn btn-success mt-auto">Open Chat</a>
-                </div>
-            </div>
-        </div>
+    <!-- Hero -->
+    <section class="text-center">
+      <h2 class="text-2xl font-bold mb-1">Welcome to Your Control Center</h2>
+      <p class="text-gray-600 dark:text-gray-400">Quickly access POS, Kitchen & Customer displays in one place.</p>
+    </section>
 
-        <!-- Time Clock -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-clock-history" style="font-size: 3rem; color: #dc3545;"></i>
-                    <h5 class="card-title mt-3" data-editable>Time Clock</h5>
-                    <p class="card-text" data-editable>Manage your work time by clocking in and out.</p>
-                    <a href="{% url 'core:clock' %}" class="btn btn-danger mt-auto">Open Time Clock</a>
-                </div>
-            </div>
-        </div>
+    <!-- Quick Actions -->
+    <section>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- POS -->
+        <a href="{% url 'core:pos' %}" class="card p-4 flex flex-col items-start border-l-4 border-blue-500">
+          <div class="text-2xl mb-2">💳</div>
+          <h3 class="font-medium mb-1">POS Terminal</h3>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">Take new orders</p>
+        </a>
+        <!-- Kitchen -->
+        <a href="{% url 'core:kitchen_display' %}" class="card p-4 flex flex-col items-start border-l-4 border-yellow-500">
+          <div class="text-2xl mb-2">👨‍🍳</div>
+          <h3 class="font-medium mb-1">Kitchen Display</h3>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">Track tickets</p>
+        </a>
+        <!-- Customer -->
+        <a href="{% url 'core:customer_display' %}" class="card p-4 flex flex-col items-start border-l-4 border-green-500">
+          <div class="text-2xl mb-2">🧾</div>
+          <h3 class="font-medium mb-1">Customer Display</h3>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">Show ready orders</p>
+        </a>
+        <!-- Reports -->
+        <a href="#" class="card p-4 flex flex-col items-start border-l-4 border-purple-500">
+          <div class="text-2xl mb-2">📊</div>
+          <h3 class="font-medium mb-1">Reports</h3>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">View analytics</p>
+        </a>
+      </div>
+    </section>
 
-        <!-- Manager Dashboard -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm border-warning">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-speedometer2" style="font-size: 3rem; color: #ffc107;"></i>
-                    <h5 class="card-title mt-3" data-editable>Manager Dashboard</h5>
-                    <p class="card-text" data-editable>Get a high-level overview of restaurant operations.</p>
-                    <a href="{% url 'core:manager_dashboard' %}" class="btn btn-warning mt-auto">View Admin Stats</a>
-                </div>
-            </div>
-        </div>
+    <!-- Overview -->
+    <section class="card p-4">
+      <h3 class="font-semibold mb-1">System Overview</h3>
+      <p class="text-gray-600 dark:text-gray-300 text-sm">
+        Real-time updates powered by Django Channels across all modules.
+      </p>
+    </section>
 
-        <!-- Manage Shifts -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm border-info">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-calendar-week-fill" style="font-size: 3rem; color: #17a2b8;"></i>
-                    <h5 class="card-title mt-3" data-editable>Manage Shifts</h5>
-                    <p class="card-text" data-editable>Create, assign, and edit employee shifts.</p>
-                    <a href="{% url 'core:manage_shifts' %}" class="btn btn-info mt-auto">Go to Shift Planner</a>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Menu Management (Placeholder, not defined in urls.py) -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm border-success">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-journal-richtext" style="font-size: 3rem; color: #198754;"></i>
-                    <h5 class="card-title mt-3" data-editable>Menu Management</h5>
-                    <p class="card-text" data-editable>Update menu items, categories, and pricing.</p>
-                    <!-- Placeholder URL until implemented -->
-                    <a href="#" class="btn btn-success mt-auto disabled">Edit Menu</a>
-                </div>
-            </div>
-        </div>
+  </main>
 
-        <!-- Inventory -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm border-primary">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-box-seam" style="font-size: 3rem; color: #0d6efd;"></i>
-                    <h5 class="card-title mt-3" data-editable>Inventory</h5>
-                    <p class="card-text" data-editable>Track stock levels, manage suppliers, and reduce waste.</p>
-                    <a href="{% url 'core:inventory_list' %}" class="btn btn-primary mt-auto">Manage Inventory</a>
-                </div>
-            </div>
-        </div>
+  <!-- Footer -->
+  <footer class="text-center py-4 text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700 text-xs">
+    © {% now "Y" %} Restaurant Management System
+  </footer>
 
-        <!-- Kitchen Display System -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-display" style="font-size: 3rem; color: #6f42c1;"></i>
-                    <h5 class="card-title mt-3" data-editable>Kitchen Display System</h5>
-                    <p class="card-text" data-editable>View active orders for the kitchen staff.</p>
-                    <a href="{% url 'core:kds' %}" class="btn btn-outline-dark mt-auto">Open KDS</a>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Point of Sale (not yet defined in urls.py) -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-cash-coin" style="font-size: 3rem; color: #20c997;"></i>
-                    <h5 class="card-title mt-3" data-editable>Point of Sale (POS)</h5>
-                    <p class="card-text" data-editable>Process new orders and customer payments.</p>
-                    <a href="#" class="btn btn-outline-success mt-auto disabled">Launch POS</a>
-                </div>
-            </div>
-        </div>
+  <script>
+    // Persistent dark/light mode
+    (function() {
+      const btn = document.getElementById('theme-toggle');
+      const iconMoon = document.getElementById('icon-moon');
+      const iconSun  = document.getElementById('icon-sun');
 
-        <!-- Customer Display -->
-        <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 text-center shadow-sm">
-                <div class="card-body d-flex flex-column">
-                    <i class="bi bi-tv" style="font-size: 3rem; color: #fd7e14;"></i>
-                    <h5 class="card-title mt-3" data-editable>Customer Display</h5>
-                    <p class="card-text" data-editable>Show order statuses to waiting customers.</p>
-                    <a href="{% url 'core:customer_display' %}" class="btn btn-outline-warning mt-auto">Open Display</a>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="alert alert-secondary mt-4 text-center" role="alert">
-        System Info: We currently have <strong>42</strong> active user profiles.
-    </div>
-</div>
-{% endblock %}
+      function setTheme(dark) {
+        document.documentElement.classList.toggle('dark', dark);
+        iconMoon.classList.toggle('hidden', !dark);
+        iconSun.classList.toggle('hidden', dark);
+        localStorage.theme = dark ? 'dark' : 'light';
+      }
+
+      // Init
+      const saved = localStorage.theme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      setTheme(saved === 'dark');
+
+      btn.addEventListener('click', () => setTheme(!document.documentElement.classList.contains('dark')));
+    })();
+  </script>
+
+</body>
+</html>

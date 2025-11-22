@@ -1,0 +1,40 @@
+<!-- core/templates/core/clock_in_out.html -->
+
+{% extends 'core/base.html' %}
+
+{% block title %}Clock In/Out{% endblock %}
+
+{% block content %}
+    <h1>Clock In/Out</h1>
+
+    <!-- Display Django messages -->
+    {% if messages %}
+        <ul class="messages">
+            {% for message in messages %}
+                <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <div class="clock-status">
+        {% if not has_clocked_in %}
+            <p>You are currently **clocked out**.</p>
+            <form method="POST" action="{% url 'core:clock-in-out' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success">Clock In</button>
+            </form>
+        {% elif not has_clocked_out %}
+            <p>You are currently **clocked in** (since {{ clock_in_time|date:"h:i A" }}).</p>
+            <form method="POST" action="{% url 'core:clock-in-out' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-danger">Clock Out</button>
+            </form>
+        {% else %}
+            <p>You have **completed your shift** for today.</p>
+            <p>Clocked In: {{ clock_in_time|date:"h:i A" }}</p>
+            <p>Clocked Out: {{ clock_out_time|date:"h:i A" }}</p>
+        {% endif %}
+    </div>
+    
+    <a href="{% url 'core:user-dashboard' %}" class="btn btn-secondary mt-3">Go to Dashboard</a>
+{% endblock %}

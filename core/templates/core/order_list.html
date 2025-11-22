@@ -1,0 +1,121 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Order List{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 p-6">
+  <div class="max-w-7xl mx-auto">
+    <!-- HEADER -->
+    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-8">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-800">Orders</h1>
+        <p class="text-gray-500 mt-1 text-sm">Review, search, and track all recent orders.</p>
+      </div>
+      <a href="{% url 'core:pos' %}"
+         class="inline-flex items-center mt-4 sm:mt-0 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow hover:bg-indigo-700 transition">
+        + New Order
+      </a>
+    </div>
+
+    <!-- FILTER BAR -->
+    <form method="get" class="bg-white p-4 rounded-md shadow mb-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Search</label>
+        <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Order ID or Table #"
+               class="w-full rounded-md border-gray-300 focus:ring focus:ring-indigo-100 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Status</label>
+        <select name="status" class="w-full rounded-md border-gray-300 focus:ring focus:ring-indigo-100 text-sm">
+          <option value="">All</option>
+          {% for key, label in order_statuses %}
+            <option value="{{ key }}" {% if request.GET.status == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Payment Method</label>
+        <select name="payment" class="w-full rounded-md border-gray-300 focus:ring focus:ring-indigo-100 text-sm">
+          <option value="">All</option>
+          <option value="cash" {% if request.GET.payment == 'cash' %}selected{% endif %}>Cash</option>
+          <option value="credit_card" {% if request.GET.payment == 'credit_card' %}selected{% endif %}>Credit Card</option>
+          <option value="alipay" {% if request.GET.payment == 'alipay' %}selected{% endif %}>Alipay</option>
+          <option value="octopus" {% if request.GET.payment == 'octopus' %}selected{% endif %}>Octopus</option>
+          <option value="qr_code" {% if request.GET.payment == 'qr_code' %}selected{% endif %}>QR Code</option>
+        </select>
+      </div>
+      <div class="flex items-end">
+        <button type="submit"
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-md text-sm transition">
+          Apply Filters
+        </button>
+      </div>
+    </form>
+
+    <!-- ORDER TABLE -->
+    <div class="overflow-x-auto bg-white rounded-md shadow">
+      <table class="min-w-full text-sm text-gray-700 divide-y divide-gray-200">
+        <thead class="bg-gray-100 text-xs text-gray-600 uppercase">
+          <tr>
+            <th class="py-3 px-4 text-left font-semibold">Order ID</th>
+            <th class="py-3 px-4 text-left font-semibold">Created At</th>
+            <th class="py-3 px-4 text-left font-semibold">Table</th>
+            <th class="py-3 px-4 text-left font-semibold">Status</th>
+            <th class="py-3 px-4 text-left font-semibold">Payment</th>
+            <th class="py-3 px-4 text-right font-semibold">Total</th>
+            <th class="py-3 px-4 text-center font-semibold">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for order in orders %}
+            <tr class="hover:bg-gray-50 transition">
+              <td class="py-3 px-4 font-medium text-indigo-600">#{{ order.id|slice:":8" }}</td>
+              <td class="py-3 px-4">{{ order.created_at|date:"Y-m-d H:i" }}</td>
+              <td class="py-3 px-4">{% if order.table %}Table {{ order.table.number }}{% else %}-{% endif %}</td>
+              <td class="py-3 px-4">
+                <span class="
+                  px-2 py-1 rounded-full text-xs font-semibold
+                  {% if order.status == 'READY' %} bg-green-100 text-green-700
+                  {% elif order.status == 'PREPARING' %} bg-blue-100 text-blue-700
+                  {% elif order.status == 'PAID' %} bg-purple-100 text-purple-700
+                  {% else %} bg-yellow-100 text-yellow-700 {% endif %}
+                ">
+                  {{ order.get_status_display }}
+                </span>
+              </td>
+              <td class="py-3 px-4 text-gray-600">{{ order.payment_method|title }}</td>
+              <td class="py-3 px-4 text-right font-semibold">${{ order.total|floatformat:2 }}</td>
+              <td class="py-3 px-4 text-center">
+                <a href="{% url 'core:order-detail' order.id %}"
+                   class="text-indigo-600 hover:underline text-sm font-medium">View</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="7" class="py-6 text-center text-gray-500 italic">No orders found.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- PAGINATION (optional) -->
+    {% if is_paginated %}
+      <div class="flex justify-center mt-6 space-x-2">
+        {% if page_obj.has_previous %}
+          <a href="?page={{ page_obj.previous_page_number }}"
+             class="px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm">Previous</a>
+        {% endif %}
+        <span class="px-3 py-1 bg-indigo-600 text-white text-sm rounded">
+          Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+          <a href="?page={{ page_obj.next_page_number }}"
+             class="px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-100 text-sm">Next</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

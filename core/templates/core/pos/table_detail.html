@@ -1,0 +1,8 @@
+{% extends "core/base.html" %}
+{% block content %}
+  <h2>Welcome to {{ table.restaurant.name }}</h2>
+  <p>You are at Table {{ table.table_number }}</p>
+  <a href="{% url 'core:pos_order_screen' table.id %}">
+    Start your order
+  </a>
+{% endblock %}

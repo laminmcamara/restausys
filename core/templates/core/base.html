@@ -2,199 +2,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Restaurant Management{% endblock %}</title>
-    
-    <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" integrity="sha384-JcKb8q3iqJ61gNV9KGb8thSsNjpSL0n8PARn9HuZOnIxN0hoP+VmmDGMN5t9UJ0Z" crossorigin="anonymous">
-    
-    <!-- Bootstrap Icons -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    
-    <!-- Your Custom CSS -->
-    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Restaurant Management{% endblock %}</title>
 
-    <style>
-        /* Custom styles for better UI */
-        body {
-            background-color: #f8f9fa;
-        }
-        .navbar {
-            box-shadow: 0 2px 4px rgba(0,0,0,.1);
-        }
-        .navbar-brand svg {
-            width: 32px;
-            height: 32px;
-            margin-right: 8px;
-        }
-        /* Add a small margin to icons within nav links and dropdowns */
-        .nav-link .bi, .dropdown-item .bi {
-            margin-right: 8px;
-            vertical-align: text-bottom;
-        }
-        .container {
-            padding-top: 20px;
-            padding-bottom: 20px;
-        }
-    </style>
+  <!-- Bootstrap 5 -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+
+  <!-- Bootstrap Icons -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    rel="stylesheet"
+  />
+
+  <link href="{% static 'css/style.css' %}" rel="stylesheet" />
+  {% block extra_head %}{% endblock %}
 </head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-light bg-white sticky-top">
-        <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="{% url 'core:home' %}">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" class="bi bi-card-checklist" viewBox="0 0 16 16">
-                    <path d="M14.5 3a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h13zm-13-1A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2h-13z"/>
-                    <path d="M7 5.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm-1.496-.854a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708l.146.147 1.146-1.147a.5.5 0 0 1 .708 0zM7 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm-1.496-.854a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 0 1 .708-.708l.146.147 1.146-1.147a.5.5 0 0 1 .708 0z"/>
-                </svg>
-                <strong>New World RestaurantSys</strong>
+
+<body class="bg-light d-flex flex-column min-vh-100">
+  <!-- ================= NAVBAR ================= -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow">
+    <div class="container-fluid">
+      <a class="navbar-brand d-flex align-items-center" href="{% url 'core:pos_dashboard' %}">
+        🍴 <strong>RestaurantSys</strong>
+      </a>
+
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item"><a class="nav-link" href="{% url 'core:pos_dashboard' %}">
+            <i class="bi bi-cash-register"></i> POS
+          </a></li>
+
+          <li class="nav-item"><a class="nav-link" href="{% url 'core:kds_screen' %}">
+            <i class="bi bi-display"></i> KDS
+          </a></li>
+
+          <li class="nav-item"><a class="nav-link" href="{% url 'core:inventory-list' %}">
+            <i class="bi bi-box-seam"></i> Inventory
+          </a></li>
+
+          {% if user.is_authenticated %}
+            <li class="nav-item"><a class="nav-link" href="{% url 'core:order-list' %}">
+              <i class="bi bi-receipt"></i> Orders
+            </a></li>
+
+            <li class="nav-item"><a class="nav-link" href="{% url 'core:chat-room' %}">
+              <i class="bi bi-chat-dots"></i> Chat
+            </a></li>
+
+            {% if user.profile.role == "manager" %}
+              <li class="nav-item"><a class="nav-link" href="{% url 'core:manager-dashboard' %}">
+                <i class="bi bi-bar-chart-line-fill"></i> Manager
+              </a></li>
+            {% endif %}
+          {% endif %}
+        </ul>
+
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          {% if user.is_staff %}
+          <li class="nav-item">
+            <a class="nav-link text-warning" href="/admin/">
+              <i class="bi bi-gear-wide-connected"></i> Admin
             </a>
-            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav mr-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'core:home' %}"><i class="bi bi-house-door-fill"></i>Home</a>
-                    </li>
+          </li>
+          {% endif %}
 
-                    {% if user.is_authenticated %}
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'core:user_dashboard' %}"><i class="bi bi-person-circle"></i>My Dashboard</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'core:chat_room' %}"><i class="bi bi-chat-dots-fill"></i>Staff Chat</a>
-                        </li>
+          {% if user.is_authenticated %}
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+              <i class="bi bi-person-circle"></i> {{ user.username }}
+            </a>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><a class="dropdown-item" href="#"><i class="bi bi-person"></i> Profile</a></li>
+              <li><a class="dropdown-item" href="#"><i class="bi bi-gear"></i> Settings</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li>
+                <form method="post" action="{% url 'logout' %}" class="px-3">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-outline-danger w-100">
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                  </button>
+                </form>
+              </li>
+            </ul>
+          </li>
+          {% else %}
+            <li class="nav-item">
+              <a class="nav-link" href="{% url 'login' %}">
+                <i class="bi bi-box-arrow-in-right"></i> Login
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="btn btn-primary ms-2" href="{% url 'core:register' %}">
+                <i class="bi bi-person-plus"></i> Register
+              </a>
+            </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+  </nav>
 
-                        {% if user.profile.role == 'manager' %}
-                            <li class="nav-item">
-                                <a class="nav-link" href="{% url 'core:manager_dashboard' %}"><i class="bi bi-speedometer2"></i>Manager Dashboard</a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="{% url 'core:manage_shifts' %}"><i class="bi bi-calendar-week-fill"></i>Manage Shifts</a>
-                            </li>
-                        {% endif %}
-                        
-                        {% if user.profile.role == 'staff' %}
-                            <!-- Add any staff-specific links here in the future -->
-                        {% endif %}
-                    {% endif %}
-                </ul>
+  <!-- MAIN CONTENT -->
+  <main class="flex-grow-1 py-4">
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
 
-                <ul class="navbar-nav ml-auto">
-                    {% if user.is_authenticated %}
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#" id="userMenuDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                <i class="bi bi-person-fill-gear"></i> Hello, {{ user.username }}
-                            </a>
-                            <div class="dropdown-menu dropdown-menu-right" aria-labelledby="userMenuDropdown">
-                                <a class="dropdown-item" href="#"><i class="bi bi-person-badge"></i>Profile</a>
-                                <a class="dropdown-item" href="#"><i class="bi bi-gear-fill"></i>Settings</a>
-                                <div class="dropdown-divider"></div>
-                                <a class="dropdown-item text-danger" href="{% url 'core:logout' %}"><i class="bi bi-box-arrow-right"></i>Logout</a>
-                            </div>
-                        </li>
-                    {% else %}
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'core:login' %}"><i class="bi bi-box-arrow-in-right"></i>Login</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="btn btn-primary ml-2" href="{% url 'core:register' %}"><i class="bi bi-person-plus-fill"></i>Register</a>
-                        </li>
-                    {% endif %}
-                </ul>
+  <footer class="mt-auto bg-dark text-white-50 text-center py-3">
+    <small>&copy; {% now "Y" %} Ottoman Restaurant Management System</small>
+  </footer>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+    crossorigin="anonymous"></script>
+  {% block extra_scripts %}
+  {% if user.is_authenticated and user.profile.role == 'staff' or user.profile.role == 'manager' %}
+<script>
+  const chatSocket = new WebSocket(
+    (window.location.protocol === "https:" ? "wss://" : "ws://") +
+    window.location.host +
+    "/ws/chat/"
+  );
+
+  const appendChatMsg = (author, text) => {
+    // If chat widget not present, create one (global UI)
+    let box = document.getElementById("chat-widget");
+    if (!box) {
+      const div = document.createElement("div");
+      div.id = "chat-widget";
+      div.className = "position-fixed bottom-0 end-0 m-3";
+      div.style.width = "300px";
+      div.innerHTML = `
+        <div class="card shadow">
+          <div class="card-header bg-dark text-white py-1 px-2">
+            <i class="bi bi-chat-dots"></i> Staff Chat
+          </div>
+          <div id="chat-box-body" class="card-body bg-light" style="height:200px; overflow-y:auto;"></div>
+          <div class="card-footer p-1">
+            <div class="input-group input-group-sm">
+              <input id="chat-msg" class="form-control" placeholder="Type..." />
+              <button id="chat-send" class="btn btn-primary"><i class="bi bi-send-fill"></i></button>
             </div>
-        </div>
-    </nav>
+          </div>
+        </div>`;
+      document.body.appendChild(div);
 
-    <main class="container mt-4">
-        {% if messages %}
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                    {{ message }}
-                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-            {% endfor %}
-        {% endif %}
+      document.getElementById("chat-send").onclick = sendMsg;
+      document.getElementById("chat-msg").addEventListener("keypress", e => {
+        if (e.key === "Enter") sendMsg();
+      });
+    }
 
-        {% block content %}{% endblock %}
-    </main>
-    
-    <footer class="text-center mt-5 py-3 bg-light">
-        <p class="mb-0">&copy; {% now "Y" %} RestaurantSys. All Rights Reserved.</p>
-    </footer>
+    // add message
+    const body = document.getElementById("chat-box-body");
+    const m = document.createElement("div");
+    m.innerHTML = `<strong>${author}:</strong> ${text}`;
+    body.appendChild(m);
+    body.scrollTop = body.scrollHeight;
+  };
 
-    <!-- Bootstrap JS and dependencies -->
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js" integrity="sha384-IQsoLXl5PILFhosVNubq5LC7Qb9DXgDA9i+tQ8Zj3iwWAwPtgFTxbJ8NT4GN1R8p" crossorigin="anonymous"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js" integrity="sha384-B4gt1jrGC7Jh4AgTPSdUtOBvfO8shuf57BaghqFfPlYxofvL8/KUEfYiJOMMV+rV" crossorigin="anonymous"></script>
-    
-    <!-- Your Custom JS -->
-    <script src="{% static 'js/main.js' %}"></script>
+  const sendMsg = () => {
+    const input = document.getElementById("chat-msg");
+    const text = input.value.trim();
+    if (text) {
+      chatSocket.send(JSON.stringify({ message: text }));
+      input.value = "";
+    }
+  };
 
-    <!-- WebSocket JavaScript -->
-    <script>
-        // WebSocket for Orders
-        const orderSocket = new WebSocket('ws://' + window.location.host + '/ws/orders/');
+  chatSocket.onmessage = e => {
+    const data = JSON.parse(e.data);
+    appendChatMsg(data.user, data.message);
+  };
 
-        orderSocket.onmessage = function(e) {
-            const data = JSON.parse(e.data);
-            updateOrderDisplay(data);
-        };
-
-        orderSocket.onclose = function(e) {
-            console.error('Order WebSocket closed unexpectedly');
-        };
-
-        function updateOrderDisplay(data) {
-            const orderElement = document.getElementById(`order-${data.id}`);
-            if (orderElement) {
-                orderElement.querySelector('.status').innerText = data.status;
-            } else {
-                const orderList = document.getElementById('order-list');
-                const newOrderElement = document.createElement('div');
-                newOrderElement.id = `order-${data.id}`;
-                newOrderElement.innerHTML = `
-                    <h3>Order ${data.id}</h3>
-                    <p>Customer: ${data.customer_name}</p>
-                    <p class="status">Status: ${data.status}</p>
-                    <p>Created At: ${new Date(data.created_at).toLocaleString()}</p>
-                `;
-                orderList.appendChild(newOrderElement);
-            }
-        }
-
-        // WebSocket for Tickets
-        const ticketSocket = new WebSocket('ws://' + window.location.host + '/ws/tickets/');
-
-        ticketSocket.onmessage = function(e) {
-            const data = JSON.parse(e.data);
-            updateTicketDisplay(data);
-        };
-
-        ticketSocket.onclose = function(e) {
-            console.error('Ticket WebSocket closed unexpectedly');
-        };
-
-        function updateTicketDisplay(data) {
-            const ticketElement = document.getElementById(`ticket-${data.id}`);
-            if (ticketElement) {
-                ticketElement.querySelector('.status').innerText = data.status;
-            } else {
-                const ticketList = document.getElementById('ticket-list');
-                const newTicketElement = document.createElement('div');
-                newTicketElement.id = `ticket-${data.id}`;
-                newTicketElement.innerHTML = `
-                    <h3>Ticket ${data.id}</h3>
-                    <p>Issue: ${data.issue}</p>
-                    <p class="status">Status: ${data.status}</p>
-                    <p>Created At: ${new Date(data.created_at).toLocaleString()}</p>
-                `;
-                ticketList.appendChild(newTicketElement);
-            }
-        }
-    </script>
+  chatSocket.onclose = e => console.warn("Chat socket closed:", e);
+</script>
+{% endif %}
+  {% endblock %}
 </body>
 </html>

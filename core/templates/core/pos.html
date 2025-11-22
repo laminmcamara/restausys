@@ -1,51 +1,143 @@
-{% extends 'core/base.html' %}
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Point of Sale (POS){% endblock %}
 
 {% block content %}
-<div class="container">
-    <h1>Point of Sale</h1>
-    <form id="pos-form">
-        <label for="item">Item:</label>
-        <input type="text" id="item" name="item" required>
-        
-        <label for="quantity">Quantity:</label>
-        <input type="number" id="quantity" name="quantity" required>
+<div class="min-h-screen bg-gray-50 p-6">
+  <div class="max-w-7xl mx-auto">
+    <!-- HEADER -->
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8">
+      <div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-800">Point of Sale</h1>
+        <p class="text-gray-500 mt-2">Process new orders quickly and securely.</p>
+      </div>
+      <div class="mt-4 sm:mt-0">
+        <a href="{% url 'core:order-history' %}"
+           class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded shadow hover:bg-indigo-700 transition">
+          View Orders
+        </a>
+      </div>
+    </header>
 
-        <button type="submit">Add to Cart</button>
-    </form>
+    <!-- MENU GRID -->
+    <div id="menu-items" class="grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+      {% for item in items %}
+        <div class="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition overflow-hidden flex flex-col justify-between">
+          <div class="p-5 flex-1">
+            <div class="flex justify-between items-start mb-3">
+              <h3 class="text-lg font-semibold text-gray-800">{{ item.name }}</h3>
+              <span class="text-xs font-semibold px-2 py-1 rounded-full 
+                {% if item.quantity > 0 %}
+                  bg-green-100 text-green-700
+                {% else %}
+                  bg-red-100 text-red-600
+                {% endif %}">
+                {% if item.quantity > 0 %}
+                  In Stock
+                {% else %}
+                  Out of Stock
+                {% endif %}
+              </span>
+            </div>
+            <p class="text-sm text-gray-500 mb-1">Price: <span class="font-semibold text-gray-700">${{ item.price }}</span></p>
+            <p class="text-xs text-gray-400 mb-3">Available: {{ item.quantity }}</p>
+          </div>
+
+          <form method="POST" class="p-4 border-t" onsubmit="return handleOrderSubmit(event, this)">
+            {% csrf_token %}
+            <input type="hidden" name="item_id" value="{{ item.id }}">
+
+            <div class="flex items-center justify-between mb-4">
+              <label class="text-sm font-medium text-gray-700">Quantity</label>
+              <input type="number" name="quantity" min="1" max="{{ item.quantity }}" value="1"
+                     class="w-20 border border-gray-300 text-center rounded-md p-1.5 text-sm focus:ring focus:ring-indigo-100" required>
+            </div>
+
+            <div class="flex items-center justify-between mb-4">
+              <label class="text-sm font-medium text-gray-700">Payment Method</label>
+              <select name="payment_method"
+                      class="flex-1 border border-gray-300 rounded-md p-1.5 text-sm text-gray-700 focus:ring focus:ring-indigo-100"
+                      required>
+                  <option value="" disabled selected>Select...</option>
+                  <option value="credit_card">Credit Card</option>
+                  <option value="alipay">Alipay</option>
+                  <option value="octopus">Octopus</option>
+                  <option value="qr_code">QR Code</option>
+                  <option value="cash">Cash</option>
+              </select>
+            </div>
+
+            <button type="submit"
+                    {% if item.quantity == 0 %} disabled {% endif %}
+                    class="w-full py-2 rounded-md flex justify-center items-center text-white font-semibold
+                           {% if item.quantity == 0 %}
+                             bg-gray-400 cursor-not-allowed
+                           {% else %}
+                             bg-indigo-600 hover:bg-indigo-700
+                           {% endif %}
+                           transition">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-white"
+                   fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                      d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13l-1.5 7H18a2 2 0 002-2v-5M7 13V6h13" />
+              </svg>
+              Order
+            </button>
+          </form>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- TOAST NOTIFICATION -->
+    <div id="toast" class="hidden fixed bottom-6 right-6 bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-md shadow-lg transition-opacity duration-300">
+      Order submitted successfully!
+    </div>
     
-    <h2>Cart</h2>
-    <table id="cart">
-        <thead>
-            <tr>
-                <th>Item</th>
-                <th>Quantity</th>
-                <th>Price</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            <!-- Cart items will be dynamically added here -->
-        </tbody>
-    </table>
-
-    <h2>Total: <span id="total">0.00</span></h2>
-    <button id="checkout">Checkout</button>
+    <!-- FOOTER -->
+    <footer class="mt-8 text-center text-gray-500">
+      <p>© 2025 RestaurantSys. All Rights Reserved.</p>
+    </footer>
+  </div>
 </div>
 
 <script>
-    // JavaScript for handling cart functionality
-    document.getElementById('pos-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        const item = document.getElementById('item').value;
-        const quantity = document.getElementById('quantity').value;
+  async function handleOrderSubmit(event, form) {
+    event.preventDefault();
+    const formData = new FormData(form);
+    const data = Object.fromEntries(formData.entries());
+    const csrftoken = form.querySelector('input[name="csrfmiddlewaretoken"]').value;
 
-        // Here you would typically send the data to the server
-        // For now, we will just log it to the console
-        console.log(`Item: ${item}, Quantity: ${quantity}`);
-        
-        // Add to cart logic would go here
-    });
+    try {
+      const response = await fetch("{% url 'core:pos' %}", {
+        method: "POST",
+        headers: { "X-CSRFToken": csrftoken, "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
 
-    // Additional JavaScript for handling checkout can be added
+      const result = await response.json();
+      if (response.ok && result.status === "success") {
+        showToast("✅ Order processed successfully!");
+        form.reset();
+      } else {
+        showToast("⚠️ " + (result.message || "Error processing order"));
+      }
+    } catch (error) {
+      console.error(error);
+      showToast("❌ Network error: " + error.message);
+    }
+    return false; // prevent form reload
+  }
+
+  function showToast(message) {
+    const toast = document.getElementById("toast");
+    toast.innerText = message;
+    toast.classList.remove("hidden");
+    toast.classList.add("opacity-100");
+    setTimeout(() => {
+      toast.classList.add("hidden");
+      toast.classList.remove("opacity-100");
+    }, 3000);
+  }
 </script>
 {% endblock %}

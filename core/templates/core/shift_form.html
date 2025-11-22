@@ -1,0 +1,17 @@
+{% extends 'core/base.html' %}
+
+{% block title %}{% if form.instance.pk %}Update Shift{% else %}Create Shift{% endif %}{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <h1>{% if form.instance.pk %}Update Shift{% else %}Create New Shift{% endif %}</h1>
+        <p>Use the form below to define the shift times and name.</p>
+
+        <form method="POST">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit" class="btn btn-primary">Save Shift</button>
+            <a href="{% url 'core:shift-list' %}" class="btn btn-secondary">Cancel</a>
+        </form>
+    </div>
+{% endblock %}

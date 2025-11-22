@@ -1,0 +1,118 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+{% block title %}Restaurant Dashboard{% endblock %}
+
+{% block content %}
+<h1 style="margin-bottom: 1.5rem;">{{ title }}</h1>
+
+<!-- KPI Cards -->
+<div class="dashboard-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;">
+  <div class="kpi-card"><strong>Total Revenue</strong><br>${{ kpis.total_revenue }}</div>
+  <div class="kpi-card"><strong>Total Orders</strong><br>{{ kpis.total_orders }}</div>
+  <div class="kpi-card"><strong>Avg Order Value</strong><br>${{ kpis.avg_order_value }}</div>
+  <div class="kpi-card"><strong>Active Menu Items</strong><br>{{ kpis.active_menu_items }}</div>
+  <div class="kpi-card"><strong>Low Stock</strong><br>{{ kpis.low_stock }}</div>
+</div>
+
+<hr style="margin:2rem 0;" />
+
+<!-- Chart Header -->
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+  <h2 style="margin:0;">7‑Day Performance</h2>
+  <label>
+    <strong>Metric:</strong>
+    <select id="metric-select">
+      <option value="revenue" selected>Revenue ($)</option>
+      <option value="orders">Orders Count</option>
+      <option value="average">Average Order Value ($)</option>
+    </select>
+  </label>
+</div>
+
+<canvas id="salesChart" height="120" style="margin-top:1rem;"></canvas>
+
+<hr style="margin:2rem 0;" />
+
+<!-- Recent Orders -->
+<h2>Recent Orders</h2>
+<table class="admin-table" style="width:100%;border-collapse:collapse;">
+  <thead>
+    <tr><th>ID</th><th>Status</th><th>Created</th><th>Total</th></tr>
+  </thead>
+  <tbody>
+    {% for order in recent_orders %}
+      <tr style="border-bottom:1px solid #eee;">
+        <td>{{ order.id }}</td>
+        <td>{{ order.get_status_display }}</td>
+        <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+        <td>${{ order.total_price }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4"><em>No recent orders.</em></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<style>
+  .kpi-card {
+      background: var(--body-bg);
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 1rem;
+      text-align: center;
+      box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  @media (max-width: 600px){
+    #salesChart {height: 200px !important;}
+  }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const chartData = {{ chart_json|safe }};
+const ctx = document.getElementById('salesChart');
+
+let currentMetric = 'revenue';
+const colors = {
+  revenue: { border: 'rgb(75,192,192)', bg: 'rgba(75,192,192,0.2)' },
+  orders:  { border: 'rgb(255,159,64)',  bg: 'rgba(255,159,64,0.2)' },
+  average: { border: 'rgb(153,102,255)', bg: 'rgba(153,102,255,0.2)' },
+};
+
+let chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: chartData.labels,
+    datasets: [{
+      label: 'Revenue ($)',
+      data: chartData.revenue,
+      borderColor: colors.revenue.border,
+      backgroundColor: colors.revenue.bg,
+      tension: 0.25,
+      fill: true,
+    }]
+  },
+  options: {
+    responsive: true,
+    scales: {
+      y: { beginAtZero: true }
+    }
+  }
+});
+
+document.getElementById('metric-select').addEventListener('change', e => {
+  const metric = e.target.value;
+  currentMetric = metric;
+
+  chart.data.datasets[0].label =
+    metric === 'orders' ? 'Orders Count' :
+    metric === 'average' ? 'Average Order Value ($)' :
+    'Revenue ($)';
+
+  chart.data.datasets[0].data = chartData[metric];
+  chart.data.datasets[0].borderColor = colors[metric].border;
+  chart.data.datasets[0].backgroundColor = colors[metric].bg;
+  chart.update();
+});
+</script>
+{% endblock %}

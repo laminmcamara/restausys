@@ -1,0 +1,66 @@
+{% extends "core/base.html" %}
+{% load static %}
+{% block title %}Staff Chat Room{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="row justify-content-center">
+    <div class="col-md-8">
+      <div class="card shadow-sm">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-chat-dots"></i> Staff Chat Room</span>
+        </div>
+
+        <div id="messages" class="card-body bg-light" style="height: 400px; overflow-y: auto;">
+          <!-- Messages will appear here -->
+        </div>
+
+        <div class="card-footer">
+          <div class="input-group">
+            <input
+              type="text"
+              id="message"
+              class="form-control"
+              placeholder="Type your message..."
+              autocomplete="off"
+            />
+            <button id="send-btn" class="btn btn-primary">
+              <i class="bi bi-send-fill"></i> Send
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const input = document.getElementById("message");
+  const sendBtn = document.getElementById("send-btn");
+  const messagesDiv = document.getElementById("messages");
+
+  // Simple frontend-only chat simulation:
+  function appendMessage(author, text) {
+    const msg = document.createElement("div");
+    msg.classList.add("mb-2");
+    msg.innerHTML = `<strong>${author}:</strong> ${text}`;
+    messagesDiv.appendChild(msg);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+
+  function sendMessage() {
+    const text = input.value.trim();
+    if (!text) return;
+    appendMessage("You", text);
+    input.value = "";
+    input.focus();
+  }
+
+  sendBtn.addEventListener("click", sendMessage);
+  input.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") sendMessage();
+  });
+</script>
+{% endblock %}

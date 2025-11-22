@@ -1,118 +1,74 @@
+{% extends "core/base.html" %}
 {% load static %}
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kitchen Display System</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            padding: 20px;
-        }
-        #orders {
-            margin-top: 20px;
-        }
-        .order {
-            background: #fff;
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin-bottom: 10px;
-            border-radius: 5px;
-        }
-        .complete-button {
-            background-color: #4CAF50; /* Green */
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            cursor: pointer;
-            border-radius: 3px;
-        }
-        .complete-button:hover {
-            background-color: #45a049;
-        }
-    </style>
-</head>
-<body>
-    <h1>Kitchen Display System</h1>
-    <h2>{{ kitchen_station_name }}</h2>
 
-    <div id="orders">
-        {% if tickets %}
-            {% for ticket in tickets %}
-                <div class="order">
-                    Order ID: {{ ticket.id }}<br>
-                    Table: {{ ticket.table.number }}<br>
-                    Status: {{ ticket.get_status_display }}<br>
-                    Created At: {{ ticket.created_at }}<br>
-                    {% if ticket.status == 'pending' %}
-                        <button class="complete-button" data-ticket-id="{{ ticket.id }}">Complete</button>
-                    {% endif %}
-                </div>
-            {% endfor %}
-        {% else %}
-            <p>No active tickets at the moment.</p>
-        {% endif %}
-    </div>
+{% block title %}Kitchen Display{% endblock %}
 
-    <script>
-        // Get CSRF token from the template context
-        const csrftoken = '{{ csrf_token }}';
+{% block content %}
+<div class="min-h-screen bg-gray-50 p-6">
+  <h1 class="text-3xl font-bold text-gray-800 mb-6">👨‍🍳 Kitchen Display</h1>
 
-        const socket = new WebSocket('ws://127.0.0.1:8000/ws/kitchen_display/');
+  <div id="ticketBoard"
+       class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    {% for ticket in tickets %}
+      <div id="ticket-{{ ticket.id }}"
+           class="bg-white shadow rounded-md p-4 border-t-4 border-yellow-500">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="font-bold text-lg text-gray-700">Order #{{ ticket.order_item.order.id|slice:":8" }}</h2>
+          <span class="text-xs text-gray-500">{{ ticket.created_at|time:"H:i" }}</span>
+        </div>
+        <p class="text-gray-800 font-medium">{{ ticket.order_item.menu_item.name }}</p>
+        <p class="text-gray-600 text-sm">Qty: {{ ticket.order_item.quantity }}</p>
+      </div>
+    {% empty %}
+      <p class="col-span-full text-gray-500 italic text-center">No active tickets</p>
+    {% endfor %}
+  </div>
+</div>
 
-        socket.onopen = function() {
-            console.log('WebSocket connection established');
-        };
+<script>
+  const board = document.getElementById("ticketBoard");
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const socketUrl = `${protocol}://${window.location.host}/ws/kitchen_display/`;
+  const socket = new WebSocket(socketUrl);
 
-        socket.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            const order = data.order;
+  socket.onopen = () => console.log("✅ Connected to kitchen display WebSocket");
 
-            const ordersDiv = document.getElementById('orders');
-            const orderDiv = document.createElement('div');
-            orderDiv.className = 'order';
-            orderDiv.innerHTML = `
-                Order ID: ${order.id}, Table: ${order.table}, Status: ${order.status}, Time: ${order.created_at}
-                ${order.status === 'pending' ? `<button class="complete-button" data-ticket-id="${order.id}">Complete</button>` : ''}
-            `;
-            ordersDiv.appendChild(orderDiv);
-        };
+  socket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    console.log("📦 Kitchen update:", data);
 
-        socket.onclose = function() {
-            console.log('WebSocket connection closed');
-        };
+    // Handle different actions: create, update, delete
+    const action = data.action;
+    const ticket = data.ticket;
+    const elId = `ticket-${ticket.id}`;
+    const existing = document.getElementById(elId);
 
-        // Event delegation for dynamically created buttons
-        document.getElementById('orders').addEventListener('click', function(event) {
-            if (event.target.classList.contains('complete-button')) {
-                const ticketId = event.target.getAttribute('data-ticket-id');
-                updateTicketStatus(ticketId);
-            }
-        });
+    if (action === "delete" && existing) {
+      existing.remove();
+      return;
+    }
 
-        function updateTicketStatus(ticketId) {
-            fetch(`/kds/update_ticket/${ticketId}/`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrftoken // Use the CSRF token here
-                },
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    alert('Ticket updated successfully!');
-                    // Optionally remove the order from the display or update its status
-                } else {
-                    alert('Error: ' + data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error updating ticket status:', error);
-            });
-        }
-    </script>
-</body>
-</html>
+    const html = `
+      <div id="${elId}"
+           class="bg-white shadow rounded-md p-4 border-t-4
+                  ${ticket.status === "READY" ? "border-green-500" : "border-yellow-500"}">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="font-bold text-lg text-gray-700">Order #${ticket.order_id}</h2>
+          <span class="text-xs text-gray-500">${ticket.time}</span>
+        </div>
+        <p class="text-gray-800 font-medium">${ticket.item_name}</p>
+        <p class="text-gray-600 text-sm">Qty: ${ticket.quantity}</p>
+      </div>`;
+    if (existing) {
+      existing.outerHTML = html;
+    } else {
+      board.insertAdjacentHTML("afterbegin", html);
+    }
+  };
+
+  socket.onclose = () => {
+    console.warn("🔌 WebSocket disconnected — retrying in 5s");
+    setTimeout(() => location.reload(), 5000);
+  };
+</script>
+{% endblock %}

@@ -1,0 +1,173 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'core/pos/style.css' %}" />
+
+<div class="pos-dashboard">
+  <aside class="sidebar">
+    <h2>🍴 POS</h2>
+    <ul>
+      <li><a href="{% url 'core:pos_dashboard' %}">Dashboard</a></li>
+      <li><a href="{% url 'core:order-list' %}">Orders</a></li>
+      <li><a href="#">Payments</a></li>
+    </ul>
+  </aside>
+
+  <main class="content">
+    <h3>
+      Select a Table
+      <span id="live-indicator" class="live-dot" title="Live connection status"></span>
+    </h3>
+
+    <!-- ===============================================================
+         TABLE GRID SECTION
+         =============================================================== -->
+    <div id="tableGrid" class="table-grid">
+      {% for t in tables %}
+      <a
+        href="{% url 'core:pos_order_screen' t.id %}"
+        class="table-card {{ t.status|default:'available' }}"
+        id="table-{{ t.id }}"
+      >
+        <strong>Table {{ t.table_number }}</strong><br>
+        <span class="status-text">{{ t.get_status_display|default:"Available" }}</span>
+      </a>
+      {% empty %}
+      <p>No tables added yet.</p>
+      {% endfor %}
+    </div>
+
+    <!-- ===============================================================
+         DIRECT ORDER SECTION (NEW)
+         =============================================================== -->
+    <section id="directOrderPanel" class="mt-4">
+      <h3>💳 Direct Order</h3>
+      <p class="text-muted">
+        Tap a category to view items, then add them to your order.
+      </p>
+
+      <!-- Categories -->
+      <div id="category-bar" class="mb-3"></div>
+
+      <!-- Menu items grid -->
+      <div id="menu-items" class="mb-4"></div>
+
+      <!-- Order summary area -->
+      <div id="order-summary-card" class="card">
+        <div class="card-header bg-light">
+          <strong>Order Summary</strong>
+        </div>
+        <div class="card-body" id="order-summary"></div>
+        <div class="card-footer d-flex justify-content-between align-items-center">
+          <span class="fw-bold">Total: $<span id="order-total">0.00</span></span>
+          <button id="submit-order" class="btn btn-success btn-sm">
+            Submit Order
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===============================================================
+     SCRIPTS
+     =============================================================== -->
+<script src="{% static 'core/pos/pos_dashboard.js' %}"></script>
+<script src="{% static 'core/pos/pos_direct_order.js' %}"></script>
+
+<script>
+  const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+  const dashboardSocket = new WebSocket(`${wsScheme}://${window.location.host}/ws/pos/`);
+
+  const liveIndicator = document.getElementById("live-indicator");
+
+  dashboardSocket.onopen = () => {
+    console.log("🟢 Connected to POS WebSocket");
+    liveIndicator.classList.remove("offline");
+    liveIndicator.classList.add("online");
+    liveIndicator.title = "Live connection active";
+  };
+
+  dashboardSocket.onclose = () => {
+    console.warn("🔴 WebSocket connection closed. Dashboard updates paused.");
+    liveIndicator.classList.remove("online");
+    liveIndicator.classList.add("offline");
+    liveIndicator.title = "Disconnected — trying to reconnect...";
+    setTimeout(() => location.reload(), 5000);
+  };
+
+  dashboardSocket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (!data.table) return;
+
+    const tableId = data.table.id || data.table;
+    const tableEl = document.getElementById(`table-${tableId}`);
+    if (!tableEl) return;
+
+    const statusText = tableEl.querySelector(".status-text");
+    const newStatus = data.status || "unknown";
+
+    if (statusText) statusText.textContent = newStatus.toUpperCase();
+
+    tableEl.classList.remove(
+      "available",
+      "pending",
+      "cooking",
+      "ready",
+      "served",
+      "paid"
+    );
+    tableEl.classList.add(newStatus);
+
+    // brief flash animation
+    tableEl.classList.add("highlight");
+    setTimeout(() => tableEl.classList.remove("highlight"), 1000);
+  };
+</script>
+
+<style>
+/* ==========================================================================
+   Live connection dot
+   ========================================================================== */
+.live-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: gray;
+  vertical-align: middle;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.3);
+}
+.live-dot.online {
+  background: #43a047;
+}
+.live-dot.offline {
+  background: #e53935;
+}
+
+/* ==========================================================================
+   Table state feedback styling
+   ========================================================================== */
+.table-card.highlight {
+  outline: 3px solid #ffb300;
+  transition: outline 0.3s ease;
+}
+.table-card.pending {
+  border-left: 5px solid gray;
+}
+.table-card.cooking {
+  border-left: 5px solid orange;
+}
+.table-card.ready {
+  border-left: 5px solid green;
+}
+.table-card.served {
+  border-left: 5px solid blue;
+}
+.table-card.paid {
+  border-left: 5px solid gold;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'core/pos/style.css' %}" />
+
+<div class="pos-order-screen">
+  <!-- ================= MENU COLUMN ================= -->
+  <div class="menu-section">
+    <h3>{{ table.restaurant.name }} Menu</h3>
+
+    <div class="categories">
+      <button class="category-btn" onclick="filterCategory('All')">All</button>
+      {% for category in categories %}
+      <button class="category-btn" onclick="filterCategory('{{ category|escapejs }}')">{{ category }}</button>
+      {% endfor %}
+    </div>
+
+    <div class="menu-grid" id="menuGrid">
+      {% for item in menu %}
+      <div
+        class="menu-card"
+        data-category="{{ item.category.name }}"
+        onclick="addToOrder({{ item.id }}, '{{ item.name|escapejs }}', {{ item.base_price }})"
+      >
+        {% if item.image %}
+        <img src="{{ item.image.url }}" alt="{{ item.name }}">
+        {% else %}
+        <img src="{% static 'core/pos/default.png' %}" alt="{{ item.name }}">
+        {% endif %}
+        <div>
+          <h4>{{ item.name }}</h4>
+          <p>${{ item.base_price }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ================= ORDER SUMMARY COLUMN ================= -->
+  <div class="order-summary">
+    <h3>Table {{ table.name }}</h3>
+
+    <!-- live status label -->
+    <p id="liveStatus" class="status-label">Status: <span id="statusText">Waiting</span> <span id="statusDot" class="dot waiting"></span></p>
+
+    <ul id="orderList"></ul>
+    <div class="totals">
+      <p>Subtotal: $<span id="subtotal">0.00</span></p>
+      <p>Tax (10%): $<span id="tax">0.00</span></p>
+      <p><strong>Total: $<span id="total">0.00</span></strong></p>
+    </div>
+    <button id="payBtn">💳 Submit Order</button>
+  </div>
+</div>
+
+<script>
+  const TABLE_ID = {{ table.id }};
+</script>
+<script src="{% static 'core/pos/pos.js' %}"></script>
+
+<!-- ==================== LIVE STATUS SOCKET ==================== -->
+<script>
+  const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+  const posSocket = new WebSocket(`${wsScheme}://${window.location.host}/ws/pos/`);
+
+  const statusText = document.getElementById("statusText");
+  const statusDot = document.getElementById("statusDot");
+
+  posSocket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (!data.table) return;
+
+    if (data.table.id === TABLE_ID || data.table === TABLE_ID) {
+      const newStatus = data.status;
+
+      statusText.textContent = newStatus.toUpperCase();
+
+      // Update dot color
+      statusDot.className = "dot " + newStatus;
+    }
+  };
+
+  posSocket.onopen = () => console.log("🟢 POS connected to WebSocket");
+  posSocket.onclose = () => console.warn("🔴 POS WebSocket disconnected");
+</script>
+
+<!-- ==================== STATUS DOT STYLE ==================== -->
+<style>
+.status-label {
+  background: #f0f0f0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+.dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.dot.waiting { background: gray; }
+.dot.pending { background: gray; }
+.dot.cooking { background: orange; }
+.dot.ready { background: green; animation: blink 1s infinite alternate; }
+.dot.served { background: blue; }
+.dot.paid { background: gold; }
+@keyframes blink { from { opacity: 1; } to { opacity: 0.4; } }
+</style>
+{% endblock %}

@@ -4,85 +4,142 @@ from django.dispatch import receiver
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
-# Import models from the core app
-from .models import Order
-# Import the serializers we just created in the core app
-# from .serializers import OrderSerializer 
-
-# Get an instance of a logger for better debugging
+from .models import Order, Table
+from .serializers import serialize_order_for_channels
+# -----------------------------------------------------------------------------
+# Logger
+# -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
-# --- Order State Tracking Signal ---
+# -----------------------------------------------------------------------------
+# Auto-assign Table if Missing
+# -----------------------------------------------------------------------------
+@receiver(pre_save, sender=Order)
+def assign_table_if_missing(sender, instance, **kwargs):
+    """
+    Assign the first available table if none provided.
+    """
+    if instance.pk or instance.table or not instance.restaurant:
+        return  # only assign when creating a new order
 
+    try:
+        available_table = (
+            Table.objects.filter(restaurant=instance.restaurant, is_occupied=False)
+            .order_by("number")
+            .first()
+        )
+        if available_table:
+            instance.table = available_table
+            available_table.is_occupied = True
+            available_table.save(update_fields=["is_occupied"])
+            logger.info(
+                f"🪑 Assigned Table {available_table.number} to order {instance.id}"
+            )
+    except Exception as e:
+        logger.error(f"Table auto-assign failed: {e}", exc_info=True)
+
+# -----------------------------------------------------------------------------
+# Store previous Order status
+# -----------------------------------------------------------------------------
 @receiver(pre_save, sender=Order)
 def store_previous_order_status(sender, instance, **kwargs):
-    """
-    Before saving an order, attach its 'old' status to the instance.
-    This allows us to detect a status *change* in the post_save signal.
-    """
-    if instance.pk:  # Only run on updates, not on creation
+    if instance.pk:
         try:
-            # Store the status from the database before the save happens
-            instance._previous_status = Order.objects.get(pk=instance.pk).status
+            previous = Order.objects.get(pk=instance.pk)
+            instance._previous_status = previous.status
         except Order.DoesNotExist:
-            # This case should ideally not be hit on an update, but it's safe to handle
             instance._previous_status = None
 
-# --- Main Notification Signals ---
-
+# -----------------------------------------------------------------------------
+# Notify via WebSocket (Channels)
+# -----------------------------------------------------------------------------
 @receiver(post_save, sender=Order)
 def notify_on_order_update(sender, instance, created, **kwargs):
-    """
-    Sends notifications to different groups based on the order's
-    status change. This is the central hub for order notifications.
-    """
     channel_layer = get_channel_layer()
     if not channel_layer:
-        logger.warning("Channels layer not found. Skipping real-time notification.")
+        logger.warning("⚠️ Channels layer not found. Skipping real-time broadcast.")
         return
 
-    # Serialize the order data once using our robust serializer
-    # Uncomment and implement the OrderSerializer if needed
-    # serializer = OrderSerializer(instance)
-    # order_data = serializer.data
+    order_data = serialize_order_for_channels(instance)
 
-    # Case 1: A new order is created and sent directly to the kitchen
-    if created and instance.status == Order.Status.IN_KITCHEN:
-        logger.info(f"New order {instance.id} created for kitchen.")
+    # --- New Order Created ---
+    if created:
+        logger.info(f"🆕 New order ({instance.id}) created, status={instance.status}.")
         async_to_sync(channel_layer.group_send)(
-            'kitchen_display',  # Group name for all kitchen screens
-            {'type': 'send_order_update', 'order': instance}  # Use instance directly if serializer is not used
+            'kitchen_display',
+            {'type': 'send_order_update', 'order': order_data},
         )
-        return  # Stop further processing as this is the primary event
+        async_to_sync(channel_layer.group_send)(
+            'pos_system',
+            {'type': 'send_pos_update', 'data': {'event': 'order_created', 'order': order_data}},
+        )
+        async_to_sync(channel_layer.group_send)(
+            'customer_display',
+            {'type': 'send_display_update', 'data': {'event': 'order_created', 'order': order_data}},
+        )
+        return
 
-    # Case 2: An existing order's status is changed
+    # --- Existing Order updated ---
     previous_status = getattr(instance, '_previous_status', None)
-    if not created and previous_status != instance.status:
-        
-        # Notify KITCHEN when an order is moved to 'In Kitchen'
-        if instance.status == Order.Status.IN_KITCHEN:
-            logger.info(f"Order {instance.id} sent to kitchen.")
-            async_to_sync(channel_layer.group_send)(
-                'kitchen_display',
-                {'type': 'send_order_update', 'order': instance}  # Use instance directly if serializer is not used
-            )
+    if previous_status == instance.status:
+        return
 
-        # Notify SERVERS when an order is 'Ready' for pickup
-        elif instance.status == Order.Status.READY:
-            logger.info(f"Order {instance.id} is ready for pickup.")
-            # Example: notify the specific server who created the order
-            # Assumes your Order model has a 'created_by' field linked to a User
-            if hasattr(instance, 'created_by') and instance.created_by:
-                server_group_name = f"server_{instance.created_by.id}"
-                async_to_sync(channel_layer.group_send)(
-                    server_group_name,
-                    {'type': 'send_order_ready', 'order': instance}  # Use instance directly if serializer is not used
-                )
-            
-            # Also send to a general 'servers' group for anyone to see
-            async_to_sync(channel_layer.group_send)(
-                'servers',
-                {'type': 'send_order_ready', 'order': instance}  # Use instance directly if serializer is not used
-            )
+    logger.info(f"🔄 Order {instance.id} status changed: {previous_status} → {instance.status}")
 
-# The HR and System Logging Signal Example has been removed since Profile is not used anymore.
+    if instance.status == Order.Status.IN_PROGRESS:
+        async_to_sync(channel_layer.group_send)(
+            'kitchen_display',
+            {'type': 'send_order_update', 'order': order_data},
+        )
+
+    elif instance.status == Order.Status.READY:
+        async_to_sync(channel_layer.group_send)(
+            'pos_system',
+            {'type': 'send_pos_update', 'data': {'event': 'order_ready', 'order': order_data}},
+        )
+        async_to_sync(channel_layer.group_send)(
+            'customer_display',
+            {'type': 'send_display_update', 'data': {'event': 'order_ready', 'order': order_data}},
+        )
+
+    elif instance.status in [Order.Status.COMPLETED, Order.Status.PAID]:
+        async_to_sync(channel_layer.group_send)(
+            'pos_system',
+            {'type': 'send_pos_update', 'data': {'event': 'order_completed', 'order': order_data}},
+        )
+        async_to_sync(channel_layer.group_send)(
+            'customer_display',
+            {'type': 'send_display_update', 'data': {'event': 'order_completed', 'order': order_data}},
+        )
+
+        # Free up the table when order is paid/completed
+        if instance.table:
+            table = instance.table
+            if table.is_occupied:
+                table.is_occupied = False
+                table.save(update_fields=["is_occupied"])
+                logger.info(f"🪑 Table {table.number} is now available again.")
+
+# -----------------------------------------------------------------------------
+# Deduct stock on OrderItem creation
+# -----------------------------------------------------------------------------
+@receiver(post_save, sender="core.OrderItem")
+def deduct_stock(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    menu_item = instance.menu_item
+    if not menu_item:
+        return
+    
+    recipe_items = menu_item.recipe_items.select_related("ingredient")
+    for recipe in recipe_items:
+        ingredient = recipe.ingredient
+        total_used = recipe.quantity_used * instance.quantity
+        old_qty = ingredient.quantity
+        ingredient.quantity = max(old_qty - total_used, 0)
+        ingredient.save(update_fields=["quantity"])
+        logger.info(
+            f"[Inventory] Deducted {total_used} {ingredient.unit} of {ingredient.name} "
+            f"({old_qty} → {ingredient.quantity}) for {menu_item.name}"
+        )

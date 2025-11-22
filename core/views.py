@@ -1,436 +1,579 @@
-# --- Python Standard Library Imports ---
-import csv
-from datetime import timedelta
+import uuid, csv, json
+from datetime import timedelta, datetime
 
-# --- Django Imports ---
+from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.contrib.auth import views as auth_views
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.db.models import Sum, Count, Avg
-from django.db.models.functions import TruncHour, TruncDay
-from django.http import HttpRequest, HttpResponse, JsonResponse, HttpResponseRedirect
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import transaction
+from django.db.models import Sum, F, Avg, Q, Case, When, BooleanField
+from django.db.models.functions import TruncDay
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.views import View
-from django.views.generic import TemplateView, ListView, CreateView, UpdateView, DeleteView
-from django.views.decorators.http import require_POST
-from django.core.exceptions import ObjectDoesNotExist
+from django.views.generic import TemplateView, ListView, CreateView, UpdateView, DeleteView, DetailView
 
-# --- Third-Party Imports ---
-from rest_framework import viewsets
+from rest_framework import viewsets, permissions
 
-# --- Local Application Imports ---
-from .forms import CustomUserCreationForm, ShiftForm # Assuming ShiftForm exists in forms.py
+from core.utils import broadcast_kitchen_ticket
+from django.contrib.auth.forms import UserCreationForm
+
+from .forms import CustomUserCreationForm, ShiftForm, OrderForm, InventoryItemForm
 from .models import (
-    CustomUser,
-    Restaurant,
-    Table,
-    MenuItem,
-    MenuVariant,
-    Order,
-    OrderItem,
-    KitchenTicket,
-    Payment,
-    QRToken,
-    Shift,
-    Inventory,
-    Attendance,
+    CustomUser, Restaurant, Table, MenuItem, MenuVariant, Order, OrderItem,
+    KitchenTicket, Payment, Shift, InventoryItem, Attendance
 )
 from .serializers import CustomUserSerializer
 
-# ==============================================================================
-# CUSTOM MIXINS
-# ==============================================================================
-
-class ManagerRequiredMixin(UserPassesTestMixin):
-    """
-    Mixin to ensure the user has the 'manager' role.
-    Redirects to the login page if the test fails.
-    """
-    def test_func(self) -> bool:
-        """Check if the user is authenticated and has the 'manager' role."""
-        return self.request.user.is_authenticated and self.request.user.role == 'manager'
 
 # ==============================================================================
-# AUTHENTICATION & REGISTRATION VIEWS
+# AUTHENTICATION & REGISTRATION
 # ==============================================================================
 
-# Using Django's built-in views for robustness and security.
-login_view = auth_views.LoginView.as_view(
-    template_name='core/registration/login.html',
-    redirect_authenticated_user=True # Prevent logged-in users from seeing the login page
-)
+class LoginView(auth_views.LoginView):
+    template_name = 'core/registration/login.html'
+    redirect_authenticated_user = True
 
-logout_view = auth_views.LogoutView.as_view(
-    next_page=reverse_lazy('home') # Redirect to home after logout
-)
+
+class LogoutView(auth_views.LogoutView):
+    next_page = reverse_lazy('core:home')
+
 
 class RegisterView(CreateView):
-    """
-    Handles new user registration.
-    """
     form_class = CustomUserCreationForm
-    success_url = reverse_lazy('login')
+    success_url = reverse_lazy('core:login')
     template_name = 'core/registration/register.html'
 
     def form_valid(self, form):
         messages.success(self.request, "Registration successful! Please log in.")
         return super().form_valid(form)
 
+
 # ==============================================================================
-# CORE DASHBOARD & STATIC VIEWS
+# DASHBOARDS
 # ==============================================================================
 
-def home(request: HttpRequest) -> HttpResponse:
-    """
-    Renders the main landing page. This view determines whether to show
-    the guest landing page or redirect an authenticated user to their dashboard.
-    """
-    if request.user.is_authenticated:
-        # Redirect users to the appropriate dashboard based on their role
-        if request.user.role == 'manager':
-            return redirect('core:manager_dashboard')
-            return render(request, 'core/home.html')
-
-        # return redirect('core:user_dashboard')
-    
-    # For unauthenticated guests
-    print("Unauthenticated user, rendering home.html")
-    return render(request, 'core/home.html')
+def home(request):
+    return render(request, 'core/home.html', {
+        'welcome_message': 'Welcome to the Restaurant Management System'
+    })
 
 
 class UserDashboardView(LoginRequiredMixin, TemplateView):
-    """
-    Renders the dashboard for a standard logged-in user (e.g., staff).
-    """
     template_name = 'core/dashboard.html'
 
-    def get_context_data(self, **kwargs) -> dict:
+    def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         user = self.request.user
         today = timezone.now().date()
-
-        # Fetch the current attendance for the user
-        
-        current_attendance = Attendance.objects.filter(
-        staff=user, 
-        # Access the 'shift' relationship, then its 'end_time' field
-        shift__end_time__lte=timezone.now().time()
-        # Add any other required filters here
-    )
-        # current_attendance = Attendance.objects.filter(user=user, 
-        #                                               start_time__lte=timezone.now(), 
-        #                                               end_time__gte=timezone.now()).first()
-
+        attendance_today = Attendance.objects.filter(staff=user, date=today).first()
         context.update({
-            'recent_orders': Order.objects.filter(user=user).order_by('-created_at')[:10],
+            'user': user,
+            'attendance_today': attendance_today,
+            'recent_orders': Order.objects.filter(user=user).select_related('table').order_by('-created_at')[:5],
             'today_orders_count': Order.objects.filter(user=user, created_at__date=today).count(),
-            'active_menu_items': MenuItem.objects.filter(is_active=True),
-            'current_shift': Shift.objects.filter(attendance=current_attendance).first() if current_attendance else None,
         })
         return context
 
-class ManagerDashboardView(ManagerRequiredMixin, TemplateView):
-    """
-    Renders the manager's dashboard with comprehensive data analysis and KPIs.
-    Accessible only by users with the 'manager' role.
-    """
+
+class ManagerDashboardView(LoginRequiredMixin, TemplateView):
     template_name = 'core/manager_dashboard.html'
 
-    def get_context_data(self, **kwargs) -> dict:
+    def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        
-        # --- Date Range Filtering ---
         end_date = timezone.now()
-        start_date_str = self.request.GET.get('start_date')
-        if start_date_str:
-            try:
-                start_date = timezone.datetime.strptime(start_date_str, '%Y-%m-%d').date()
-            except ValueError:
-                start_date = end_date - timedelta(days=30) # Default on invalid format
-        else:
-            start_date = end_date - timedelta(days=30) # Default to the last 30 days
+        start_date_str = self.request.GET.get('start_date', (end_date - timedelta(days=30)).strftime('%Y-%m-%d'))
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
 
-        orders_in_range = Order.objects.filter(created_at__range=[start_date, end_date])
-
-        # --- 1. Key Performance Indicators (KPIs) ---
-        kpis = orders_in_range.aggregate(
-            total_revenue=Sum('total_price'),
-            total_orders=Count('id'),
-            avg_order_value=Avg('total_price')
+        orders_in_range = Order.objects.filter(created_at__range=[start_date, end_date]).annotate(
+            total_price=Sum(F('items__quantity') * F('items__menu_item__base_price'))
         )
+        paid_orders = orders_in_range.filter(status=Order.Status.PAID)
 
-        # --- 2. Sales Over Time (for charts) ---
+        kpis = {
+            'total_revenue': paid_orders.aggregate(val=Sum(F('items__quantity') * F('items__menu_item__base_price')))['val'] or 0,
+            'total_orders': paid_orders.count(),
+            'avg_order_value': paid_orders.aggregate(val=Avg(F('items__quantity') * F('items__menu_item__base_price')))['val'] or 0,
+        }
+
         sales_by_day = (
-            orders_in_range.annotate(day=TruncDay('created_at'))
-            .values('day').annotate(daily_revenue=Sum('total_price')).order_by('day')
+            paid_orders.annotate(day=TruncDay('created_at'))
+            .values('day')
+            .annotate(daily_revenue=Sum(F('items__quantity') * F('items__menu_item__base_price')))
+            .order_by('day')
         )
-        
-        # --- 3. Top Selling Menu Items (for charts) ---
         top_items = (
-            OrderItem.objects.filter(order__in=orders_in_range)
-            .values('menu_item__name').annotate(total_sold=Sum('quantity')).order_by('-total_sold')[:5]
+            OrderItem.objects.filter(order__in=paid_orders)
+            .values('menu_item__name')
+            .annotate(total_sold=Sum('quantity'))
+            .order_by('-total_sold')[:5]
         )
-
-        # --- 4. Peak Business Hours (for charts) ---
-        peak_hours = (
-            orders_in_range.annotate(hour=TruncHour('created_at'))
-            .values('hour').annotate(order_count=Count('id')).order_by('hour')
-        )
-
-        # --- 5. Staff Performance ---
-        staff_performance = (
-            CustomUser.objects.filter(role='staff', order__in=orders_in_range)
-            .annotate(total_sales=Sum('order__total_price'), orders_handled=Count('order__id'))
-            .order_by('-total_sales')
-        )
+        low_stock = InventoryItem.objects.annotate(
+            is_low=Case(When(quantity__lt=F('low_stock_threshold'), then=True), default=False, output_field=BooleanField())
+        ).filter(is_low=True)[:10]
 
         context.update({
             'start_date': start_date.strftime('%Y-%m-%d'),
             'end_date': end_date.strftime('%Y-%m-%d'),
             'kpis': kpis,
-            'sales_over_time': {
+            'sales_over_time_json': json.dumps({
                 'labels': [s['day'].strftime('%b %d') for s in sales_by_day],
                 'values': [float(s['daily_revenue'] or 0) for s in sales_by_day],
-            },
-            'top_selling_items': {
-                'labels': [item['menu_item__name'] for item in top_items],
-                'values': [item['total_sold'] for item in top_items],
-            },
-            'peak_hours_data': {
-                'labels': [p['hour'].strftime('%I %p') for p in peak_hours],
-                'values': [p['order_count'] for p in peak_hours],
-            },
-            'staff_performance_data': staff_performance,
+            }),
+            'top_selling_items_json': json.dumps({
+                'labels': [i['menu_item__name'] for i in top_items],
+                'values': [i['total_sold'] for i in top_items],
+            }),
+            'low_stock_items': low_stock,
         })
         return context
 
+
 # ==============================================================================
-# STAFF MANAGEMENT VIEWS
+# CLOCK-IN / CLOCK-OUT
 # ==============================================================================
 
 class ClockInOutView(LoginRequiredMixin, View):
-    """
-    Handles a staff member clocking in or out. Toggles their attendance status.
-    Assumes a boolean field `attendance_status` on the CustomUser model.
-    """
+    template_name = 'core/clock_in_out.html'
+    login_url = reverse_lazy('core:login')
 
-    def get(self, request: HttpRequest, *args, **kwargs):
-        # Render a template with the current attendance status
-        return render(request, 'core/clock.html')
-
-    def post(self, request: HttpRequest, *args, **kwargs) -> HttpResponseRedirect:
+    def get(self, request, *args, **kwargs):
         user = request.user
-        
-        try:
-            # Check if the user has an 'attendance_status' field
-            if hasattr(user, 'attendance_status'):
-                # Toggle attendance status
-                user.attendance_status = not user.attendance_status
-                user.save()
-                
-                # Set success message based on the new status
-                message = "You have successfully clocked in." if user.attendance_status else "You have successfully clocked out."
-                messages.success(request, message)
-            else:
-                messages.error(request, "Your user profile does not support attendance tracking.")
-        
-        except Exception as e:
-            # Handle any unexpected errors
-            messages.error(request, f"An error occurred: {str(e)}")
-        
-        return redirect('core:user_dashboard')
-    
-class ShiftListView(ManagerRequiredMixin, ListView):
-    """
-    Displays a list of all shifts. For managers only.
-    """
-    model = Shift
-    template_name = 'core/manage_shifts.html'
-    context_object_name = 'shifts'
-    ordering = ['-start_time']
-
-class ShiftCreateView(ManagerRequiredMixin, CreateView):
-    """
-    View to create a new shift. For managers only.
-    """
-    model = Shift
-    form_class = ShiftForm # Make sure this form is defined in forms.py
-    template_name = 'core/shift_form.html' # Use a generic form template
-    success_url = reverse_lazy('manage_shifts')
-
-    def form_valid(self, form):
-        messages.success(self.request, "Shift created successfully!")
-        return super().form_valid(form)
-
-class ShiftUpdateView(ManagerRequiredMixin, UpdateView):
-    """
-    View to edit an existing shift. For managers only.
-    """
-    model = Shift
-    form_class = ShiftForm
-    template_name = 'core/shift_form.html'
-    success_url = reverse_lazy('manage_shifts')
-
-    def form_valid(self, form):
-        messages.success(self.request, "Shift updated successfully!")
-        return super().form_valid(form)
-
-class ShiftDeleteView(ManagerRequiredMixin, DeleteView):
-    """
-    View to delete a shift. For managers only.
-    """
-    model = Shift
-    template_name = 'core/confirm_delete.html' # Generic confirmation template
-    success_url = reverse_lazy('core:manage_shifts')
-    context_object_name = 'object' # Use 'object' for generic template compatibility
+        today = timezone.now().date()
+        attendance = Attendance.objects.filter(staff=user, date=today).first()
+        context = {
+            'has_clocked_in': bool(attendance),
+            'has_clocked_out': getattr(attendance, 'clock_out', None) is not None if attendance else False,
+            'clock_in_time': getattr(attendance, 'clock_in', None),
+            'clock_out_time': getattr(attendance, 'clock_out', None),
+        }
+        return render(request, self.template_name, context)
 
     def post(self, request, *args, **kwargs):
-        # Use post for success message to avoid issues with form_valid in DeleteView
-        response = super().post(request, *args, **kwargs)
-        messages.success(self.request, f"Shift '{self.object.name}' has been deleted.")
-        return response
+        user = request.user
+        today = timezone.now().date()
+        now = timezone.now()
+
+        attendance, created = Attendance.objects.get_or_create(
+            staff=user, date=today,
+            defaults={'clock_in': now, 'status': Attendance.Status.PRESENT}
+        )
+        if created:
+            messages.success(request, f"Clocked in at {now.strftime('%I:%M %p')}.")
+        elif attendance.clock_in and not attendance.clock_out:
+            attendance.clock_out = now
+            attendance.save()
+            messages.success(request, f"Clocked out at {now.strftime('%I:%M %p')}. Duration: {attendance.duration}")
+        else:
+            messages.info(request, "You have already clocked in and out today.")
+        return redirect('core:user-dashboard')
+
 
 # ==============================================================================
-# OPERATIONAL VIEWS (KDS, Customer Display)
+# SHIFT MANAGEMENT
 # ==============================================================================
 
-class KitchenDisplayView(LoginRequiredMixin, ListView):
-    """
-    Kitchen Display System (KDS) view showing active tickets.
-    """
-    model = KitchenTicket
+class ShiftListView(LoginRequiredMixin, ListView):
+    model = Shift
+    template_name = 'core/shifts/shift_list.html'
+    context_object_name = 'shifts'
+
+
+class ShiftCreateView(LoginRequiredMixin, CreateView):
+    form_class = ShiftForm
+    template_name = 'core/shifts/shift_form.html'
+    success_url = reverse_lazy('core:shift-list')
+
+
+class ShiftUpdateView(LoginRequiredMixin, UpdateView):
+    model = Shift
+    form_class = ShiftForm
+    template_name = 'core/shifts/shift_form.html'
+    success_url = reverse_lazy('core:shift-list')
+
+
+class ShiftDeleteView(LoginRequiredMixin, DeleteView):
+    model = Shift
+    template_name = 'core/shifts/shift_confirm_delete.html'
+    success_url = reverse_lazy('core:shift-list')
+
+
+# ==============================================================================
+# MENU MANAGEMENT
+# ==============================================================================
+
+class MenuItemListView(LoginRequiredMixin, ListView):
+    model = MenuItem
+    template_name = 'core/menu/menu_list.html'
+    context_object_name = 'menu_items'
+
+
+class MenuItemCreateView(LoginRequiredMixin, CreateView):
+    model = MenuItem
+    fields = ['name', 'category', 'description', 'base_price', 'is_active']
+    template_name = 'core/menu/menu_form.html'
+    success_url = reverse_lazy('core:menu-list')
+
+
+class MenuItemUpdateView(LoginRequiredMixin, UpdateView):
+    model = MenuItem
+    fields = ['name', 'category', 'description', 'base_price', 'is_active']
+    template_name = 'core/menu/menu_form.html'
+    success_url = reverse_lazy('core:menu-list')
+
+
+class MenuItemDeleteView(LoginRequiredMixin, DeleteView):
+    model = MenuItem
+    template_name = 'core/menu/menu_confirm_delete.html'
+    success_url = reverse_lazy('core:menu-list')
+
+
+# ==============================================================================
+# ORDERING & PAYMENT
+# ==============================================================================
+
+class TableOrderView(View):
+    def get(self, request, token: uuid.UUID):
+        table = get_object_or_404(Table.objects.select_related('restaurant'), access_token=token)
+        menu_items = MenuItem.objects.filter(restaurant=table.restaurant, is_active=True).prefetch_related('variants')
+        categorized = {}
+        for item in menu_items:
+            cat = item.get_category_display()
+            categorized.setdefault(cat, []).append(item)
+        return render(request, 'core/table_order_form.html', {'table': table, 'categorized_menu': categorized})
+
+    @transaction.atomic
+    def post(self, request, token: uuid.UUID):
+        table = get_object_or_404(Table, access_token=token)
+        order_data = json.loads(request.body or "[]")
+        if not isinstance(order_data, list):
+            return JsonResponse({'error': 'Invalid request body'}, status=400)
+
+        order = Order.objects.create(table=table, user=request.user if request.user.is_authenticated else None,
+                                     status=Order.Status.PLACED)
+        for item_data in order_data:
+            menu_item = get_object_or_404(MenuItem, id=item_data.get('item_id'), is_active=True)
+            variant = MenuVariant.objects.filter(id=item_data.get('variant_id')).first()
+            qty = int(item_data.get('quantity', 0))
+            if qty > 0:
+                oi = OrderItem.objects.create(order=order, menu_item=menu_item, variant=variant, quantity=qty)
+                ticket = KitchenTicket.objects.create(order_item=oi)
+                broadcast_kitchen_ticket(ticket, action="create")
+
+        table.status = Table.Status.OCCUPIED
+        table.save(update_fields=['status'])
+        order.status = Order.Status.IN_PROGRESS
+        order.save(update_fields=['status'])
+        return JsonResponse({'status': 'success', 'order_id': order.id})
+
+
+class OrderSuccessView(TemplateView):
+    template_name = 'core/order_success.html'
+
+    def get_context_data(self, **kwargs):
+        order = get_object_or_404(Order, id=self.kwargs.get('order_id'))
+        return {'order': order}
+
+from django.views.generic import DetailView
+from core.models import Table
+
+class TableDetailView(DetailView):
+    model = Table
+    slug_field = "access_token"
+    slug_url_kwarg = "access_token"
+    template_name = "core/table_detail.html"
+
+def table_list_view(request, restaurant_id):
+    restaurant = get_object_or_404(Restaurant, pk=restaurant_id)
+    tables = restaurant.tables.all()
+    return render(request, "tables.html", {"tables": tables, "restaurant": restaurant})
+
+
+def table_dashboard_view(request, restaurant_id):
+    restaurant = get_object_or_404(Restaurant, pk=restaurant_id)
+    tables = restaurant.tables.all().order_by("table_number")
+    return render(
+        request,
+        "core/tables.html",
+        {"restaurant": restaurant, "tables": tables},
+    )
+
+class OrderPaymentView(View):
+    @transaction.atomic
+    def post(self, request, order_id: uuid.UUID):
+        order = get_object_or_404(Order.objects.annotate_with_total_price(), id=order_id)
+        if order.status == Order.Status.PAID:
+            messages.info(request, "Order already paid.")
+            return redirect('core:user-dashboard')
+
+        method = request.POST.get('payment_method', 'Cash')
+        total = getattr(order, 'calculated_total', order.total_price or 0)
+
+        Payment.objects.create(order=order, amount=total, method=method, status=Payment.Status.PAID)
+        order.status = Order.Status.PAID
+        order.save(update_fields=['status'])
+
+        messages.success(request, f"Payment successful for order {str(order.id)[:8]}.")
+        return redirect('core:user-dashboard')
+
+
+@require_POST
+def delete_order(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    for order_item in order.items.all():
+        ticket = getattr(order_item, "kitchenticket", None)
+        if ticket:
+            broadcast_kitchen_ticket(ticket, action="delete")
+
+    order.delete()
+    messages.success(request, f"Order #{str(pk)[:8]} deleted successfully and removed from Kitchen Display.")
+    return redirect("core:order-list")
+
+
+# ==============================================================================
+# OPERATIONAL DISPLAYS (KDS, POS, Customer)
+# ==============================================================================
+
+class KitchenDisplayView(LoginRequiredMixin, TemplateView):
     template_name = 'core/kitchen_display.html'
-    context_object_name = 'tickets'
 
-    def get_queryset(self):
-        """Return only 'pending' or 'in_progress' tickets, oldest first."""
-        return KitchenTicket.objects.filter(
-            status__in=[KitchenTicket.Status.PENDING, KitchenTicket.Status.PREPARING]  # Use enum for clarity
-        ).select_related('order_item').order_by('created_at')
-
-class CustomerDisplayView(TemplateView):
-    """
-    Public-facing display screen for customers to see order statuses.
-    """
-    template_name = 'core/customer_display.html'
-
-    def get_context_data(self, **kwargs) -> dict:
+    def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['ready_orders'] = Order.objects.filter(status='ready_for_pickup').order_by('-updated_at')[:10]
-        context['preparing_orders'] = Order.objects.filter(status='preparing').order_by('created_at')[:10]
-        # You could also add promotional items here
-        # context['promo_items'] = MenuItem.objects.filter(is_on_promo=True)
+
+        # Optional filtering by order status (placed, ready, etc.)
+        status_filter = self.request.GET.get('status')
+
+        # Select related order, table, and restaurant for performance
+        tickets = (
+            KitchenTicket.objects
+            .select_related('order__table', 'order__restaurant')
+            .order_by('created_at')
+        )
+
+        if status_filter:
+            # Filter by order status since tickets represent full orders
+            tickets = tickets.filter(order__status=status_filter)
+
+        context['tickets'] = tickets
+        context['status_filter'] = status_filter
+        context['status_choices'] = Order.Status.choices  # use order statuses instead
+        return context
+    
+class POSView(TemplateView):
+    template_name = "core/pos.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["items"] = MenuItem.objects.filter(is_active=True)
         return context
 
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        data = json.loads(request.body or "{}")
+        item_id = data.get("item_id")
+        qty = int(data.get("quantity", 1))
+        payment_method = data.get("payment_method")
+
+        if not item_id or not payment_method:
+            return JsonResponse({"status": "error", "message": "Missing required fields."})
+
+        try:
+            item = MenuItem.objects.select_for_update().get(id=item_id)
+
+            if item.quantity < qty:
+                return JsonResponse({"status": "error", "message": "Not enough stock."})
+
+            order = Order.objects.create(status=Order.Status.PLACED, payment_method=payment_method)
+            order_item = OrderItem.objects.create(order=order, menu_item=item, quantity=qty)
+
+            item.quantity -= qty
+            item.save(update_fields=["quantity"])
+
+            ticket = KitchenTicket.objects.create(order_item=order_item)
+            broadcast_kitchen_ticket(ticket, action="create")
+
+            return JsonResponse({
+                "status": "success",
+                "order_id": order.id,
+                "ticket_id": ticket.id,
+            })
+
+        except MenuItem.DoesNotExist:
+            return JsonResponse({"status": "error", "message": "Item not found."})
+        except Exception as e:
+            return JsonResponse({"status": "error", "message": str(e)})
+
+
+class CustomerDisplayView(LoginRequiredMixin, TemplateView):
+    template_name = 'core/displays/customer_display.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['ready_orders'] = Order.objects.filter(status=Order.Status.READY)
+        return context
+
+
 # ==============================================================================
-# API, AJAX & DATA EXPORT
+# INVENTORY MANAGEMENT
 # ==============================================================================
 
-@login_required
-@require_POST
-def update_ticket_status(request: HttpRequest, ticket_id: int) -> JsonResponse:
-    """
-    AJAX endpoint for the KDS to update a ticket's status.
-    """
-    try:
+class InventoryListView(LoginRequiredMixin, ListView):
+    model = InventoryItem
+    template_name = 'core/inventory/inventory_list.html'
+    context_object_name = 'items'
+
+
+class InventoryItemCreateView(LoginRequiredMixin, CreateView):
+    form_class = InventoryItemForm
+    template_name = 'core/inventory/inventory_form.html'
+    success_url = reverse_lazy('core:inventory-list')
+
+
+class InventoryItemUpdateView(LoginRequiredMixin, UpdateView):
+    model = InventoryItem
+    form_class = InventoryItemForm
+    template_name = 'core/inventory/inventory_form.html'
+    success_url = reverse_lazy('core:inventory-list')
+
+
+# ==============================================================================
+# UPDATE KITCHEN TICKET STATUS (AJAX)
+# ==============================================================================
+
+class UpdateKitchenTicketStatusView(View):
+    @transaction.atomic
+    def post(self, request, ticket_id: int):
         ticket = get_object_or_404(KitchenTicket, id=ticket_id)
-        new_status = request.POST.get('status')
-
-        if new_status not in ['in_progress', 'completed', 'cancelled']:
-            return JsonResponse({'status': 'error', 'message': 'Invalid status provided.'}, status=400)
+        data = json.loads(request.body or "{}")
+        new_status = data.get('status')
+        if new_status not in dict(KitchenTicket.Status.choices):
+            return JsonResponse({'status': 'error', 'message': 'Invalid status'}, status=400)
 
         ticket.status = new_status
-        ticket.save()
-        
-        # If ticket is complete, update the parent order status
-        if new_status == 'completed':
-            order = ticket.order
-            order.status = 'ready_for_pickup'
-            order.save()
+        ticket.save(update_fields=['status'])
+        broadcast_kitchen_ticket(ticket, action="update")
 
-        return JsonResponse({'status': 'success', 'message': f'Ticket {ticket_id} updated to {new_status}.'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+        order = ticket.order_item.order
+        complete = not order.items.exclude(kitchenticket__status=KitchenTicket.Status.READY).exists()
+        if complete:
+            order.status = Order.Status.READY
+            order.save(update_fields=['status'])
+            broadcast_kitchen_ticket(ticket, action="order_complete")
 
-@login_required
-def export_sales_data(request: HttpRequest) -> HttpResponse:
-    """
-    Exports order data within a specified date range to a CSV file.
-    Accessible only by managers.
-    """
-    if request.user.role != 'manager':
-        messages.error(request, "You do not have permission to perform this action.")
-        return redirect('user_dashboard')
+        return JsonResponse({'status': 'success', 'new_status': ticket.get_status_display()})
 
-    response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = f'attachment; filename="sales_export_{timezone.now().strftime("%Y-%m-%d")}.csv"'
-
-    writer = csv.writer(response)
-    writer.writerow(['Order ID', 'Date', 'Time', 'User', 'Total Price', 'Status', 'Table Number'])
-
-    # Use select_related for efficiency to avoid extra DB hits in the loop
-    orders = Order.objects.select_related('user', 'table').all()
-
-    for order in orders:
-        writer.writerow([
-            order.id,
-            order.created_at.strftime('%Y-%m-%d'),
-            order.created_at.strftime('%H:%M:%S'),
-            order.user.username if order.user else 'N/A',
-            order.total_price,
-            order.get_status_display(),
-            order.table.number if order.table else 'N/A'
-        ])
-
-    return response
 
 # ==============================================================================
-# DJANGO REST FRAMEWORK VIEWSETS
+# API VIEWSETS
 # ==============================================================================
 
 class CustomUserViewSet(viewsets.ModelViewSet):
-    """
-    API endpoint that allows users to be viewed or edited.
-    Consider adding permission classes for security.
-    """
-    queryset = CustomUser.objects.all()
+    queryset = CustomUser.objects.all().order_by('id')
     serializer_class = CustomUserSerializer
-    # permission_classes = [permissions.IsAdminUser] # Example permission
+    permission_classes = [permissions.IsAuthenticated]
 
-# Note: ProfileViewSet was removed as it appeared to be a duplicate of CustomUserViewSet.
-# If your Profile model is different from CustomUser, you should define a separate ViewSet for it.
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return CustomUser.objects.all()
+        return CustomUser.objects.filter(id=user.id)
+
 
 # ==============================================================================
-# MISCELLANEOUS VIEWS
+# EXPORT SALES DATA
 # ==============================================================================
 
-@login_required
-def chat_room(request: HttpRequest) -> HttpResponse:
-    """Renders the staff chat room page."""
-    return render(request, 'core/chat.html')
+class ExportSalesDataView(LoginRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="sales_data.csv"'
 
-@login_required
-def inventory_list(request: HttpRequest) -> HttpResponse:
-    """Displays a list of all inventory items."""
-    items = Inventory.objects.all()
-    return render(request, 'core/inventory_list.html', {'items': items})
+        writer = csv.writer(response)
+        writer.writerow(['Order ID', 'Date', 'Total', 'Status'])
 
-def create_inventory_item(request):
-    if request.method == 'POST':
-        form = InventoryItemForm(request.POST)
-        if form.is_valid():
-            inventory_item = form.save(commit=False)  # Create the instance but don't save to the database yet
-            # last_updated will be automatically set by Django when the model is saved
-            inventory_item.save()  # Now save the instance
-            return redirect('inventory_list')  # Redirect to a list view after saving
-    else:
-        form = InventoryItemForm()
-    
-    return render(request, 'inventory/create_item.html', {'form': form})
+        orders = Order.objects.filter(status=Order.Status.PAID).annotate(
+            total_price=Sum(F('items__quantity') * F('items__menu_item__base_price'))
+        )
 
-@login_required
-def pos_view(request):
-    return render(request, 'pos/pos.html')
+        for o in orders:
+            writer.writerow([o.id, o.created_at.strftime('%Y-%m-%d %H:%M'), o.total_price or 0, o.status])
+        return response
+
+
+class OrderDetailView(DetailView):
+    model = Order
+    template_name = "core/order_detail.html"
+    context_object_name = "order"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["items"] = OrderItem.objects.filter(order=self.object)
+        return context
+
+
+def order_status_json(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    data = {
+        "status": order.status,
+        "status_display": order.get_status_display(),
+        "updated_at": timezone.localtime(order.updated_at).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    return JsonResponse(data)
+
+
+class OrderListView(ListView):
+    model = Order
+    template_name = "core/order_list.html"
+    context_object_name = "orders"
+    paginate_by = 20
+
+    def get_queryset(self):
+        qs = Order.objects.select_related('table', 'customer', 'restaurant').order_by("-created_at")
+        q = self.request.GET.get("q")
+        status = self.request.GET.get("status")
+        payment = self.request.GET.get("payment")
+
+        if q:
+            qs = qs.filter(Q(id__icontains=q) | Q(table__number__icontains=q))
+        if status:
+            qs = qs.filter(status=status)
+        if payment:
+            qs = qs.filter(payment_method=payment)
+        return qs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["order_statuses"] = Order.Status.choices
+        return context
+
+
+class OrderHistoryView(ListView):
+    template_name = "core/order_history.html"
+    context_object_name = "orders"
+
+    def get_queryset(self):
+        return Order.objects.order_by("-created_at")[:50]
+
+
+@require_POST
+def complete_order(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    order.status = Order.Status.COMPLETED
+    order.save()
+
+    messages.success(request, f"Order #{order.id} marked as completed.")
+    broadcast_kitchen_ticket(None, action="order_completed", order_id=str(order.pk))
+    return redirect("core:order-detail", pk=order.pk)
+
+# ==============================================================================
+# CHAT & SETTINGS
+# ==============================================================================
+
+class ChatRoomView(LoginRequiredMixin, TemplateView):
+    template_name = 'core/chat_room.html'
+
+
+class SettingsView(LoginRequiredMixin, TemplateView):
+    template_name = 'core/settings.html'

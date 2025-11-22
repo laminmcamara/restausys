@@ -8,6 +8,14 @@
   - [Features](#features)
   - [Technologies Used](#technologies-used)
   - [Installation](#installation)
+- [🛠️ Fixing the Django Admin “Access Denied” Issue](#️-fixing-the-django-admin-access-denied-issue)
+  - [Overview](#overview)
+  - [⚠️ Problem Summary](#️-problem-summary)
+    - [1. Cause](#1-cause)
+- [🛠️ Fixing the Django Admin “Access Denied” Issue](#️-fixing-the-django-admin-access-denied-issue-1)
+  - [Overview](#overview-1)
+  - [⚠️ Problem Summary](#️-problem-summary-1)
+    - [1. Cause](#1-cause-1)
 
 ## Project Overview
 The Restaurant Management System is a web application designed to help restaurant managers and staff manage their operations effectively. It includes features for managing users, orders, menu items, tables, and sales data.
@@ -140,3 +148,131 @@ Push to the branch (git push origin feature/YourFeature).
 Open a Pull Request.
 License
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+
+# 🛠️ Fixing the Django Admin “Access Denied” Issue
+
+## Overview
+
+After introducing a customized `CustomUser` model to handle multiple staff roles (manager, server, cook, cashier, etc.), the Django Admin login began rejecting even valid **superuser** credentials with the error:
+
+> **“Access denied”**
+
+This README describes **why** that happened, and the exact **fix** that resolved it.
+
+---
+
+## ⚠️ Problem Summary
+
+### 1. Cause
+
+In the original `CustomUser` model, the `save()` method automatically overwrote the `is_staff` flag based on the user’s role:
+
+```python
+def save(self, *args, **kwargs):
+    self.is_staff = self.role in [self.Roles.MANAGER, self.Roles.SERVER, self.Roles.CASHIER]
+    super().save(*args, **kwargs)
+
+
+
+
+
+    markdown
+
+# 🛠️ Fixing the Django Admin “Access Denied” Issue
+
+## Overview
+
+After introducing a customized `CustomUser` model to handle multiple staff roles (manager, server, cook, cashier, etc.), the Django Admin login began rejecting even valid **superuser** credentials with the error:
+
+> **“Access denied”**
+
+This README describes **why** that happened, and the exact **fix** that resolved it.
+
+---
+
+## ⚠️ Problem Summary
+
+### 1. Cause
+
+In the original `CustomUser` model, the `save()` method automatically overwrote the `is_staff` flag based on the user’s role:
+
+```python
+def save(self, *args, **kwargs):
+    self.is_staff = self.role in [self.Roles.MANAGER, self.Roles.SERVER, self.Roles.CASHIER]
+    super().save(*args, **kwargs)
+That means:
+
+Situation	Result
+Superuser created via createsuperuser	is_staff=True initially
+Any subsequent save (even automatically)	is_staff reset to False (if role not in the list)
+Admin login check	Fails because user.is_staff is now False
+So, even true superusers could not pass Django’s internal check:
+
+python
+
+Run
+
+if user.is_active and user.is_staff:
+Hence, no access to /admin/.
+
+🧠 Root Cause
+The save() method unintentionally overrode the is_staff flag for all users, including superusers.
+
+This broke the logic Django uses for admin permission checks.
+
+✅ The Solution
+Modify the save() method to:
+
+Only apply automatic is_staff logic for non–superusers.
+Allow Django’s built‑in superuser privileges to remain untouched.
+✅ Fixed code:
+python
+
+Run
+
+def save(self, *args, **kwargs):
+    # Only auto-set is_staff for non-superusers
+    if not self.is_superuser:
+        self.is_staff = self.role in [
+            self.Roles.MANAGER, self.Roles.SERVER, self.Roles.CASHIER
+        ]
+    super().save(*args, **kwargs)
+This ensures:
+
+Superusers keep both is_superuser=True and is_staff=True.
+Role-based staff (e.g., Manager, Cashier) automatically get admin access.
+Regular users remain non-staff safely.
+🧩 How to Apply the Fix
+Open your models.py file.
+Locate your CustomUser model.
+Replace its save() method with the one shown above.
+Re-run migrations (none likely needed):
+bash
+
+python manage.py makemigrations
+python manage.py migrate
+Re-save or recreate your superuser:
+bash
+
+python manage.py shell
+>>> from core.models import CustomUser
+>>> u = CustomUser.objects.get(username='admin')
+>>> u.is_staff = True
+>>> u.is_superuser = True
+>>> u.save()
+Log in again at:
+👉 http://127.0.0.1:8000/admin/
+You should now successfully access the Django Admin panel.
+
+🧾 Verification Steps
+Check	Expected
+Admin login URL	✅ Works again
+Superuser flags in database	✅ is_staff=True, is_superuser=True
+Role-based staff (e.g., Manager)	✅ is_staff=True automatically
+Non-staff employees (Cook, etc.)	✅ is_staff=False
+🔒 Additional Notes
+Keep is_staff and is_superuser consistent. Django relies on these fields for admin permission checks.
+Avoid overriding them in save() unless protecting superusers.
+If you use signals (e.g., post_save), ensure they also respect this logic.

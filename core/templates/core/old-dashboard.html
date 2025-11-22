@@ -1,0 +1,41 @@
+{% extends 'core/base.html' %}
+
+{% block title %}
+    User Dashboard
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <h1>Welcome to Your Dashboard</h1>
+    
+    <nav class="navbar">
+        <ul>
+            <li><a href="{% url 'core:user-dashboard' %}">User Dashboard</a></li>
+            <li><a href="{% url 'core:manager-dashboard' %}">Manager Dashboard</a></li>
+            <li><a href="{% url 'logout' %}">Logout</a></li>
+        </ul>
+    </nav>
+
+    <section class="dashboard-overview">
+        <h2>Overview</h2>
+        <p>This section provides an overview of your activities and statistics.</p>
+        <!-- Add more content or statistics here -->
+    </section>
+
+    <section class="recent-activities">
+        <h2>Recent Activities</h2>
+        <ul>
+            <li>Activity 1: Description</li>
+            <li>Activity 2: Description</li>
+            <li>Activity 3: Description</li>
+            <!-- Add more activities as needed -->
+        </ul>
+    </section>
+
+    <section class="notifications">
+        <h2>Notifications</h2>
+        <p>No new notifications at this time.</p>
+        <!-- Add notification logic here -->
+    </section>
+</div>
+{% endblock %}

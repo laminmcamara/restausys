@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'core/pos/style.css' %}" />
+
+<div class="customer-display">
+  <h2 id="restaurant-name">{{ request.user.restaurant.name }}</h2>
+  <h3 id="table-info">Table {{ table.name }}</h3>
+
+  <div class="order-items">
+    <ul id="items-list"></ul>
+  </div>
+
+  <div class="total-section">
+    <h3>Total: $<span id="total">0.00</span></h3>
+    <div id="status-msg" class="waiting">Waiting for your order...</div>
+  </div>
+</div>
+
+<script>
+  const TABLE_ID = {{ table.id }};
+  
+  // Support secure WebSocket if site uses HTTPS
+  const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+  const socket = new WebSocket(`${wsScheme}://${window.location.host}/ws/customer_display/?table_id=${TABLE_ID}`);
+
+  socket.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    const itemsList = document.getElementById("items-list");
+    const totalDisplay = document.getElementById("total");
+    const statusMsg = document.getElementById("status-msg");
+
+    // New order received
+    if (data.status === "new_order") {
+      itemsList.innerHTML = (data.items || [])
+        .map(i => `<li>${i.qty} × ${i.name}</li>`)
+        .join("");
+      totalDisplay.textContent = Number(data.total || 0).toFixed(2);
+      statusMsg.textContent = "👨‍🍳 Your order is being prepared!";
+      statusMsg.className = "active";
+    }
+
+    // Update status messages progressively
+    if (data.status === "cooking") {
+      statusMsg.textContent = "🔥 Your meal is cooking...";
+      statusMsg.className = "active";
+    }
+
+    if (data.status === "ready") {
+      statusMsg.textContent = "✅ Your meal is ready!";
+      statusMsg.className = "ready";
+    }
+
+    if (data.status === "served") {
+      statusMsg.textContent = "🍽️ Served! Enjoy your meal!";
+      statusMsg.className = "served";
+    }
+
+    if (data.status === "paid") {
+      statusMsg.textContent = "💛 Thank you for dining with us!";
+      statusMsg.className = "paid";
+    }
+  };
+
+  socket.onclose = () => {
+    document.getElementById("status-msg").textContent = "Connection closed. Please refresh.";
+  };
+</script>
+{% endblock %}
