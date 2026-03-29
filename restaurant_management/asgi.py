@@ -1,38 +1,46 @@
 # restaurant_management/asgi.py
+"""
+ASGI entrypoint for Django + Channels.
+Handles:
+- HTTP requests via Django's ASGI application
+- WebSocket connections via Channels routing
+"""
 
 import os
-import django
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 
-# Import WebSocket routing from core app
-from core import routing
+# --------------------------------------------------------------------------
+# Environment Setup
+# --------------------------------------------------------------------------
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "restaurant_management.settings")
 
-# -----------------------------------------------------------------------------
-# Environment setup
-# -----------------------------------------------------------------------------
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'restaurant_management.settings')
-django.setup()
+# Initialize Django ASGI application early
+django_asgi_app = get_asgi_application()
 
-# -----------------------------------------------------------------------------
-# ASGI application configuration
-# -----------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# WebSocket Routing (import AFTER Django setup)
+# --------------------------------------------------------------------------
+from core import routing as core_routing
+
+# --------------------------------------------------------------------------
+# Combined ASGI Application
+# --------------------------------------------------------------------------
 application = ProtocolTypeRouter({
-    # Handles traditional HTTP requests
-    "http": get_asgi_application(),
+    # Standard HTTP traffic
+    "http": django_asgi_app,
 
-    # Handles WebSocket connections via Django Channels
+    # WebSocket traffic
     "websocket": AuthMiddlewareStack(
         URLRouter(
-            routing.websocket_urlpatterns  # Core/WebSocket routes
+            core_routing.websocket_urlpatterns
         )
     ),
 })
 
-# -----------------------------------------------------------------------------
-# Optional: Debug diagnostic
-# -----------------------------------------------------------------------------
-# You can enable this check during local development to confirm the app loads properly.
+# --------------------------------------------------------------------------
+# Optional Debug Log
+# --------------------------------------------------------------------------
 if os.getenv("DEBUG_CHANNELS", "false").lower() == "true":
-    print("✅ ASGI: Django Channels routing loaded successfully.")
+    print("✅ ASGI loaded: Channels WebSocket routing active.")

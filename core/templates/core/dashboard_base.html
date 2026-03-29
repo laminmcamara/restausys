@@ -1,0 +1,195 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>
+        {% if page_title %}
+            {{ page_title }}
+        {% else %}
+            Dashboard
+        {% endif %}
+        — RestaurantSys
+    </title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{% static 'core/css/dashboard.css' %}">
+</head>
+
+<body class="bg-slate-100 font-[Poppins] text-slate-800">
+
+<div class="flex min-h-screen">
+
+    <!-- ============================================================
+         SIDEBAR
+    ============================================================ -->
+    <aside class="w-64 bg-slate-900 text-slate-200 flex flex-col">
+
+        <!-- Brand -->
+        <div class="p-6 border-b border-slate-700">
+            <a href="{% url 'core:pos_dashboard' %}" 
+               class="text-xl font-bold text-white tracking-wide">
+                RestaurantSys
+            </a>
+        </div>
+
+        <!-- Navigation -->
+        <nav class="flex-1 p-4 space-y-1 text-sm overflow-y-auto">
+
+            <!-- ================= OPERATIONS ================= -->
+            <p class="text-xs uppercase text-slate-400 mt-2 mb-2">Operations</p>
+
+            <a href="{% url 'core:pos_dashboard' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                POS Terminal
+            </a>
+
+            <a href="{% url 'core:table_overview' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Table Overview
+            </a>
+
+            <a href="{% url 'core:kitchen_display' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Kitchen Display
+            </a>
+
+            <a href="{% url 'core:customer_display' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Customer Display
+            </a>
+
+            <!-- ================= SALES ================= -->
+            <p class="text-xs uppercase text-slate-400 mt-6 mb-2">Sales</p>
+
+            <a href="{% url 'core:orders' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Orders
+            </a>
+
+            {% if request.user.is_staff %}
+            <a href="{% url 'admin:index' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Refunds & Payments
+            </a>
+            {% endif %}
+
+            <!-- ================= REPORTS ================= -->
+            {% if request.user.is_staff %}
+            <p class="text-xs uppercase text-slate-400 mt-6 mb-2">Reports</p>
+
+            <a href="{% url 'core:daily_reports' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Daily Reports
+            </a>
+
+            <a href="{% url 'core:period_summary' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Summary Reports
+            </a>
+            {% endif %}
+
+            <!-- ================= MANAGEMENT ================= -->
+            {% if request.user.is_staff %}
+            <p class="text-xs uppercase text-slate-400 mt-6 mb-2">Management</p>
+
+            <a href="{% url 'core:manager_dashboard' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Manager Dashboard
+            </a>
+
+            <a href="{% url 'core:restaurant_dashboard' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Restaurant Dashboard
+            </a>
+
+            <a href="{% url 'core:settings' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                System Settings
+            </a>
+            {% endif %}
+
+            <!-- ================= SYSTEM ================= -->
+            {% if request.user.is_superuser %}
+            <p class="text-xs uppercase text-slate-400 mt-6 mb-2">System</p>
+
+            <a href="{% url 'admin:index' %}"
+               class="block px-4 py-2 rounded-lg hover:bg-slate-800 transition">
+                Django Admin
+            </a>
+            {% endif %}
+
+        </nav>
+
+        <!-- Footer -->
+        <div class="p-4 border-t border-slate-700 text-xs text-slate-400">
+            © {% now "Y" %} RestaurantSys
+        </div>
+    </aside>
+
+    <!-- ============================================================
+         MAIN CONTENT
+    ============================================================ -->
+    <div class="flex-1 flex flex-col">
+
+        <!-- Top Bar -->
+        <header class="bg-white shadow-sm px-6 py-4 flex justify-between items-center">
+
+            <!-- Page Title -->
+            <div>
+                <h1 class="text-xl font-semibold text-slate-800">
+                    {% if page_title %}
+                        {{ page_title }}
+                    {% else %}
+                        Dashboard
+                    {% endif %}
+                </h1>
+
+                {% if subtitle %}
+                    <p class="text-sm text-slate-500">{{ subtitle }}</p>
+                {% endif %}
+            </div>
+
+            <!-- User Section -->
+            <div class="flex items-center gap-6">
+
+                <div class="text-right">
+                    <p class="text-sm font-medium text-slate-700">
+                        {{ request.user.get_full_name|default:request.user.username }}
+                    </p>
+                    <p class="text-xs text-slate-500">
+                        {{ request.user.email }}
+                    </p>
+                </div>
+
+                <a href="{% url 'core:logout' %}"
+                   class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition">
+                    Logout
+                </a>
+
+            </div>
+
+        </header>
+
+        <!-- Page Content -->
+        <main class="flex-1 p-6">
+            {% block dashboard_content %}
+            {% endblock %}
+        </main>
+
+    </div>
+</div>
+
+<script src="{% static 'core/js/dashboard.js' %}"></script>
+
+</body>
+</html>

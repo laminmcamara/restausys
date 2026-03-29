@@ -12,12 +12,12 @@ from pathlib import Path
 from django.urls import reverse_lazy
 import os
 import logging
+import environ
 
 # ==============================================================================
 # BASE & ENVIRONMENT CONFIGURATION
 # ==============================================================================
 
-import environ
 
 # --- Base directory ---
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -57,11 +57,13 @@ MANAGERS = ADMINS
 # APPLICATION DEFINITION
 # ==============================================================================
 
+AUTH_USER_MODEL = "core.CustomUser"
+
 INSTALLED_APPS = [
     # 1. Third-party UI enhancements (must precede admin)
     "unfold",
-    "unfold.contrib.filters",
-    "unfold.contrib.forms",
+    # "unfold.contrib.filters",
+    # "unfold.contrib.forms",
 
     # 2. Django core apps
     "django.contrib.admin",
@@ -72,25 +74,28 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "channels",
     "django.contrib.sites",
+    "django_extensions",
 
     # 3. Third‑party apps
     "crispy_forms",
     "crispy_bootstrap5",
-    "oauth2_provider",
     "rest_framework",
 
     # 4. Local apps
     "core.apps.CoreConfig",
-    "staff",
-    "tables",
-    "menu",
-    "ordering",
-    "kitchen",
-    "payments",
-    "qr_screen",
-    "notifications",
-    "analytics",
+    # "staff",
+    # "tables",
+    # "menu",
+    # "ordering",
+    # "kitchen",
+    # "payments",
+    # "qr_screen",
+    # "notifications",
+    # "analytics",
 ]
+
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
+CRISPY_TEMPLATE_PACK = "bootstrap5"
 
 SITE_ID = 1  # required for internationalization and multi-site features
 
@@ -123,7 +128,7 @@ ASGI_APPLICATION = "restaurant_management.asgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -145,19 +150,15 @@ TEMPLATES = [
 
 DATABASES = {
     "default": {
-        "ENGINE": os.getenv("DB_ENGINE", "django.db.backends.sqlite3"),
-        "NAME": os.getenv("DB_NAME", BASE_DIR / "db.sqlite3"),
-        "USER": os.getenv("DB_USER", ""),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
-        "HOST": os.getenv("DB_HOST", ""),
-        "PORT": os.getenv("DB_PORT", ""),
+        "ENGINE": env("DB_ENGINE", default="django.db.backends.sqlite3"),
+        "NAME": env("DB_NAME", default=str(BASE_DIR / "db.sqlite3")),
     }
 }
 
 # ==============================================================================
 # AUTHENTICATION & AUTHORIZATION
 # ==============================================================================
-
+# in settings.py
 AUTH_USER_MODEL = "core.CustomUser"
 LOGIN_URL = reverse_lazy("core:login")
 LOGIN_REDIRECT_URL = reverse_lazy("core:home")
@@ -223,6 +224,13 @@ CHANNEL_LAYERS = {
             "hosts": [(os.getenv("REDIS_HOST", "127.0.0.1"), 6379)],
         },
     },
+}
+
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
 }
 
 # ==============================================================================
@@ -326,6 +334,13 @@ PRINTERS = {
         "TYPE": "network",
     },
 }
+
+
+STRIPE_SECRET_KEY = "sk_test_xxx"
+STRIPE_PUBLIC_KEY = "pk_test_xxx"
+STRIPE_WEBHOOK_SECRET = "whsec_xxx"
+
+
 
 # ==============================================================================
 # DEFAULT AUTO FIELD

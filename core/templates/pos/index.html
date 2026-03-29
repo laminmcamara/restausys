@@ -1,0 +1,121 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<link rel="stylesheet" href="{% static 'core/pos/style.css' %}" />
+
+<style>
+  .pos-orders {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+  }
+  .pos-card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 16px;
+      border: 2px solid #eee;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+  }
+  .pos-status {
+      font-weight: bold;
+      color: #444;
+      margin-top: 6px;
+  }
+  .pos-actions button {
+      margin: 4px;
+  }
+</style>
+
+<h2>POS — Orders</h2>
+<div id="pos-orders" class="pos-orders"></div>
+
+<script>
+/* ----------------------------------------------------------
+   1) WebSocket connection for POS
+---------------------------------------------------------- */
+const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+const socket = new WebSocket(`${wsScheme}://${window.location.host}/ws/pos/`);
+
+socket.onopen = () => console.log("🟢 POS WebSocket Connected");
+socket.onclose = () => console.warn("🔴 POS WebSocket Disconnected");
+
+/* ----------------------------------------------------------
+   2) Handle incoming updates
+   Format:
+   {
+      type: "order_update",
+      order: { ... }
+   }
+---------------------------------------------------------- */
+socket.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+
+    if (data.type === "order_update") {
+        renderOrder(data.order);
+    }
+};
+
+/* ----------------------------------------------------------
+   3) Render or update an order card
+---------------------------------------------------------- */
+function renderOrder(order) {
+    const container = document.getElementById("pos-orders");
+    let card = document.getElementById("pos-order-" + order.id);
+
+    if (!card) {
+        card = document.createElement("div");
+        card.id = "pos-order-" + order.id;
+        card.className = "pos-card";
+        container.appendChild(card);
+    }
+
+    card.innerHTML = `
+        <h3>Order #${order.id}</h3>
+        <p><b>Table:</b> ${order.table || '-'}</p>
+        <p><b>Time:</b> ${new Date(order.created_at).toLocaleTimeString()}</p>
+
+        <ul>
+            ${order.items.map(i => `
+                <li>${i.qty} × ${i.name} ${i.variant ? "(" + i.variant + ")" : ""}</li>
+            `).join("")}
+        </ul>
+
+        <p class="pos-status">Status: <b>${order.status.toUpperCase()}</b></p>
+
+        <div class="pos-actions">
+            <button onclick="updateStatus(${order.id}, 'served')">🍽️ Mark Served</button>
+            <button onclick="updateStatus(${order.id}, 'paid')">💰 Mark Paid</button>
+        </div>
+    `;
+}
+
+/* ----------------------------------------------------------
+   4) Update order status (Waiter action)
+---------------------------------------------------------- */
+function updateStatus(orderId, status) {
+    fetch("/pos/api/update-status/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_id: orderId, status }),
+    })
+    .then(res => res.json())
+    .then(resp => {
+        if (!resp.success) {
+            alert("Error updating status");
+        }
+    });
+}
+
+/* ----------------------------------------------------------
+   5) Initial load (POS boot)
+---------------------------------------------------------- */
+fetch("/pos/api/orders/")
+    .then(res => res.json())
+    .then(data => {
+        data.orders.forEach(order => renderOrder(order));
+    });
+</script>
+
+{% endblock %}

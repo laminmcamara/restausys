@@ -1,0 +1,66 @@
+{% extends "core/dashboard_base.html" %}
+{% block content %}
+
+<div class="p-6">
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold">Order #{{ order.id }}</h1>
+
+        <span class="px-3 py-1 text-sm rounded
+            {% if order.status == 'PAID' %}
+                bg-green-100 text-green-700
+            {% elif order.status == 'PENDING' %}
+                bg-yellow-100 text-yellow-700
+            {% elif order.status == 'CANCELLED' %}
+                bg-red-100 text-red-700
+            {% else %}
+                bg-gray-100 text-gray-700
+            {% endif %}
+        ">
+            {{ order.status }}
+        </span>
+    </div>
+
+    <!-- Order Info -->
+    <div class="bg-white shadow rounded-lg p-6 space-y-4">
+
+        <div class="grid grid-cols-2 gap-6">
+
+            <div>
+                <p class="text-sm text-gray-500">Customer</p>
+                <p class="font-medium">
+                    {{ order.customer|default:"Walk-in" }}
+                </p>
+            </div>
+
+            <div>
+                <p class="text-sm text-gray-500">Created At</p>
+                <p class="font-medium">
+                    {{ order.created_at|date:"M d, Y H:i" }}
+                </p>
+            </div>
+
+        </div>
+
+        <hr>
+
+        <div>
+            <p class="text-sm text-gray-500 mb-2">Total Amount</p>
+            <p class="text-2xl font-bold">
+                ${{ order.total_amount }}
+            </p>
+        </div>
+
+        <div class="pt-4">
+            <a href="{% url 'core:orders' %}"
+               class="text-blue-600 hover:underline text-sm">
+                ← Back to Orders
+            </a>
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

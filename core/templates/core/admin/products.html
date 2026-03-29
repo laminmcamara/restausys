@@ -1,0 +1,37 @@
+{% extends "core/dashboard_base.html" %}
+
+{% block title %}Products{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <div class="flex justify-between items-center mb-4">
+    <h1 class="text-2xl font-bold">Products</h1>
+
+    <a href="{% url 'core:product-create' %}"
+       class="px-4 py-2 bg-indigo-600 text-white rounded">Add Product</a>
+  </div>
+
+  <table class="w-full bg-white rounded shadow">
+    <tr class="border-b bg-gray-50">
+      <th class="p-3 text-left">Image</th>
+      <th class="p-3 text-left">Name</th>
+      <th class="p-3 text-left">Price</th>
+      <th class="p-3 text-left">Actions</th>
+    </tr>
+
+    {% for product in products %}
+    <tr class="border-b">
+      <td class="p-3"><img src="{{ product.image.url }}" class="h-12 rounded"></td>
+      <td class="p-3">{{ product.name }}</td>
+      <td class="p-3">₱{{ product.price }}</td>
+      <td class="p-3">
+        <a href="{% url 'core:product-edit' product.id %}" class="text-indigo-600 mr-3">Edit</a>
+        <a href="{% url 'core:product-delete' product.id %}" class="text-red-600">Delete</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+</div>
+{% endblock %}

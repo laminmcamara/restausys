@@ -1,0 +1,35 @@
+{% extends "core/base.html" %}
+{% block title %}Staff Timeclock{% endblock %}
+
+{% block content %}
+<div class="p-6 min-h-screen bg-gray-100">
+
+  <h1 class="text-3xl font-bold text-gray-800 mb-6">Staff Timeclock</h1>
+
+  <div class="max-w-lg mx-auto bg-white shadow rounded-xl p-6 space-y-4">
+
+    <form method="POST" class="space-y-4">
+      {% csrf_token %}
+
+      <div>
+        <label class="font-medium">Employee ID</label>
+        <input type="text" name="employee_id"
+               class="w-full border rounded-lg px-3 py-2">
+      </div>
+
+      <button name="action" value="clock_in"
+              class="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">
+        CLOCK IN
+      </button>
+
+      <button name="action" value="clock_out"
+              class="w-full bg-red-600 text-white py-3 rounded-lg font-semibold">
+        CLOCK OUT
+      </button>
+
+    </form>
+
+  </div>
+
+</div>
+{% endblock %}

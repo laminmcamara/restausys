@@ -1,0 +1,109 @@
+{% extends "core/base.html" %}
+{% block content %}
+<style>
+  body { font-family: sans-serif; }
+  .menu-container { display: flex; flex-wrap: wrap; gap: 2rem; }
+  .category { flex: 1 1 300px; border: 1px solid #ccc; padding: 10px; border-radius: 8px; }
+  .category h3 { background: #f0f0f0; margin: -10px -10px 10px; padding: 8px; border-radius: 8px 8px 0 0; }
+  .menu-item { display: block; width: 100%; text-align: left; background: #fafafa; margin-bottom: 4px; border: 1px solid #ddd; border-radius: 6px; padding: 6px; }
+  .menu-item:hover { background: #e6f7ff; cursor: pointer; }
+  #order-summary { border: 2px solid #007bff; padding: 10px; border-radius: 10px; margin-top: 20px; background: #f9f9ff; }
+  #order-summary h4 { margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 4px 6px; text-align: left; }
+  th { border-bottom: 1px solid #999; }
+  .total { font-weight: bold; }
+</style>
+
+<h2>Direct / Takeaway Order</h2>
+<p>Tap a category to view items and add them to your order.</p>
+
+<div class="menu-container">
+  {% for category in categories %}
+    <div class="category">
+      <h3>{{ category.name }}</h3>
+      {% for item in category.items.all %}
+        {% if item.available %}
+          <button class="menu-item"
+                  data-id="{{ item.id }}"
+                  data-name="{{ item.name }}"
+                  data-price="{{ item.base_price }}">
+            {{ item.name }} — ${{ item.base_price }}
+          </button>
+        {% endif %}
+      {% empty %}
+        <p>No items in this category.</p>
+      {% endfor %}
+    </div>
+  {% endfor %}
+</div>
+
+<div id="order-summary">
+  <h4>Order Summary</h4>
+  <table id="summary-table">
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Qty</th>
+        <th>Price</th>
+        <th>Subtotal</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3" class="total">Total:</td>
+        <td class="total" id="grand-total">$0.00</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<script>
+const summaryBody = document.querySelector('#summary-table tbody');
+const totalDisplay = document.getElementById('grand-total');
+let order = {};  // {id: {name, price, qty}}
+
+document.querySelectorAll('.menu-item').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    const price = parseFloat(btn.dataset.price);
+
+    if (!order[id]) {
+      order[id] = {name, price, qty: 0};
+    }
+    order[id].qty += 1;
+    renderOrder();
+  });
+});
+
+function removeItem(id) {
+  delete order[id];
+  renderOrder();
+}
+
+function renderOrder() {
+  summaryBody.innerHTML = '';
+  let total = 0;
+
+  Object.entries(order).forEach(([id, item]) => {
+    const subtotal = item.price * item.qty;
+    total += subtotal;
+    summaryBody.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>${item.name}</td>
+        <td>${item.qty}</td>
+        <td>$${item.price.toFixed(2)}</td>
+        <td>$${subtotal.toFixed(2)}</td>
+        <td><button onclick="removeItem('${id}')">×</button></td>
+      </tr>
+    `);
+  });
+
+  totalDisplay.textContent = '$' + total.toFixed(2);
+}
+</script>
+{% endblock %}

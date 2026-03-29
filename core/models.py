@@ -1,3 +1,5 @@
+# C:\Users\Administrator\restaurant_management\core\models.py
+
 import uuid
 from datetime import date, timedelta
 from io import BytesIO
@@ -8,38 +10,39 @@ from django.db import models
 from django.db.models import Sum, F, DecimalField
 from django.contrib.auth.models import AbstractUser
 from django.conf import settings
-from django.core.files import File
+from django.core.files.base import File
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 import qrcode
+from PIL import Image, ImageDraw, ImageFont
 
 # =============================================================================
-# === BASE MANAGERS & UTILITIES ==============================================
+# === BASE MODELS & MANAGERS ==================================================
 # =============================================================================
+
+class TimeStampedModel(models.Model):
+    """Abstract base model for created_at and updated_at timestamps."""
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
 
 class OrderManager(models.Manager):
     def annotate_with_total_price(self):
+        # This manager is now simpler, as the complex calculation is handled
+        # by the OrderItem.final_price field.
         return self.annotate(
-            calculated_total=Sum(
-                F('items__quantity') *
-                (F('items__menu_item__base_price') + F('items__variant__price_modifier')),
-                output_field=DecimalField()
-            )
+            calculated_total=Sum('items__final_price', output_field=DecimalField())
         )
-
-
-class MenuItemManager(models.Manager):
-    """Global halal & availability filters."""
-    def available_halal(self):
-        return self.filter(is_active=True, available=True, halal=True)
-
 
 # =============================================================================
 # === COMPANY (Multi-brand parent) ============================================
 # =============================================================================
 
-class Company(models.Model):
+class Company(TimeStampedModel):
     """Parent company or franchise group."""
     name = models.CharField(max_length=150, unique=True)
     registration_number = models.CharField(max_length=100, blank=True)
@@ -49,11 +52,9 @@ class Company(models.Model):
     website = models.URLField(blank=True)
     logo = models.ImageField(upload_to="companies/logos/", null=True, blank=True)
     active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
-
 
 # =============================================================================
 # === USER & STAFF SYSTEM =====================================================
@@ -65,6 +66,7 @@ phone_regex = RegexValidator(
 )
 
 class CustomUser(AbstractUser):
+
     class Roles(models.TextChoices):
         SUPER_ADMIN = 'SUPER_ADMIN', 'Super Admin'
         MANAGER = 'MANAGER', 'Manager'
@@ -74,52 +76,77 @@ class CustomUser(AbstractUser):
         CUSTOMER = 'CUSTOMER', 'Customer'
         STAFF = 'STAFF', 'General Staff'
 
-    company = models.ForeignKey(Company, null=True, blank=True, on_delete=models.SET_NULL, related_name='users')
+    restaurant = models.ForeignKey(
+        'core.Restaurant',
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,  # ✅ PROTECT instead of SET_NULL
+        related_name='users'
+    )
+
     email = models.EmailField(unique=True)
-    role = models.CharField(max_length=20, choices=Roles.choices, default=Roles.STAFF)
-    phone_number = models.CharField(validators=[phone_regex], max_length=17, blank=True)
+
+    role = models.CharField(
+        max_length=20,
+        choices=Roles.choices,
+        default=Roles.STAFF
+    )
+
+    phone_number = models.CharField(
+        validators=[phone_regex],
+        max_length=17,
+        blank=True
+    )
+
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
-    passport_id_card_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
+
+    passport_id_card_number = models.CharField(
+        max_length=50,
+        unique=True,
+        null=True,
+        blank=True
+    )
 
     def save(self, *args, **kwargs):
         if not self.is_superuser:
             self.is_staff = self.role in [
-                self.Roles.MANAGER, self.Roles.CASHIER, self.Roles.SUPER_ADMIN
+                self.Roles.MANAGER,
+                self.Roles.CASHIER,
+                self.Roles.SUPER_ADMIN,
             ]
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.username} ({self.role})"
-
+    
 class Shift(models.Model):
     employee = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name="shifts"
     )
-    restaurant = models.ForeignKey("Restaurant", on_delete=models.CASCADE, related_name="shifts")
+    restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name="shifts")
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
-    role = models.CharField(max_length=50)  # e.g. 'Cook', 'Cashier', etc.
+    role = models.CharField(max_length=50)
 
     def __str__(self):
         return f"{self.employee} - {self.role} ({self.start_time:%b %d})"
-    
+
 class Attendance(models.Model):
-    """Tracks when an employee starts and ends work at a restaurant."""
     employee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="attendances"
     )
     restaurant = models.ForeignKey(
-        "Restaurant",
+        "core.Restaurant",
         on_delete=models.CASCADE,
         related_name="attendances"
     )
     check_in = models.DateTimeField(auto_now_add=True)
     check_out = models.DateTimeField(blank=True, null=True)
     shift = models.ForeignKey(
-        "Shift",
+        "core.Shift",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -137,13 +164,12 @@ class Attendance(models.Model):
         if self.check_out:
             return self.check_out - self.check_in
         return None
-    
+
 # =============================================================================
 # === CUSTOMER & LOYALTY ======================================================
 # =============================================================================
 
-class Customer(models.Model):
-    """Independent customer database for loyalty/reporting."""
+class Customer(TimeStampedModel):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='customer_profile', null=True, blank=True)
     full_name = models.CharField(max_length=120)
     email = models.EmailField(unique=True)
@@ -151,7 +177,6 @@ class Customer(models.Model):
     preferred_language = models.CharField(max_length=30, default="en")
     total_spent = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     loyalty_points = models.PositiveIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.full_name
@@ -161,18 +186,17 @@ class Customer(models.Model):
         self.total_spent += amount
         self.save(update_fields=['loyalty_points', 'total_spent'])
 
-
 # =============================================================================
 # === COMPANY RESTAURANTS =======================================================
 # =============================================================================
 
-class Restaurant(models.Model):
+class Restaurant(TimeStampedModel):
     class RestaurantStatus(models.TextChoices):
         OPEN = 'OPEN', 'Open'
         CLOSED = 'CLOSED', 'Closed'
         HOLIDAY = 'HOLIDAY', 'Holiday Hours'
 
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='restaurants')
+    company = models.ForeignKey("core.Company", on_delete=models.CASCADE, related_name='restaurants')
     name = models.CharField(max_length=100)
     address_line_1 = models.CharField(max_length=255)
     address_line_2 = models.CharField(max_length=255, blank=True)
@@ -183,7 +207,6 @@ class Restaurant(models.Model):
     logo = models.ImageField(upload_to="restaurants/logos/", null=True, blank=True)
     phone_number = models.CharField(max_length=20, blank=True)
     status = models.CharField(max_length=10, choices=RestaurantStatus.choices, default=RestaurantStatus.OPEN)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.name} ({self.company.name})"
@@ -191,181 +214,107 @@ class Restaurant(models.Model):
     class Meta:
         unique_together = ('company', 'name')
 
-
 class Table(models.Model):
-    restaurant = models.ForeignKey('Restaurant', on_delete=models.CASCADE, related_name='tables')
-    table_number = models.CharField(max_length=10)
-    capacity = models.PositiveIntegerField(default=2)
-    access_token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    coordinates = models.JSONField(default=dict, blank=True)
-    qr_code = models.ImageField(upload_to='qr_codes/', null=True, blank=True, editable=False)
 
-    STATUS_CHOICES = [
-        ("available", "Available"),
-        ("pending", "Pending"),
-        ("cooking", "Cooking"),
-        ("ready", "Ready"),
-        ("served", "Served"),
-        ("paid", "Paid"),
-    ]
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="available")
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        OCCUPIED = "OCCUPIED", "Occupied"
+        NEEDS_CLEANING = "NEEDS_CLEANING", "Needs Cleaning"
+        RESERVED = "RESERVED", "Reserved"
+        MERGED = "MERGED", "Merged"
+
+    restaurant = models.ForeignKey(
+    "core.Restaurant",
+    on_delete=models.CASCADE,
+    related_name="tables",
+)
+
+    table_number = models.CharField(max_length=20)
+
+    access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    qr_code = models.ImageField(upload_to="qr_codes/", blank=True, null=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.AVAILABLE
+    )
 
     class Meta:
-        unique_together = ('restaurant', 'table_number')
-        ordering = ['restaurant', 'table_number']
+        unique_together = ("restaurant", "table_number")
 
     def __str__(self):
-        return f"{self.restaurant.name} - Table {self.table_number}"
-
-    def get_absolute_url(self):
-        return reverse('core:table-detail-view', args=[str(self.access_token)])
+        return f"Table {self.table_number}"
 
     def generate_qr_code(self):
         site = getattr(settings, "SITE_URL", "http://localhost:8000")
-        qr_data = f"{site}{self.get_absolute_url()}"
-        qr_img = qrcode.make(qr_data)
+        qr_data = f"{site}/table/{self.access_token}/"
+        qr_img = qrcode.make(qr_data).convert("RGB")
+
+        width, height = qr_img.size
+        new_height = height + 60
+        combined = Image.new("RGB", (width, new_height), "white")
+
+        combined.paste(qr_img, (0, 0))
+        draw = ImageDraw.Draw(combined)
+
+        try:
+            font = ImageFont.truetype("arial.ttf", 15)
+        except IOError:
+            font = ImageFont.load_default()
+
+        text = f"Table {self.table_number}"
+        text_bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_x = (width - text_width) // 2
+
+        draw.text((text_x, height + 20), text, font=font, fill="black")
+
         buffer = BytesIO()
-        qr_img.save(buffer, format='PNG')
-        filename = f"table_{self.table_number}.png"
+        combined.save(buffer, format="PNG")
+
+        safe_label = str(self.table_number).replace(" ", "_")
+        filename = f"qr_table_{safe_label}_{self.id}.png"
         self.qr_code.save(filename, File(buffer), save=False)
         buffer.close()
 
     def save(self, *args, **kwargs):
-        self.table_number = str(self.table_number).upper().strip()
-        created = not self.pk
-        super().save(*args, **kwargs)
-        if created and not self.qr_code:
+        is_new = self.pk is None
+        old_table_number = None
+
+        if not is_new:
+            old = Table.objects.filter(pk=self.pk).first()
+            if old:
+                old_table_number = old.table_number
+
+        # generate QR for new table
+        if is_new and not self.qr_code:
             self.generate_qr_code()
-            super().save(update_fields=['qr_code'])
 
-    # ✅ FIX ADDED HERE
-    @property
-    def is_occupied(self) -> bool:
-        """
-        Return True if the table is currently considered occupied.
-        You can define 'occupied' however your app treats it.
-        """
-        return self.status not in ["available", "paid"]
+        super().save(*args, **kwargs)
+
+        # regenerate QR only if number changed
+        if not is_new and old_table_number != self.table_number:
+            self.generate_qr_code()
+            super().save(update_fields=["qr_code"])
+
 # =============================================================================
-# === MENU, CATEGORY & CUISINE ===============================================
+# === INVENTORY & RECIPES =====================================================
 # =============================================================================
 
-class Cuisine(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-    halal_certified = models.BooleanField(default=False)
-    region = models.CharField(max_length=100, blank=True)
-
-    def __str__(self):
-        return self.name
-
-
-class Category(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-    description = models.TextField(blank=True)
-
-    def __str__(self):
-        return self.name
-
-class MenuItem(models.Model):
-    """Represents a dish or product offered by a restaurant, including recipe links."""
-    restaurant = models.ForeignKey(
-        "Restaurant",
-        on_delete=models.CASCADE,
-        related_name="menu_items"
-    )
-    name = models.CharField(max_length=120)
-    description = models.TextField(blank=True)
-    category = models.ForeignKey(
-        "Category",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="items"
-    )
-    cuisines = models.ManyToManyField(
-        "Cuisine",
-        blank=True,
-        related_name="menu_items"
-    )
-
-    # ✅ Many-to-Many link to Inventory items (ingredients)
-    ingredients = models.ManyToManyField(
-        "InventoryItem",
-        through="RecipeItem",
-        related_name="used_in_menu_items",
-        blank=True,
-        help_text="Ingredients and quantities used to prepare this menu item."
-    )
-
-    # ✅ These restore admin compatibility
-    available = models.BooleanField(default=True)
-    is_active = models.BooleanField(default=True)  # 👈 add this
-
-    halal = models.BooleanField(default=True)
-    base_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-
-    # ✅ Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["restaurant", "name"]
-        unique_together = ("restaurant", "name")
-
-    def __str__(self):
-        return f"{self.name} ({self.restaurant.name})"
-    
-class RecipeItem(models.Model):
-    """Defines how much of each inventory ingredient a MenuItem uses."""
-    menu_item = models.ForeignKey(
-        "MenuItem",
-        on_delete=models.CASCADE,
-        related_name="recipe_items"
-    )
-    ingredient = models.ForeignKey(
-        "InventoryItem",
-        on_delete=models.CASCADE,
-        related_name="ingredient_recipes"
-    )
-    quantity_used = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        help_text="Quantity of this ingredient used per 1 serving of the menu item."
-    )
-    unit = models.CharField(max_length=20, blank=True, null=True)
-
-    class Meta:
-        # 🔧 The only valid fields to ensure uniqueness per menu item/ingredient
-        unique_together = ("menu_item", "ingredient")
-        ordering = ["menu_item"]
-
-    def __str__(self):
-        unit = self.unit or self.ingredient.unit
-        return f"{self.menu_item.name} uses {self.quantity_used} {unit} of {self.ingredient.name}"
-
-class MenuVariant(models.Model):
-    menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE, related_name='variants')
-    name = models.CharField(max_length=100)
-    price_modifier = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
-    stock = models.PositiveIntegerField(default=0)
-    is_active = models.BooleanField(default=True)
-
-    def __str__(self):
-        return f"{self.menu_item.name} - {self.name}"
-    
 class InventoryItem(models.Model):
-    """Tracks ingredient/stock items for each restaurant."""
     restaurant = models.ForeignKey(
-        "Restaurant", on_delete=models.CASCADE, related_name="inventory"
+        "core.Restaurant", on_delete=models.CASCADE, related_name="inventory"
     )
     name = models.CharField(max_length=100)
     category = models.CharField(max_length=50, blank=True, null=True)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    unit = models.CharField(max_length=20, default="pcs")  # e.g. kg, ltr, box, pcs
+    unit = models.CharField(max_length=20, default="pcs")
     reorder_level = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    unit_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     last_updated = models.DateTimeField(auto_now=True)
     active = models.BooleanField(default=True)
-    
+
     class Meta:
         ordering = ["name"]
         unique_together = ("restaurant", "name")
@@ -373,32 +322,200 @@ class InventoryItem(models.Model):
     def __str__(self):
         return f"{self.name} ({self.quantity} {self.unit})"
 
-    @property
-    def is_below_reorder(self):
-        return self.quantity <= self.reorder_level
-
-
 # =============================================================================
-# === MULTI-CURRENCY, ORDERS, PAYMENTS ========================================
+# === ### NEW & IMPROVED MENU SYSTEM ### ======================================
 # =============================================================================
+
+class Menu(TimeStampedModel):
+    """
+    The top-level container for a set of categories and products.
+    E.g., "Dinner Menu", "Lunch Menu", "Drinks Menu".
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name="menus")
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True, help_text="Is this menu currently available?")
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = "Menu"
+        verbose_name_plural = "Menus"
+        unique_together = ('restaurant', 'name')
+
+    def __str__(self):
+        return f"{self.name} ({self.restaurant.name})"
+
+class Category(TimeStampedModel):
+    """
+    A category for products. Can be nested infinitely.
+    E.g., "Drinks" -> "Soft Drinks" -> "Carbonated".
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    menu = models.ForeignKey("core.Menu", on_delete=models.CASCADE, related_name="categories")
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sub_categories',
+        help_text="Leave blank for a top-level category."
+    )
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    display_order = models.PositiveIntegerField(default=0, help_text="Order of display in the UI.")
+
+    class Meta:
+        ordering = ['display_order', 'name']
+        verbose_name = "Category"
+        verbose_name_plural = "Categories"
+        unique_together = ('name', 'parent', 'menu')
+
+    def __str__(self):
+        path = [self.name]
+        ancestor = self.parent
+        while ancestor:
+            path.insert(0, ancestor.name)
+            ancestor = ancestor.parent
+        return ' > '.join(path)
+    
+class Cuisine(models.Model):
+    """Kept from original design."""
+    name = models.CharField(max_length=100, unique=True)
+    halal_certified = models.BooleanField(default=False)
+    region = models.CharField(max_length=100, blank=True)
+
+    def __str__(self):
+        return self.name
+
+class Product(TimeStampedModel):
+    """
+    The actual sellable item on the menu. This replaces the old `MenuItem` model.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    category = models.ForeignKey("core.Category", on_delete=models.CASCADE, related_name="products")
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    base_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0.00)]
+    )
+    image = models.ImageField(upload_to='product_images/', blank=True, null=True)
+    is_available = models.BooleanField(
+        default=True,
+        help_text="Is this product available for sale right now?"
+    )
+    display_order = models.PositiveIntegerField(default=0)
+    
+    cuisines = models.ManyToManyField("core.Cuisine", blank=True, related_name="products")
+    ingredients = models.ManyToManyField(
+        "core.InventoryItem",
+        through="RecipeItem",
+        related_name="products",
+        blank=True,
+        help_text="Ingredients used to prepare this product."
+    )
+    halal = models.BooleanField(default=True)
+    estimated_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+        verbose_name = "Product"
+        verbose_name_plural = "Products"
+        unique_together = ('category', 'name')
+
+    def __str__(self):
+        return self.name
+
+class ModifierGroup(models.Model):
+    """
+
+    A group of choices for a product. E.g., "Size", "Add-ons", "Steak Temperature".
+    """
+    class SelectionType(models.TextChoices):
+        SINGLE = 'SINGLE', 'Single Choice'
+        MULTIPLE = 'MULTIPLE', 'Multiple Choices'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)
+    products = models.ManyToManyField("core.Product", related_name='modifier_groups', blank=True)
+    selection_type = models.CharField(
+        max_length=20,
+        choices=SelectionType.choices,
+        default=SelectionType.SINGLE,
+        help_text="Can the user select only one or multiple options?"
+    )
+
+    def __str__(self):
+        return self.name
+
+class ModifierOption(models.Model):
+    """
+    An individual option within a ModifierGroup. E.g., "Small", "Extra Cheese".
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey("core.ModifierGroup", on_delete=models.CASCADE, related_name='options')
+    name = models.CharField(max_length=100)
+    price_adjustment = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Amount to add to the base price. Can be negative for a discount."
+    )
+    display_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return f"{self.name} (+{self.price_adjustment})"
+
+class RecipeItem(models.Model):
+    product = models.ForeignKey(
+        "core.Product",
+        on_delete=models.CASCADE,
+        related_name="recipe_items"
+    )
+    ingredient = models.ForeignKey(
+        "core.InventoryItem",
+        on_delete=models.CASCADE,
+        related_name="ingredient_recipes"
+    )
+    quantity_used = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Quantity of this ingredient used per 1 serving of the product."
+    )
+    unit = models.CharField(max_length=20, blank=True, null=True)
+
+    class Meta:
+        unique_together = ("product", "ingredient")
+        ordering = ["product"]
+
+    def __str__(self):
+        unit = self.unit or self.ingredient.unit
+        return f"{self.product.name} uses {self.quantity_used} {unit} of {self.ingredient.name}"
 
 class MultiCurrencyPrice(models.Model):
-    """Dynamic multi-currency storage."""
-    menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE, related_name='prices')
+    product = models.ForeignKey("core.Product", on_delete=models.CASCADE, related_name='prices')
     currency = models.CharField(max_length=6)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     exchange_rate = models.DecimalField(max_digits=10, decimal_places=4, default=1.0000)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('menu_item', 'currency')
+        unique_together = ('product', 'currency')
 
     def __str__(self):
-        return f"{self.menu_item.name} - {self.currency} {self.price}"
+        return f"{self.product.name} - {self.currency} {self.price}"
 
+# =============================================================================
+# === ORDERS, PAYMENTS & KITCHEN ==============================================
+# =============================================================================
 
+class Order(TimeStampedModel):
 
-class Order(models.Model):
     class Status(models.TextChoices):
         PLACED = 'PLACED', 'Placed'
         IN_PROGRESS = 'IN_PROGRESS', 'In Progress'
@@ -408,65 +525,167 @@ class Order(models.Model):
         CANCELED = 'CANCELED', 'Canceled'
         COMPLETED = 'COMPLETED', 'Completed'
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["restaurant", "status"]),
+            models.Index(fields=["created_at"]),
+        ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    restaurant = models.ForeignKey('Restaurant', on_delete=models.PROTECT, related_name='orders')
-    customer = models.ForeignKey('Customer', null=True, blank=True, on_delete=models.SET_NULL, related_name='orders')
-    table = models.ForeignKey('Table', null=True, blank=True, on_delete=models.PROTECT)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLACED)
-    tax = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
-    service_charge = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
+
+    restaurant = models.ForeignKey(
+        'core.Restaurant',
+        on_delete=models.PROTECT,
+        related_name='orders'
+    )
+
+    customer = models.ForeignKey(
+        'core.Customer',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='orders'
+    )
+
+    table = models.ForeignKey(
+        'core.Table',
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLACED
+    )
+
+    tax = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+
+    service_charge = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal('0.00')
+    )
+
+    customer_session = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True
+    )
 
     objects = OrderManager()
 
+    @property
     def total_price(self):
-        return sum(item.final_price for item in self.items.all()) + self.tax + self.service_charge
+        total_items_price = self.items.aggregate(
+            total=Sum('final_price')
+        )['total'] or Decimal('0.00')
+
+        return total_items_price + self.tax + self.service_charge
+
+    @property
+    def elapsed_time(self):
+        return timezone.now() - self.created_at
+
+    @property
+    def age_status(self):
+        minutes = self.elapsed_time.total_seconds() / 60
+
+        if minutes < 30:
+            return "green"
+        if minutes < 45:
+            return "yellow"
+        return "red"
+
+    def ensure_kitchen_ticket(self):
+        if (
+            self.status == Order.Status.IN_PROGRESS
+            and not hasattr(self, "kitchen_ticket")
+        ):
+            KitchenTicket.objects.create(order=self)
+            return True
+        return False
 
     def __str__(self):
         return f"Order {str(self.id)[:8]} ({self.restaurant.name})"
 
-    # ✅ Add these two methods **inside** the class
-    def elapsed_time(self):
-        """Return how long ago the order was created (timedelta)."""
-        return timezone.now() - self.created_at
-
-    def age_status(self):
-        """
-        Return a color code for the order based on how long it's been open:
-        🟢 <30 min → green
-        🟡 30–45 min → yellow
-        🔴 >1 hour → red
-        """
-        minutes = self.elapsed_time().total_seconds() / 60
-
-        if minutes < 30:
-            return "green"
-        elif minutes < 45:
-            return "yellow"   # ✅ updated from "orange"
-        else:
-            return "red"
-        
-
 class OrderItem(models.Model):
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
-    menu_item = models.ForeignKey(MenuItem, on_delete=models.PROTECT)
-    variant = models.ForeignKey(MenuVariant, null=True, blank=True, on_delete=models.PROTECT)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["order"]),
+        ]
+
+    order = models.ForeignKey(
+        "core.Order",
+        on_delete=models.CASCADE,
+        related_name='items'
+    )
+
+    product = models.ForeignKey(
+        "core.Product",
+        on_delete=models.PROTECT
+    )
+
+    modifiers = models.ManyToManyField(
+        "core.ModifierOption",
+        blank=True
+    )
+
     quantity = models.PositiveIntegerField(default=1)
+
     notes = models.TextField(blank=True)
+
     status = models.CharField(max_length=20, default="QUEUED")
-    final_price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))  # ✅ add this
+
+    final_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Total price for this line item (quantity × (base_price + modifier_prices)). Auto-calculated."
+    )
+
+    def _calculate_final_price(self):
+        """Calculates the price based on product, modifiers, and quantity."""
+        unit_price = self.product.base_price
+
+        if self.pk:
+            modifier_price_sum = self.modifiers.aggregate(
+                total=Sum('price_adjustment')
+            )['total'] or Decimal('0.00')
+            unit_price += modifier_price_sum
+
+        return unit_price * Decimal(self.quantity)
 
     def save(self, *args, **kwargs):
-        # Automatically compute final_price if not provided
-        if not self.final_price:
-            base_price = self.variant.price_modifier if self.variant else self.menu_item.base_price
-            self.final_price = base_price * Decimal(self.quantity)
+        # Calculate initial price (without modifiers if new)
+        if not self.pk:
+            self.final_price = self.product.base_price * Decimal(self.quantity)
+
         super().save(*args, **kwargs)
 
+        # Recalculate after save if modifiers exist
+        if self.pk and self.modifiers.exists():
+            recalculated = self._calculate_final_price()
+            if recalculated != self.final_price:
+                self.__class__.objects.filter(pk=self.pk).update(
+                    final_price=recalculated
+                )
+
+    @property
+    def item_total(self):
+        return self.final_price
+
+    def __str__(self):
+        return f"{self.quantity}x {self.product.name} for Order {self.order.id}"
+    
 class KitchenTicket(models.Model):
-    """Represents a printable or digital ticket for kitchen staff for each order."""
-    order = models.OneToOneField("Order", on_delete=models.CASCADE, related_name="kitchen_ticket")
+    order = models.OneToOneField("core.Order", on_delete=models.CASCADE, related_name="kitchen_ticket")
     created_at = models.DateTimeField(auto_now_add=True)
     printed = models.BooleanField(default=False)
     notes = models.TextField(blank=True, null=True)
@@ -477,33 +696,8 @@ class KitchenTicket(models.Model):
     def __str__(self):
         return f"Kitchen Ticket #{self.pk} for Order {self.order.id}"
 
-    @property
-    def final_price(self):
-        modifier = self.variant.price_modifier if self.variant else Decimal('0.00')
-        return (self.menu_item.base_price + modifier) * self.quantity
-
-
-class Payment(models.Model):
-    class Status(models.TextChoices):
-        PAID = 'PAID', 'Paid'
-        PENDING = 'PENDING', 'Pending'
-        FAILED = 'FAILED', 'Failed'
-        REFUNDED = 'REFUNDED', 'Refunded'
-
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments')
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    method = models.CharField(max_length=50)
-    reference = models.CharField(max_length=255, blank=True, null=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-
-# =============================================================================
-# === ANALYTICS SNAPSHOT ======================================================
-# =============================================================================
-
 class AnalyticsSnapshot(models.Model):
-    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, related_name='analytics')
+    restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name='analytics')
     date = models.DateField(default=date.today)
     total_orders = models.PositiveIntegerField(default=0)
     total_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -517,14 +711,9 @@ class AnalyticsSnapshot(models.Model):
     def __str__(self):
         return f"Analytics {self.restaurant.name} ({self.date})"
 
-
-# =============================================================================
-# === DEVICE API TOKENS (Display & Integration Auth) ==========================
-# =============================================================================
-
 class APIToken(models.Model):
     device_name = models.CharField(max_length=100)
-    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, related_name='api_tokens')
+    restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name='api_tokens')
     token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     active = models.BooleanField(default=True)
     last_used = models.DateTimeField(null=True, blank=True)
@@ -532,22 +721,11 @@ class APIToken(models.Model):
 
     def __str__(self):
         return f"{self.device_name} ({'Active' if self.active else 'Inactive'})"
-    
-# =============================================================================
-# === STAFF CHAT HISTORY & AUDIT LOG ==========================================
-# =============================================================================
 
 class ChatMessage(models.Model):
-    """
-    Persistent, auditable staff chat log entry.
-
-    Each message is saved with sender reference, timestamp, and message content.
-    Useful for compliance, post-shift review, and multi-restaurant coordination.
-    """
-
     id = models.BigAutoField(primary_key=True)
     restaurant = models.ForeignKey(
-        "Restaurant",
+        "core.Restaurant",
         on_delete=models.CASCADE,
         related_name="chat_messages",
         null=True,
@@ -564,8 +742,6 @@ class ChatMessage(models.Model):
     )
     content = models.TextField(help_text="Raw text of the chat message.")
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
-
-    # Useful metadata for future filtering
     system_generated = models.BooleanField(default=False)
     important = models.BooleanField(
         default=False,
@@ -584,3 +760,167 @@ class ChatMessage(models.Model):
     def __str__(self):
         sender = self.sender.username if self.sender else "System"
         return f"[{self.timestamp:%Y-%m-%d %H:%M}] {sender}: {self.content[:40]}"
+
+class LoyaltyTier(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    points_required = models.PositiveIntegerField()
+    reward_description = models.CharField(max_length=255, blank=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.points_required} pts)"
+    
+    Customer.add_to_class(
+    "current_tier",
+    models.ForeignKey(
+        "core.LoyaltyTier",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="customers"
+    ),
+)
+
+def assign_tier(customer: "Customer"):
+    tiers = LoyaltyTier.objects.order_by("points_required")
+    chosen = None
+    for tier in tiers:
+        if customer.loyalty_points >= tier.points_required:
+            chosen = tier
+    if chosen:
+        customer.current_tier = chosen
+
+
+
+class Rider(models.Model):
+    restaurant = models.ForeignKey(
+        "core.Restaurant", on_delete=models.CASCADE, related_name="riders"
+    )
+    name = models.CharField(max_length=100)
+    active = models.BooleanField(default=True)
+    phone = models.CharField(max_length=20, blank=True)
+    current_order = models.ForeignKey(
+        "core.Order",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_rider"
+    )
+
+    def __str__(self):
+        return f"{self.name} ({'Active' if self.active else 'Offline'})"
+
+class Refund(models.Model):
+    order = models.OneToOneField(
+        "core.Order",
+        on_delete=models.CASCADE,
+        related_name="refund_record"
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    reason = models.CharField(max_length=255, blank=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Refund for Order {str(self.order.id)[:8]}"
+
+class PaymentMethod(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+class Payment(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        PAID = "PAID", "Paid"
+        FAILED = "FAILED", "Failed"
+        REFUNDED = "REFUNDED", "Refunded"
+
+    order = models.ForeignKey(
+        "core.Order",
+        on_delete=models.CASCADE,
+        related_name="payments"
+    )
+    method = models.CharField(
+        max_length=50,
+        default="unknown",
+        help_text="e.g., cash, card, stripe, mobile_money"
+    )
+    stripe_payment_intent = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        help_text="Stripe PaymentIntent ID, if applicable."
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Amount paid for this payment transaction."
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+    reference = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Receipts, POS references, or transaction codes."
+    )
+
+    def __str__(self):
+        return f"{self.order.id} - {self.method} - {self.amount} ({self.status})"
+
+class PaymentIntentLog(models.Model):
+    intent_id = models.CharField(max_length=200, unique=True)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+
+class DailyReport(models.Model):
+    restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE)
+    date = models.DateField()
+    total_orders = models.PositiveIntegerField(default=0)
+    total_revenue = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = ("restaurant", "date")
+
+    def __str__(self):
+        return f"{self.restaurant.name} - {self.date}"
+
+class Settings(models.Model):
+    """
+    A model to store application-wide settings.
+    This is designed to have only ONE row (singleton pattern).
+    """
+    # General Settings
+    restaurant_name = models.CharField(max_length=100, default="RestaurantSys")
+    currency_symbol = models.CharField(max_length=5, default="$")
+
+    # Display & Theme Settings
+    THEME_CHOICES = [
+        ('system', 'System Preference'),
+        ('light', 'Light Mode'),
+        ('dark', 'Dark Mode'),
+    ]
+    default_theme = models.CharField(max_length=10, choices=THEME_CHOICES, default='system')
+    items_per_page = models.PositiveIntegerField(default=20)
+
+    # Notification Settings
+    email_notifications = models.BooleanField(default=True)
+    stock_alerts = models.BooleanField(default=False)
+
+    def __str__(self):
+        return "Application Settings"
+
+    class Meta:
+        # Enforces that there's only one settings object
+        verbose_name = "Application Settings"
+        verbose_name_plural = "Application Settings"

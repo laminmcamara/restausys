@@ -1,399 +1,332 @@
-# core/admin.py
-import csv
-import logging
-from django.utils import timezone
-from django.http import HttpResponse
-
 from django.contrib import admin
-from django.utils.html import format_html
-from django.utils.timezone import localtime
-from django.core.exceptions import PermissionDenied
-import uuid
- 
-# from .dashboard import DashboardMixin
+from django.utils.safestring import mark_safe
+
+from .permissions import RoleRestrictedAdmin  
+
 from .models import (
-    Company, CustomUser, Customer,
-    Restaurant, Table,
-    Cuisine, Category, MenuItem, RecipeItem, InventoryItem,
-    MenuVariant, MultiCurrencyPrice,
-    Order, OrderItem, Payment,
+    Company, Restaurant, CustomUser, Table,
+    Menu, Category, Cuisine, Product,
+    ModifierGroup, ModifierOption,
+    InventoryItem, RecipeItem, MultiCurrencyPrice,
+    Order, OrderItem, KitchenTicket, Payment,
+    Shift, Attendance,
+    Customer, LoyaltyTier,
+    Rider, Refund,
     AnalyticsSnapshot, APIToken,
-    KitchenTicket, Attendance, ChatMessage
+    ChatMessage, PaymentMethod,
 )
 
-# =============================================================================
-# === ROLE‑BASED PERMISSION SYSTEM ============================================
-# =============================================================================
+# ==============================================================================
+# MULTI-TENANT BASE ADMIN
+# ==============================================================================
 
-class RoleRestrictedAdmin(admin.ModelAdmin):
-    """Base admin with role‑based control."""
+class RestaurantRestrictedAdmin(admin.ModelAdmin):
+    """
+    Ensures restaurant-level data isolation.
+    Superuser (platform owner) sees everything.
+    Restaurant users only see their own data.
+    """
 
-    def has_module_permission(self, request):
-        u = request.user
-        return u.is_authenticated and (u.is_superuser or u.role in [
-            CustomUser.Roles.SUPER_ADMIN,
-            CustomUser.Roles.MANAGER
-        ])
-
-    def has_view_permission(self, request, obj=None):
-        u = request.user
-        return u.is_authenticated and (
-            u.is_superuser or u.role in [
-                CustomUser.Roles.SUPER_ADMIN, CustomUser.Roles.MANAGER,
-                CustomUser.Roles.SERVER, CustomUser.Roles.CASHIER, CustomUser.Roles.COOK
-            ]
-        )
-
-    def has_add_permission(self, request):
-        u = request.user
-        return u.is_superuser or u.role in [
-            CustomUser.Roles.SUPER_ADMIN, CustomUser.Roles.MANAGER
-        ]
-
-    def has_change_permission(self, request, obj=None):
-        u = request.user
-        return u.is_superuser or u.role in [
-            CustomUser.Roles.SUPER_ADMIN, CustomUser.Roles.MANAGER
-        ]
-
-    def has_delete_permission(self, request, obj=None):
-        u = request.user
-        return u.is_superuser or u.role in [
-            CustomUser.Roles.SUPER_ADMIN, CustomUser.Roles.MANAGER
-        ]
-
-
-class RestaurantScopedAdmin(RoleRestrictedAdmin):
-    """Restrict queryset visibility by assigned restaurant."""
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        u = request.user
-        if u.is_superuser or u.role == CustomUser.Roles.SUPER_ADMIN:
+
+        if request.user.is_superuser:
             return qs
-        if hasattr(u, "restaurant") and u.restaurant:
-            return qs.filter(restaurant=u.restaurant)
-        if hasattr(u, "company") and u.company:
-            return qs.filter(restaurant__company=u.company)
+
+        if hasattr(request.user, "restaurant") and request.user.restaurant:
+            if hasattr(self.model, "restaurant"):
+                return qs.filter(restaurant=request.user.restaurant)
+
         return qs.none()
 
+    def save_model(self, request, obj, form, change):
+        if not request.user.is_superuser:
+            if hasattr(obj, "restaurant"):
+                obj.restaurant = request.user.restaurant
+        super().save_model(request, obj, form, change)
 
-# =============================================================================
-# === GLOBAL UTILITIES ========================================================
-# =============================================================================
-
-@admin.action(description="Mark selected as inactive")
-def mark_inactive(modeladmin, request, queryset):
-    queryset.update(is_active=False)
-
-@admin.action(description="Mark selected as active")
-def mark_active(modeladmin, request, queryset):
-    queryset.update(is_active=True)
-
-
-# =============================================================================
-# === COMPANY & USER ADMIN ====================================================
-# =============================================================================
-
-@admin.register(Company)
-class CompanyAdmin(admin.ModelAdmin):
-    list_display = ("name", "registration_number", "email", "active", "created_at")
-    list_filter = ("active", "created_at")
-    search_fields = ("name", "registration_number")
-    ordering = ("name",)
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """
+        Prevent cross-tenant foreign key selection.
+        """
+        if not request.user.is_superuser:
+            if db_field.name == "restaurant":
+                kwargs["queryset"] = Restaurant.objects.filter(
+                    id=request.user.restaurant.id
+                )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
-@admin.register(CustomUser)
-class CustomUserAdmin(admin.ModelAdmin):
-    list_display = ("username", "email", "role", "company", "is_active", "is_staff")
-    list_filter = ("role", "company", "is_active")
-    search_fields = ("username", "email", "phone_number")
-    readonly_fields = ("last_login", "date_joined")
-    list_editable = ("is_active",)
-    ordering = ("-date_joined",)
+# ==============================================================================
+# INLINE MODELS
+# ==============================================================================
 
-
-@admin.register(Attendance)
-class AttendanceAdmin(admin.ModelAdmin):
-    list_display = ("employee", "restaurant", "check_in", "check_out")
-    list_filter = ("restaurant", "check_in")
-    search_fields = ("employee__username", "restaurant__name")
-
-
-# =============================================================================
-# === CUSTOMER ADMIN ==========================================================
-# =============================================================================
-
-@admin.register(Customer)
-class CustomerAdmin(RoleRestrictedAdmin):
-    list_display = ("full_name", "email", "phone", "loyalty_points", "total_spent", "created_at")
-    search_fields = ("full_name", "email", "phone")
-    list_filter = ("preferred_language",)
-    readonly_fields = ("created_at",)
-    ordering = ("-created_at",)
-
-    @admin.action(description="Reset loyalty points to 0")
-    def reset_loyalty_points(self, request, queryset):
-        queryset.update(loyalty_points=0)
-
-
-# =============================================================================
-# === RESTAURANT & TABLE ADMIN ===============================================
-# =============================================================================
-
-class TableInline(admin.TabularInline):
-    model = Table
+class ModifierOptionInline(admin.TabularInline):
+    model = ModifierOption
     extra = 1
-    readonly_fields = ("qr_code_preview",)
+    fields = ('name', 'price_adjustment', 'display_order')
 
-    def qr_code_preview(self, obj):
-        if obj.qr_code:
-            return format_html('<img src="{}" width="80" height="80" />', obj.qr_code.url)
-        return "-"
-    qr_code_preview.short_description = "QR Code"
-
-
-@admin.register(Restaurant)
-class RestaurantAdmin(RoleRestrictedAdmin):
-    list_display = ("name", "company", "city", "currency", "status")
-    list_filter = ("company", "status")
-    search_fields = ("name", "city")
-    readonly_fields = ("created_at",)
-    inlines = [TableInline]
-    ordering = ("company", "name")
-
-
-# =============================================================================
-# === INVENTORY & RECIPE ADMIN ===============================================
-# =============================================================================
-
-@admin.register(InventoryItem)
-class InventoryItemAdmin(RestaurantScopedAdmin):
-    list_display = ("name", "restaurant", "quantity", "unit", "reorder_level", "last_updated")
-    list_filter = ("restaurant", "category")
-    search_fields = ("name",)
-    ordering = ("restaurant", "name")
-
-
-class RecipeItemInline(admin.TabularInline):
-    model = RecipeItem
-    extra = 2
-    autocomplete_fields = ["ingredient"]
-    fields = ("ingredient", "quantity_used", "unit")
-
-
-# =============================================================================
-# === MENU / CATEGORY ADMIN ==================================================
-# =============================================================================
-
-class MultiCurrencyPriceInline(admin.TabularInline):
-    model = MultiCurrencyPrice
-    extra = 1
-    fields = ("currency", "price", "exchange_rate", "updated_at")
-    readonly_fields = ("updated_at",)
-
-
-class MenuVariantInline(admin.TabularInline):
-    model = MenuVariant
-    extra = 2
-    fields = ("name", "price_modifier", "stock", "is_active")
-
-
-@admin.register(MenuItem)
-class MenuItemAdmin(RestaurantScopedAdmin):
-    list_display = ("name", "restaurant", "category", "available", "halal", "base_price")
-    list_filter = ("available", "halal", "restaurant", "category", "cuisines")
-    search_fields = ("name", "description")
-    actions = [mark_active, mark_inactive]
-    inlines = [RecipeItemInline, MenuVariantInline, MultiCurrencyPriceInline]
-    list_editable = ("available", "halal")
-    ordering = ("restaurant", "name")
-
-
-@admin.register(Category)
-class CategoryAdmin(RoleRestrictedAdmin):
-    list_display = ("name", "description")
-    search_fields = ("name",)
-
-
-@admin.register(Cuisine)
-class CuisineAdmin(RoleRestrictedAdmin):
-    list_display = ("name", "region", "halal_certified")
-    list_filter = ("region", "halal_certified")
-    search_fields = ("name", "region")
-
-
-# =============================================================================
-# === ORDERS, PAYMENTS, KITCHEN ADMIN ========================================
-# =============================================================================
 
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
-    readonly_fields = ("final_price_display",)
+    readonly_fields = ('final_price', 'display_modifiers')
+    fields = ('product', 'quantity', 'final_price', 'display_modifiers', 'notes')
+    autocomplete_fields = ['product']
 
-    def final_price_display(self, obj):
-        return format_html("<b>{}</b>", obj.final_price)
-    final_price_display.short_description = "Final Price"
+    def display_modifiers(self, obj):
+        if not obj.pk:
+            return "Save to view selected modifiers."
+        mods = obj.modifiers.all()
+        if not mods:
+            return "None"
+        return mark_safe("<br>".join(
+            [f"&bull; {m.name} (+{m.price_adjustment})" for m in mods]
+        ))
+
+    display_modifiers.short_description = "Selected Modifiers"
 
 
-class PaymentInline(admin.TabularInline):
-    model = Payment
-    extra = 0
-    readonly_fields = ("created_at",)
+class RecipeItemInline(admin.TabularInline):
+    model = RecipeItem
+    extra = 1
+    autocomplete_fields = ['ingredient']
+
+
+class MultiCurrencyPriceInline(admin.TabularInline):
+    model = MultiCurrencyPrice
+    extra = 1
+
+
+# ==============================================================================
+# MENU SYSTEM ADMINS
+# ==============================================================================
+
+@admin.register(Menu)
+class MenuAdmin(RestaurantRestrictedAdmin):
+    list_display = ('name', 'restaurant', 'is_active')
+    list_filter = ('restaurant', 'is_active')
+    search_fields = ('name',)
+
+
+@admin.register(Category)
+class CategoryAdmin(RestaurantRestrictedAdmin):
+    list_display = ('get_full_path', 'menu', 'display_order')
+    list_filter = ('menu__restaurant', 'menu')
+    search_fields = ('name', 'parent__name')
+    ordering = ('menu', 'parent__name', 'display_order', 'name')
+    autocomplete_fields = ['menu', 'parent']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('menu', 'parent')
+
+    @admin.display(description='Category Path', ordering='name')
+    def get_full_path(self, obj):
+        path = [obj.name]
+        ancestor = obj.parent
+        while ancestor:
+            path.insert(0, ancestor.name)
+            ancestor = ancestor.parent
+        return ' > '.join(path)
+
+
+@admin.register(Product)
+class ProductAdmin(RestaurantRestrictedAdmin):
+    list_display = ('name', 'category', 'base_price', 'is_available', 'halal')
+    list_filter = ('category__menu__restaurant', 'category__menu', 'is_available', 'halal')
+    list_editable = ('base_price', 'is_available')
+    search_fields = ('name', 'description', 'category__name')
+    ordering = ('category', 'display_order', 'name')
+    autocomplete_fields = ['category']
+    filter_horizontal = ('cuisines',)
+    inlines = [RecipeItemInline, MultiCurrencyPriceInline]
+
+    actions = ['make_unavailable', 'make_available']
+
+    def make_unavailable(self, request, queryset):
+        queryset.update(is_available=False)
+
+    def make_available(self, request, queryset):
+        queryset.update(is_available=True)
+
+
+@admin.register(ModifierGroup)
+class ModifierGroupAdmin(RestaurantRestrictedAdmin):
+    list_display = ('name', 'selection_type')
+    search_fields = ('name',)
+    filter_horizontal = ('products',)
+    inlines = [ModifierOptionInline]
+
+
+# ==============================================================================
+# ORDER SYSTEM
+# ==============================================================================
+
+@admin.register(Order)
+class OrderAdmin(RestaurantRestrictedAdmin):
+    list_display = (
+        'short_id',
+        'restaurant',
+        'table',
+        'status',
+        'created_at',
+        'display_total_price'
+    )
+    list_filter = ('status', 'restaurant', 'created_at', 'table')
+    search_fields = ('id__startswith', 'table__table_number', 'customer__full_name')
+    ordering = ('-created_at',)
+    date_hierarchy = "created_at"
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    inlines = [OrderItemInline]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'restaurant',
+            'table',
+            'customer'
+        )
+
+    @admin.display(description="Order ID")
+    def short_id(self, obj):
+        return str(obj.id)[:8]
+
+    @admin.display(description="Total")
+    def display_total_price(self, obj):
+        total = obj.total_price()
+        if obj.restaurant and obj.restaurant.currency:
+            return f"{obj.restaurant.currency} {total:.2f}"
+        return f"{total:.2f}"
+
+
+# ==============================================================================
+# MAIN SYSTEM ADMINS
+# ==============================================================================
+
+@admin.register(CustomUser)
+class CustomUserAdmin(RestaurantRestrictedAdmin):
+    list_display = ('username', 'email', 'role', 'restaurant', 'is_staff')
+    list_filter = ('role', 'is_staff', 'restaurant')
+    search_fields = ('username', 'email')
+    autocomplete_fields = ['restaurant']
+
+
+@admin.register(Company)
+class CompanyAdmin(admin.ModelAdmin):
+    # Platform-level only (you)
+    list_display = ('name', 'email', 'phone', 'active')
+    list_filter = ('active',)
+    search_fields = ('name',)
+
+
+@admin.register(Restaurant)
+class RestaurantAdmin(admin.ModelAdmin):
+    # Platform-level only
+    list_display = ('name', 'company', 'status', 'city')
+    list_filter = ('company', 'status')
+    search_fields = ('name', 'city')
+    autocomplete_fields = ['company']
+
+
+@admin.register(InventoryItem)
+class InventoryItemAdmin(RestaurantRestrictedAdmin):
+    list_display = ('name', 'restaurant', 'quantity', 'unit', 'reorder_level', 'is_below_reorder')
+    list_filter = ('restaurant',)
+    search_fields = ('name',)
+
+    def is_below_reorder(self, obj):
+        return obj.quantity <= obj.reorder_level
+
+    is_below_reorder.boolean = True
 
 
 @admin.register(KitchenTicket)
-class KitchenTicketAdmin(admin.ModelAdmin):
-    list_display = ("order", "created_at", "printed")
-    list_filter = ("printed", "created_at")
-
-
-@admin.register(Order)
-class OrderAdmin(RestaurantScopedAdmin):
-    list_display = ("short_id", "restaurant", "customer", "status", "created_at", "total_price_display")
-    list_filter = ("status", "restaurant", "created_at")
-    readonly_fields = ("created_at", "updated_at")
-    inlines = [OrderItemInline, PaymentInline]
-    search_fields = ("id", "customer__full_name")
-    ordering = ("-created_at",)
-
-    def short_id(self, obj):
-        return str(obj.id)[:8]
-    short_id.short_description = "Order ID"
-
-    def total_price_display(self, obj):
-        return format_html("<strong>{}</strong>", obj.total_price())
-    total_price_display.short_description = "Total (incl. tax)"
+class KitchenTicketAdmin(RestaurantRestrictedAdmin):
+    list_display = ('id', 'order', 'created_at', 'printed')
+    list_filter = ('printed', 'created_at')
+    search_fields = ('order__id',)
+    autocomplete_fields = ['order']
 
 
 @admin.register(Payment)
-class PaymentAdmin(RestaurantScopedAdmin):
-    list_display = ("order", "amount", "method", "status", "created_at")
-    list_filter = ("status", "method", "created_at")
-    search_fields = ("order__id", "reference")
-    ordering = ("-created_at",)
+class PaymentAdmin(RestaurantRestrictedAdmin):
+    list_display = ("id", "order", "amount", "status", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("order__id", "stripe_payment_intent")
+    autocomplete_fields = ['order']
 
 
-# =============================================================================
-# === ANALYTICS & API TOKEN ADMIN ============================================
-# =============================================================================
+@admin.register(Shift)
+class ShiftAdmin(RestaurantRestrictedAdmin):
+    list_display = ('employee', 'restaurant', 'role', 'start_time', 'end_time')
+    list_filter = ('restaurant', 'role')
+    search_fields = ('employee__username',)
+
+
+@admin.register(Attendance)
+class AttendanceAdmin(RestaurantRestrictedAdmin):
+    list_display = ('employee', 'restaurant', 'check_in', 'check_out')
+    list_filter = ('restaurant',)
+    search_fields = ('employee__username',)
+
+
+@admin.register(Customer)
+class CustomerAdmin(RestaurantRestrictedAdmin):
+    list_display = ('full_name', 'email', 'phone', 'loyalty_points', 'total_spent')
+    search_fields = ('full_name', 'email')
+
+
+@admin.register(Rider)
+class RiderAdmin(RestaurantRestrictedAdmin):
+    list_display = ('name', 'restaurant', 'phone', 'active', 'current_order')
+    list_filter = ('restaurant', 'active')
+    search_fields = ('name', 'phone')
+
+
+@admin.register(Refund)
+class RefundAdmin(RestaurantRestrictedAdmin):
+    list_display = ('order', 'amount', 'processed_by', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('order__id', 'processed_by__username')
+
 
 @admin.register(AnalyticsSnapshot)
-class AnalyticsSnapshotAdmin(RestaurantScopedAdmin):
-    list_display = ("restaurant", "date", "total_orders", "total_revenue",
-                    "average_order_value", "top_selling_item", "last_updated")
-    list_filter = ("restaurant", "date")
-    readonly_fields = ("last_updated",)
-    ordering = ("-date",)
+class AnalyticsSnapshotAdmin(RestaurantRestrictedAdmin):
+    list_display = ('restaurant', 'date', 'total_orders', 'total_revenue', 'average_order_value')
+    list_filter = ('restaurant', 'date')
+    ordering = ('-date',)
 
 
 @admin.register(APIToken)
-class APITokenAdmin(RestaurantScopedAdmin):
-    list_display = ("device_name", "restaurant", "token", "active", "last_used", "created_at")
-    list_filter = ("active", "restaurant")
-    search_fields = ("device_name", "token")
-    readonly_fields = ("token", "created_at", "last_used")
+class APITokenAdmin(RestaurantRestrictedAdmin):
+    list_display = ('device_name', 'restaurant', 'token', 'active', 'last_used')
+    list_filter = ('restaurant', 'active')
+    readonly_fields = ('token',)
 
-    @admin.action(description="Rotate (Regenerate) selected tokens")
-    def rotate_tokens(self, request, queryset):
-        for obj in queryset:
-            obj.token = uuid.uuid4()
-            obj.save(update_fields=["token"])
-        self.message_user(request, f"Rotated {queryset.count()} tokens successfully.")
 
 @admin.register(ChatMessage)
-class ChatMessageAdmin(admin.ModelAdmin):
-    """Read-only, filterable staff chat audit view with CSV export."""
+class ChatMessageAdmin(RestaurantRestrictedAdmin):
+    list_display = ('timestamp', 'restaurant', 'sender', 'content_short', 'important')
+    list_filter = ('restaurant', 'important')
+    search_fields = ('content',)
 
-    list_display = (
-        "timestamp",
-        "sender",
-        "restaurant",
-        "short_message",
-        "system_generated",
-        "important",
-    )
-    list_filter = ("restaurant", "system_generated", "important")
-    search_fields = ("content", "sender__username", "restaurant__name")
-    date_hierarchy = "timestamp"
-    ordering = ("-timestamp",)
-    readonly_fields = [f.name for f in ChatMessage._meta.get_fields()]
-    actions = ["export_selected_to_csv"]
-
-    # --------------------------------------------------------------------------
-    # Permissions (read-only)
-    # --------------------------------------------------------------------------
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    # --------------------------------------------------------------------------
-    # Display helpers
-    # --------------------------------------------------------------------------
-    @admin.display(description="Message")
-    def short_message(self, obj):
-        """Truncate long chat messages for list display."""
-        return (obj.content[:50] + "...") if len(obj.content) > 50 else obj.content
-
-    # --------------------------------------------------------------------------
-    # CSV Export Action
-    # --------------------------------------------------------------------------
-    def export_selected_to_csv(self, request, queryset):
-        """
-        Exports the selected ChatMessage objects to a downloadable CSV file.
-        Only visible to superusers or staff with 'view_chatmessage' permission.
-        """
-        if not request.user.is_superuser and not request.user.has_perm("core.view_chatmessage"):
-            self.message_user(request, "🚫 You do not have permission to export chat logs.", level="error")
-            return None
-
-        response = HttpResponse(content_type="text/csv")
-        filename = f"chat_messages_{timezone.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
-
-        writer = csv.writer(response)
-        writer.writerow(["Timestamp", "Sender", "Restaurant", "System", "Important", "Content"])
-
-        for msg in queryset.select_related("sender", "restaurant"):
-            writer.writerow([
-                msg.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                msg.sender.username if msg.sender else "System",
-                msg.restaurant.name if msg.restaurant else "",
-                "Yes" if msg.system_generated else "No",
-                "Yes" if msg.important else "No",
-                msg.content.replace("\n", " "),
-            ])
-
-        # ✅ AUDIT LOG ENTRY (inside the method)
-        audit_logger = logging.getLogger("audit")
-        audit_logger.info(
-            f"User {request.user.username} exported {queryset.count()} chat messages "
-            f"on {timezone.now():%Y-%m-%d %H:%M} from IP={request.META.get('REMOTE_ADDR')}"
-        )
-
-        return response
-
-    export_selected_to_csv.short_description = "⬇️ Export selected chat messages to CSV"
-    
-# =============================================================================
-# === INLINE SUPPORT REGISTRATION ============================================
-# =============================================================================
-admin.site.register(MenuVariant)
-admin.site.register(MultiCurrencyPrice)
+    def content_short(self, obj):
+        return obj.content[:50]
 
 
-# =============================================================================
-# === ADMIN DASHBOARD SETUP ===================================================
-# =============================================================================
-# from .dashboard import DashboardMixin
+# ==============================================================================
+# TABLE ADMIN
+# ==============================================================================
 
-# admin.site.__class__ = type(
-#    "CustomAdminSite",
-#    (DashboardMixin, admin.AdminSite),
-#    {},
-# )
+@admin.register(Table)
+class TableAdmin(RestaurantRestrictedAdmin):
+    list_display = ("table_number", "restaurant", "status", "qr_code_preview")
+    list_filter = ("status", "restaurant")
+    search_fields = ("table_number",)
+    readonly_fields = ("qr_code_preview",)
+
+    def qr_code_preview(self, obj):
+        if obj.qr_code:
+            return mark_safe(
+                f'<img src="{obj.qr_code.url}" width="150" height="150">'
+            )
+        return "No QR code generated yet."

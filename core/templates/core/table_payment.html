@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family:sans-serif; padding:20px; }
+        .method { padding:15px; border:1px solid #ccc; margin-bottom:10px; border-radius:6px; cursor:pointer; }
+    </style>
+</head>
+<body>
+
+<h2>Payment for Order {{ order.id }}</h2>
+<p>Total: <strong>{{ order.total }}</strong></p>
+
+{% for m in methods %}
+    <div class="method" onclick="pay('{{ m.id }}')">
+        {{ m.name }}
+    </div>
+{% endfor %}
+
+<script>
+function pay(methodId) {
+    alert("Payment handled here (redirect or confirm).");
+}
+</script>
+
+</body>
+</html>

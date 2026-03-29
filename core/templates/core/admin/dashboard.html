@@ -1,0 +1,30 @@
+{% extends "core/dashboard_base.html" %}
+
+{% block title %}Dashboard — Admin{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <h1 class="text-3xl font-bold text-gray-800 mb-6">Admin Dashboard</h1>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+    <div class="bg-white shadow rounded-xl p-5">
+      <h2 class="text-gray-600 text-sm">Today's Sales</h2>
+      <p class="text-3xl font-bold text-indigo-600 mt-2">₱{{ sales_today }}</p>
+    </div>
+
+    <div class="bg-white shadow rounded-xl p-5">
+      <h2 class="text-gray-600 text-sm">Orders Today</h2>
+      <p class="text-3xl font-bold text-indigo-600 mt-2">{{ orders_today }}</p>
+    </div>
+
+    <div class="bg-white shadow rounded-xl p-5">
+      <h2 class="text-gray-600 text-sm">Top Product</h2>
+      <p class="text-xl font-bold text-gray-800 mt-2">{{ top_product.name }}</p>
+    </div>
+
+  </div>
+
+</div>
+{% endblock %}

@@ -1,173 +1,429 @@
-{% extends "core/base.html" %}
+{% extends "core/dashboard_base.html" %}
 {% load static %}
 
+{% block title %}POS Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+
+/* Remove base container margin/padding for fullscreen POS */
+.page-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+}
+
+/* POS Layout */
+.pos-container {
+    display: flex;
+    height: calc(100vh - 60px); /* subtract navbar height */
+    background-color: var(--bg-color);
+}
+
+/* Category Sidebar */
+.category-sidebar {
+    width: 220px;
+    background-color: var(--surface-color);
+    border-right: 1px solid var(--border-color);
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+.category-btn {
+    display: block;
+    width: 100%;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background-color: var(--base-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    cursor: pointer;
+    text-align: left;
+    transition: 0.15s;
+}
+
+.category-btn.active,
+.category-btn:hover {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+/* Product Grid */
+.product-grid {
+    flex: 3;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.grid-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#search-bar {
+    width: 320px;
+    padding: 0.6rem 1rem;
+    border-radius: 20px;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+}
+
+.grid-content {
+    margin-top: 1rem;
+    flex-grow: 1;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px,1fr));
+    gap: 1rem;
+}
+
+.product-card {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.8rem;
+    cursor: pointer;
+    text-align: center;
+    transition: transform 0.15s;
+}
+
+.product-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--primary-color);
+}
+
+/* Cart */
+.order-summary {
+    flex: 2;
+    background-color: #181818;
+    border-left: 1px solid var(--border-color);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.order-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.order-type-selector button {
+    background: none;
+    border: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    color: var(--text-secondary);
+}
+
+.order-type-selector button.active {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.order-items {
+    flex: 1;
+    overflow-y: auto;
+    margin-top: 1rem;
+}
+
+.order-item {
+    display: flex;
+    padding: 0.75rem;
+    background-color: var(--surface-color);
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+}
+
+.item-controls button {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background-color: var(--border-color);
+    color: white;
+    border: none;
+}
+
+.order-totals {
+    border-top: 1px solid var(--border-color);
+    padding-top: 1rem;
+}
+
+.order-actions {
+    margin-top: 1rem;
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 1rem;
+}
+
+#clear-order-btn {
+    background-color: var(--error-color);
+    color: white;
+}
+
+#place-order-btn {
+    background-color: var(--secondary-color);
+    color: black;
+}
+
+</style>
+{% endblock %}
+
 {% block content %}
-<link rel="stylesheet" href="{% static 'core/pos/style.css' %}" />
+<div id="pos-screen" class="screen active">
 
-<div class="pos-dashboard">
-  <aside class="sidebar">
-    <h2>🍴 POS</h2>
-    <ul>
-      <li><a href="{% url 'core:pos_dashboard' %}">Dashboard</a></li>
-      <li><a href="{% url 'core:order-list' %}">Orders</a></li>
-      <li><a href="#">Payments</a></li>
-    </ul>
-  </aside>
+    <div class="pos-container">
 
-  <main class="content">
-    <h3>
-      Select a Table
-      <span id="live-indicator" class="live-dot" title="Live connection status"></span>
-    </h3>
+        <!-- Categories -->
+        <aside class="category-sidebar" id="category-sidebar">
+            <!-- Dynamically filled -->
+        </aside>
 
-    <!-- ===============================================================
-         TABLE GRID SECTION
-         =============================================================== -->
-    <div id="tableGrid" class="table-grid">
-      {% for t in tables %}
-      <a
-        href="{% url 'core:pos_order_screen' t.id %}"
-        class="table-card {{ t.status|default:'available' }}"
-        id="table-{{ t.id }}"
-      >
-        <strong>Table {{ t.table_number }}</strong><br>
-        <span class="status-text">{{ t.get_status_display|default:"Available" }}</span>
-      </a>
-      {% empty %}
-      <p>No tables added yet.</p>
-      {% endfor %}
+        <!-- Product Grid -->
+        <main class="product-grid">
+            <div class="grid-header">
+                <h2>Products</h2>
+                <input id="search-bar" type="text" placeholder="Search products...">
+            </div>
+            <div id="product-list" class="grid-content"></div>
+        </main>
+
+        <!-- Cart -->
+        <aside class="order-summary">
+            <div class="order-header">
+                <h2>Order</h2>
+                <div class="order-type-selector">
+                    <button data-type="dinein" class="active">Dine-In</button>
+                    <button data-type="takeout">Take-Out</button>
+                    <button data-type="delivery">Delivery</button>
+                </div>
+            </div>
+
+            <div id="order-items-list" class="order-items"></div>
+
+            <div class="order-totals">
+                <div class="total-row"><span>Subtotal</span><span id="subtotal">$0.00</span></div>
+                <div class="total-row"><span>Tax</span><span id="tax">$0.00</span></div>
+                <div class="total-row grand-total"><span>Total</span><span id="total">$0.00</span></div>
+            </div>
+
+            <div class="order-actions">
+                <button id="clear-order-btn">Clear</button>
+                <button id="place-order-btn">Pay</button>
+            </div>
+        </aside>
+
     </div>
 
-    <!-- ===============================================================
-         DIRECT ORDER SECTION (NEW)
-         =============================================================== -->
-    <section id="directOrderPanel" class="mt-4">
-      <h3>💳 Direct Order</h3>
-      <p class="text-muted">
-        Tap a category to view items, then add them to your order.
-      </p>
-
-      <!-- Categories -->
-      <div id="category-bar" class="mb-3"></div>
-
-      <!-- Menu items grid -->
-      <div id="menu-items" class="mb-4"></div>
-
-      <!-- Order summary area -->
-      <div id="order-summary-card" class="card">
-        <div class="card-header bg-light">
-          <strong>Order Summary</strong>
-        </div>
-        <div class="card-body" id="order-summary"></div>
-        <div class="card-footer d-flex justify-content-between align-items-center">
-          <span class="fw-bold">Total: $<span id="order-total">0.00</span></span>
-          <button id="submit-order" class="btn btn-success btn-sm">
-            Submit Order
-          </button>
-        </div>
-      </div>
-    </section>
-  </main>
 </div>
+{% endblock %}
 
-<!-- ===============================================================
-     SCRIPTS
-     =============================================================== -->
-<script src="{% static 'core/pos/pos_dashboard.js' %}"></script>
-<script src="{% static 'core/pos/pos_direct_order.js' %}"></script>
-
+{% block extra_scripts %}
 <script>
-  const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const dashboardSocket = new WebSocket(`${wsScheme}://${window.location.host}/ws/pos/`);
 
-  const liveIndicator = document.getElementById("live-indicator");
+/* ============================================================
+   LOAD PRODUCT DATA FROM DJANGO
+   Django view passes:
+   window.posData = { categories, products, variants, modifiers }
+============================================================ */
 
-  dashboardSocket.onopen = () => {
-    console.log("🟢 Connected to POS WebSocket");
-    liveIndicator.classList.remove("offline");
-    liveIndicator.classList.add("online");
-    liveIndicator.title = "Live connection active";
-  };
+const posData = window.posData || {
+    categories: [],
+    products: [],
+    variants: [],
+    modifiers: [],
+};
 
-  dashboardSocket.onclose = () => {
-    console.warn("🔴 WebSocket connection closed. Dashboard updates paused.");
-    liveIndicator.classList.remove("online");
-    liveIndicator.classList.add("offline");
-    liveIndicator.title = "Disconnected — trying to reconnect...";
-    setTimeout(() => location.reload(), 5000);
-  };
 
-  dashboardSocket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (!data.table) return;
+/* ============================================================
+   CATEGORY SIDEBAR RENDER
+============================================================ */
 
-    const tableId = data.table.id || data.table;
-    const tableEl = document.getElementById(`table-${tableId}`);
-    if (!tableEl) return;
+function renderCategories() {
+    const sidebar = document.getElementById("category-sidebar");
+    sidebar.innerHTML = "";
 
-    const statusText = tableEl.querySelector(".status-text");
-    const newStatus = data.status || "unknown";
+    // Add ALL category
+    const allBtn = document.createElement("button");
+    allBtn.className = "category-btn active";
+    allBtn.textContent = "All";
+    allBtn.onclick = () => filterProducts(null);
+    sidebar.appendChild(allBtn);
 
-    if (statusText) statusText.textContent = newStatus.toUpperCase();
+    posData.categories.forEach(cat => {
+        const btn = document.createElement("button");
+        btn.className = "category-btn";
+        btn.textContent = cat.name;
+        btn.onclick = () => filterProducts(cat.id);
+        sidebar.appendChild(btn);
+    });
+}
 
-    tableEl.classList.remove(
-      "available",
-      "pending",
-      "cooking",
-      "ready",
-      "served",
-      "paid"
+let activeCategory = null;
+
+
+/* ============================================================
+   PRODUCT GRID RENDER
+============================================================ */
+
+function renderProducts() {
+    const list = document.getElementById("product-list");
+    list.innerHTML = "";
+
+    const filtered = posData.products.filter(p =>
+        !activeCategory || p.category_id === activeCategory
     );
-    tableEl.classList.add(newStatus);
 
-    // brief flash animation
-    tableEl.classList.add("highlight");
-    setTimeout(() => tableEl.classList.remove("highlight"), 1000);
-  };
+    filtered.forEach(product => {
+        const card = document.createElement("div");
+        card.className = "product-card";
+        card.onclick = () => openVariantModal(product.id);
+
+        card.innerHTML = `
+            <h3>${product.name}</h3>
+        `;
+
+        list.appendChild(card);
+    });
+}
+
+function filterProducts(categoryId) {
+    activeCategory = categoryId;
+
+    document.querySelectorAll(".category-btn").forEach(btn => {
+        btn.classList.remove("active");
+        if (!categoryId && btn.textContent === "All") btn.classList.add("active");
+        if (categoryId && btn.textContent === posData.categories.find(c => c.id === categoryId).name) {
+            btn.classList.add("active");
+        }
+    });
+
+    renderProducts();
+}
+
+
+/* ============================================================
+   ORDER CART LOGIC
+============================================================ */
+
+let order = {
+    type: "dinein",
+    items: [],
+    subtotal: 0,
+    tax: 0,
+    total: 0,
+};
+
+function addToCart(variantId, modifiers) {
+    const variant = posData.variants.find(v => v.id === variantId);
+    const existing = order.items.find(i => i.variantId === variantId && JSON.stringify(i.modifiers) === JSON.stringify(modifiers));
+
+    if (existing) {
+        existing.qty++;
+    } else {
+        order.items.push({
+            variantId,
+            name: variant.product_name + " - " + variant.name,
+            price: parseFloat(variant.price),
+            qty: 1,
+            modifiers
+        });
+    }
+
+    renderCart();
+}
+
+function renderCart() {
+    const list = document.getElementById("order-items-list");
+    list.innerHTML = "";
+
+    let subtotal = 0;
+
+    order.items.forEach(item => {
+        const total = item.price * item.qty;
+        subtotal += total;
+
+        const div = document.createElement("div");
+        div.className = "order-item";
+
+        div.innerHTML = `
+            <div class="item-info">
+                <h4>${item.name}</h4>
+                ${item.modifiers.map(m => `<p>${m.name} (+${m.price})</p>`).join("")}
+            </div>
+
+            <div class="item-controls">
+                <button onclick="changeQty(${item.variantId}, -1)">-</button>
+                <span>${item.qty}</span>
+                <button onclick="changeQty(${item.variantId}, 1)">+</button>
+            </div>
+
+            <div class="item-total">$${total.toFixed(2)}</div>
+        `;
+
+        list.appendChild(div);
+    });
+
+    // TAX
+    const tax = subtotal * 0.10;
+    const total = subtotal + tax;
+
+    order.subtotal = subtotal;
+    order.tax = tax;
+    order.total = total;
+
+    document.getElementById("subtotal").textContent = "$" + subtotal.toFixed(2);
+    document.getElementById("tax").textContent = "$" + tax.toFixed(2);
+    document.getElementById("total").textContent = "$" + total.toFixed(2);
+
+    broadcastOrderState();
+}
+
+function changeQty(variantId, delta) {
+    const item = order.items.find(i => i.variantId === variantId);
+    if (!item) return;
+
+    item.qty += delta;
+    if (item.qty <= 0) {
+        order.items = order.items.filter(i => i !== item);
+    }
+
+    renderCart();
+}
+
+function clearCart() {
+    order.items = [];
+    renderCart();
+}
+
+
+/* ============================================================
+   PAYMENT / PLACE ORDER
+============================================================ */
+
+document.getElementById("place-order-btn").onclick = () => {
+    if (order.items.length === 0) {
+        alert("No items");
+        return;
+    }
+
+    alert("Payment modal coming next...");
+};
+
+document.getElementById("clear-order-btn").onclick = clearCart;
+
+
+/* ============================================================
+   INIT ON PAGE LOAD
+============================================================ */
+
+renderCategories();
+renderProducts();
+renderCart();
+
 </script>
-
-<style>
-/* ==========================================================================
-   Live connection dot
-   ========================================================================== */
-.live-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-left: 8px;
-  border-radius: 50%;
-  background: gray;
-  vertical-align: middle;
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.3);
-}
-.live-dot.online {
-  background: #43a047;
-}
-.live-dot.offline {
-  background: #e53935;
-}
-
-/* ==========================================================================
-   Table state feedback styling
-   ========================================================================== */
-.table-card.highlight {
-  outline: 3px solid #ffb300;
-  transition: outline 0.3s ease;
-}
-.table-card.pending {
-  border-left: 5px solid gray;
-}
-.table-card.cooking {
-  border-left: 5px solid orange;
-}
-.table-card.ready {
-  border-left: 5px solid green;
-}
-.table-card.served {
-  border-left: 5px solid blue;
-}
-.table-card.paid {
-  border-left: 5px solid gold;
-}
-</style>
 {% endblock %}

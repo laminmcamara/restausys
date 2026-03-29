@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Checkout</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: sans-serif; padding:15px; }
+        .btn { padding:10px 15px; background:#28a745; color:white; border:none; border-radius:6px; }
+        .item { border-bottom:1px solid #eee; padding:10px 0; }
+    </style>
+</head>
+<body>
+
+<h2>Your Cart</h2>
+<div id="cart"></div>
+
+<button class="btn" id="checkoutBtn">Place Order</button>
+
+<script>
+const token = "{{ table.access_token }}";
+
+async function loadCart() {
+    let r = await fetch(`/api/table/${token}/cart/`);
+    let cart = await r.json();
+
+    let html = "";
+    for (let key in cart)
+        html += `<div class="item">${cart[key].name} × ${cart[key].quantity}</div>`;
+    
+    document.getElementById("cart").innerHTML = html || "Cart is empty";
+}
+
+document.getElementById("checkoutBtn").onclick = async () => {
+    let r = await fetch(`/table/${token}/checkout/`, { method: "POST" });
+    let data = await r.json();
+
+    if (data.order_id)
+        window.location = `/table/order/${data.order_id}/`;
+};
+
+loadCart();
+</script>
+
+</body>
+</html>

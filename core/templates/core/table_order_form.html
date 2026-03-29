@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Order | Table {{ table.table_number }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 15px; }
+        .category { margin-top: 25px; font-size: 22px; font-weight: bold; }
+        .item { padding: 10px 0; border-bottom: 1px solid #eee; }
+        .btn { padding: 8px 14px; background: #333; color: white; border: none; border-radius: 6px; }
+        #cartBtn { position: fixed; bottom: 20px; right: 20px; background:#28a745; }
+    </style>
+</head>
+<body>
+
+<h1>Table {{ table.table_number }}</h1>
+<p>Select your items.</p>
+
+{% for category, items in categorized_menu.items %}
+    <div class="category">{{ category }}</div>
+
+    {% for item in items %}
+        <div class="item">
+            <div style="font-size:18px;font-weight:bold">{{ item.name }}</div>
+            <div>{{ item.description }}</div>
+            <div style="margin-top:6px;">
+                <button class="btn addBtn"
+                        data-id="{{ item.id }}"
+                        data-name="{{ item.name }}">
+                    Add
+                </button>
+            </div>
+        </div>
+    {% endfor %}
+{% endfor %}
+
+<button id="cartBtn" class="btn">View Cart</button>
+
+<script>
+const token = "{{ table.access_token }}";
+
+async function updateCart(itemId, qty) {
+    await fetch(`/api/table/${token}/cart/`, {
+        method: "POST",
+        body: JSON.stringify({ item_id: itemId, quantity: qty })
+    });
+}
+
+document.querySelectorAll(".addBtn").forEach(btn => {
+    btn.onclick = () => {
+        updateCart(btn.dataset.id, 1);
+        alert(btn.dataset.name + " added to cart.");
+    };
+});
+
+document.getElementById("cartBtn").onclick = () =>
+    window.location = `/table/${token}/checkout/`;
+</script>
+
+</body>
+</html>

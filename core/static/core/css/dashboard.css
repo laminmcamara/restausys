@@ -1,0 +1,145 @@
+/* ============================================================
+   GLOBAL
+============================================================ */
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #f4f6f9;
+}
+
+/* ============================================================
+   LAYOUT
+============================================================ */
+
+.pos-container {
+    padding: 20px;
+}
+
+.pos-header {
+    margin-bottom: 20px;
+}
+
+.pos-main {
+    display: flex;
+    gap: 20px;
+}
+
+/* ============================================================
+   ORDER PANEL (LEFT)
+============================================================ */
+
+.order-panel {
+    width: 40%;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+.order-items-container {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.order-items-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.order-items-table th,
+.order-items-table td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+    font-size: 14px;
+}
+
+.order-summary {
+    margin-top: 15px;
+    font-size: 15px;
+}
+
+.order-summary div {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+}
+
+/* ============================================================
+   MENU PANEL (RIGHT)
+============================================================ */
+
+.menu-panel {
+    width: 60%;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+.category-filters {
+    margin-bottom: 15px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.category-btn {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid #ccc;
+    background: #f8f9fa;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.category-btn:hover {
+    background: #e2e6ea;
+}
+
+.menu-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+}
+
+.menu-item {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #eee;
+}
+
+.menu-item:hover {
+    background: #d4edda;
+    transform: translateY(-2px);
+}
+
+/* ============================================================
+   BUTTONS
+============================================================ */
+
+.btn {
+    padding: 10px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background: #218838;
+}

@@ -1,0 +1,82 @@
+{% extends "core/dashboard_base.html" %}
+{% block title %}Reports & Analytics{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <h1 class="text-3xl font-bold text-gray-800 mb-6">Reports & Analytics</h1>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+
+    <div class="p-5 bg-white rounded-xl shadow">
+      <h3 class="text-sm text-gray-600">Daily Sales</h3>
+      <p class="text-3xl font-bold text-indigo-600">₱{{ sales_today }}</p>
+    </div>
+
+    <div class="p-5 bg-white rounded-xl shadow">
+      <h3 class="text-sm text-gray-600">Weekly Sales</h3>
+      <p class="text-3xl font-bold text-indigo-600">₱{{ sales_week }}</p>
+    </div>
+
+    <div class="p-5 bg-white rounded-xl shadow">
+      <h3 class="text-sm text-gray-600">Monthly Sales</h3>
+      <p class="text-3xl font-bold text-indigo-600">₱{{ sales_month }}</p>
+    </div>
+
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+    <!-- Sales Line Chart -->
+    <div class="bg-white p-6 rounded-xl shadow">
+      <h2 class="text-xl font-bold mb-4">Sales (Last 7 Days)</h2>
+      <canvas id="salesChart" height="150"></canvas>
+    </div>
+
+    <!-- Top Products -->
+    <div class="bg-white p-6 rounded-xl shadow">
+      <h2 class="text-xl font-bold mb-4">Top Products</h2>
+      <canvas id="topProductsChart" height="150"></canvas>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// Sales chart
+const salesChart = new Chart(
+  document.getElementById('salesChart'),
+  {
+    type: 'line',
+    data: {
+      labels: {{ labels|safe }},
+      datasets: [{
+        label: 'Sales',
+        data: {{ values|safe }},
+        borderColor: 'rgb(79, 70, 229)',
+        tension: 0.3
+      }]
+    }
+  }
+);
+
+// Top products
+const topProducts = new Chart(
+  document.getElementById('topProductsChart'),
+  {
+    type: 'bar',
+    data: {
+      labels: {{ top_labels|safe }},
+      datasets: [{
+        label: 'Orders',
+        data: {{ top_values|safe }},
+        backgroundColor: 'rgb(99, 102, 241)'
+      }]
+    }
+  }
+);
+</script>
+
+{% endblock %}

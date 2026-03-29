@@ -1,101 +1,116 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
-from .models import Shift, CustomUser, OrderItem, InventoryItem, Restaurant, Order, MenuItem, Table
+from .models import CustomUser, Shift, Order, OrderItem, InventoryItem
 
 
 # ==============================================================================
-# SHIFT FORM
+# Utility: Base Styled Form (Tailwind Friendly)
 # ==============================================================================
-class ShiftForm(forms.ModelForm):
-    """Form for creating or updating work shifts."""
+
+class StyledModelForm(forms.ModelForm):
+    """
+    Base form that automatically applies Tailwind styling
+    to all fields.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        for field_name, field in self.fields.items():
+            field.widget.attrs.update({
+                "class": "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            })
+
+
+# ==============================================================================
+# Custom User Forms
+# ==============================================================================
+
+class CustomUserCreationForm(UserCreationForm):
+    """
+    Form for creating new users with role selection.
+    """
+
+    class Meta(UserCreationForm.Meta):
+        model = CustomUser
+        fields = ("username", "email", "first_name", "last_name", "role")
+
+
+class CustomUserChangeForm(UserChangeForm):
+    """
+    Form for updating users in admin.
+    """
+
+    class Meta:
+        model = CustomUser
+        fields = (
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+            "is_active",
+            "is_staff",
+        )
+
+
+# ==============================================================================
+# Shift Management Form
+# ==============================================================================
+
+class ShiftForm(StyledModelForm):
+    """
+    Form for creating and updating employee shifts.
+    """
+
     class Meta:
         model = Shift
-        fields = ["employee", "restaurant", 'start_time', 'end_time']
+        fields = ['employee', 'start_time', 'end_time']
         widgets = {
-            'start_time': forms.TimeInput(attrs={'type': 'time', 'class': 'form-control'}),
-            'end_time': forms.TimeInput(attrs={'type': 'time', 'class': 'form-control'}),
+            'start_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
+            'end_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
         }
 
 
 # ==============================================================================
-# USER FORMS
+# Order and OrderItem Forms
 # ==============================================================================
-class CustomUserCreationForm(UserCreationForm):
-    """Extended registration form with additional custom fields."""
-    phone_number = forms.CharField(max_length=17, required=False, label="Phone number")
-    passport_id_card_number = forms.CharField(max_length=50, required=False, label="Passport/ID")
 
-    class Meta(UserCreationForm.Meta):
-        model = CustomUser
-        fields = (
-            'username', 'first_name', 'last_name', 'email',
-            'role', 'avatar', 'phone_number', 'passport_id_card_number'
-        )
+class OrderForm(StyledModelForm):
+    """
+    Form for creating or updating an order.
+    """
 
-
-class CustomUserChangeForm(UserChangeForm):
-    """Form for editing existing user profiles (admin & self-service)."""
     class Meta:
-        model = CustomUser
-        fields = (
-            'first_name', 'last_name', 'email',
-            'role', 'avatar', 'phone_number', 'passport_id_card_number'
-        )
-
-
-# ==============================================================================
-# ORDER MANAGEMENT FORMS
-# ==============================================================================
-class OrderItemForm(forms.ModelForm):
-    """Used within admin or custom order creation views."""
-    class Meta:
-        model = OrderItem
-        fields = ['menu_item', 'variant', 'quantity', 'notes']
+        model = Order
+        fields = ['table', 'status', 'notes']
         widgets = {
             'notes': forms.Textarea(attrs={'rows': 2}),
         }
 
 
-class OrderForm(forms.ModelForm):
-    """Form used for creating orders in POS or manager interfaces."""
-    restaurant = forms.ModelChoiceField(
-        queryset=Restaurant.objects.all(),
-        empty_label="Select Restaurant",
-        label="Restaurant"
-    )
+class OrderItemForm(StyledModelForm):
+    """
+    Form for adding/editing an item inside an order.
+    """
 
     class Meta:
-        model = Order
-        fields = ["customer", "restaurant", "table"]
-
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Filter only available tables
-        self.fields['table'].queryset = Table.objects.filter(status=Table.Status.AVAILABLE)
-        self.fields['table'].help_text = "Select an available table for this order."
-        self.fields['table'].label = "Table"
-
-    def clean_table(self):
-        table = self.cleaned_data.get('table')
-        if not table:
-            raise forms.ValidationError("You must select a table.")
-        return table
+        model = OrderItem
+        fields = ["menu_item", "variant", "quantity", "notes"]
+        widgets = {
+            'notes': forms.Textarea(attrs={'rows': 2}),
+        }
 
 
 # ==============================================================================
-# INVENTORY MANAGEMENT FORMS
+# Inventory Management Form
 # ==============================================================================
-class InventoryItemForm(forms.ModelForm):
-    """Form for managing restaurant inventory items."""
+
+class InventoryItemForm(StyledModelForm):
+    """
+    Form for managing inventory items.
+    """
+
     class Meta:
         model = InventoryItem
-        fields = ["name", "category", "quantity", "unit", "reorder_level", "restaurant"]
-
-        widgets = {
-            'name': forms.TextInput(attrs={'placeholder': 'e.g., Tomato'}),
-            'unit': forms.TextInput(attrs={'placeholder': 'kg / L / boxes'}),
-        }
-        help_texts = {
-            'low_stock_threshold': "Threshold for triggering low-stock alerts.",
-        }
+        fields = ['name', 'quantity', 'unit', 'low_stock_threshold']

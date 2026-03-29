@@ -1,36 +1,33 @@
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+from django.db.models import Sum, F
+from datetime import timedelta
 import logging
 
-# Try to import the printer utility
-try:
-    from core.utils import send_to_printer
-except ImportError:
-    send_to_printer = None
+from .models import Order, DailyReport
 
 logger = logging.getLogger(__name__)
 
+# Optional printer import (safe)
+try:
+    from core.print_utils import send_to_printer
+except ImportError:
+    send_to_printer = None
+
+
+# ==============================================================
+# ================== KITCHEN BROADCAST =========================
+# ==============================================================
 
 def broadcast_kitchen_ticket(ticket, action="create"):
-    """
-    Broadcast a kitchen ticket event over the 'kitchen_display' WebSocket group
-    and (optionally) print corresponding tickets to kitchen, drinks, and POS printers.
-
-    Args:
-        ticket (KitchenTicket): The kitchen ticket instance to broadcast.
-        action (str): "create", "update", or "delete".
-    """
     if not ticket:
         return
 
     try:
-        # ------------------------------------------------------------------
-        # Build data for WebSocket broadcast
-        # ------------------------------------------------------------------
         layer = get_channel_layer()
         if not layer:
-            logger.warning("No channel layer configured; broadcast skipped.")
+            logger.warning("No channel layer configured.")
             return
 
         order_item = ticket.order_item
@@ -57,61 +54,97 @@ def broadcast_kitchen_ticket(ticket, action="create"):
             "kitchen_display",
             {"type": "kitchen_update", "data": data},
         )
-        logger.info(
-            f"Broadcasted kitchen ticket #{ticket.id} ({action}) to WebSocket group."
-        )
 
-        # ------------------------------------------------------------------
-        # PRINTING SECTION (KITCHEN / DRINKS / POS)
-        # ------------------------------------------------------------------
+        logger.info(f"Kitchen ticket #{ticket.id} broadcasted.")
+
+        # Optional printing
         if action == "create" and callable(send_to_printer):
-            text_header = (
+            header = (
                 f"========== NEW TICKET ==========\n"
                 f"ORDER #{order.id}\n"
-                f"Created: {timezone.localtime(ticket.created_at).strftime('%H:%M')}\n"
+                f"Time: {timezone.localtime(ticket.created_at).strftime('%H:%M')}\n"
                 f"---------------------------------\n"
             )
-            item_line = f"{order_item.quantity}x {menu_item.name}\n"
+
+            line = f"{order_item.quantity}x {menu_item.name}\n"
             footer = "---------------------------------\n\n"
 
-            ticket_text = text_header + item_line + footer
+            text = header + line + footer
 
-            # --- Print to Kitchen printer (food or default) ---
-            # Print food items or everything as default
-            if not is_drink:
-                try:
-                    send_to_printer("kitchen", ticket_text)
-                    logger.info(f"Printed ticket #{ticket.id} to Kitchen printer.")
-                except Exception as e:
-                    logger.error(
-                        f"Error printing to Kitchen printer for ticket #{ticket.id}: {e}"
-                    )
-
-            # --- Print to Drinks printer (if item is a drink) ---
-            if is_drink:
-                try:
-                    send_to_printer("drinks", ticket_text)
-                    logger.info(f"Printed ticket #{ticket.id} to Drinks printer.")
-                except Exception as e:
-                    logger.error(
-                        f"Error printing to Drinks printer for ticket #{ticket.id}: {e}"
-                    )
-
-            # --- Always print customer copy / receipt at POS printer ---
             try:
-                receipt_text = (
-                    f"====== POS RECEIPT ======\n"
-                    f"Order #{order.id}\n"
-                    f"Item: {menu_item.name}\n"
-                    f"Qty: {order_item.quantity}\n"
-                    f"-------------------------\n\n"
-                )
-                send_to_printer("pos", receipt_text)
-                logger.info(f"Printed ticket #{ticket.id} to POS printer.")
+                if is_drink:
+                    send_to_printer("drinks", text)
+                else:
+                    send_to_printer("kitchen", text)
+
+                send_to_printer("pos", text)
+
             except Exception as e:
-                logger.error(
-                    f"Error printing to POS printer for ticket #{ticket.id}: {e}"
-                )
+                logger.error(f"Printer error: {e}")
 
     except Exception as exc:
-        logger.error(f"Kitchen broadcast failed: {exc}", exc_info=True)
+        logger.error("Kitchen broadcast failed", exc_info=True)
+
+
+# ==============================================================
+# ================== DAILY REPORT ==============================
+# ==============================================================
+
+def generate_daily_report(restaurant):
+    if not restaurant:
+        return {
+            "total_orders": 0,
+            "total_revenue": 0,
+        }
+
+    today = timezone.now().date()
+
+    # ✅ Better to use stored unit_price instead of menu price
+    total_expr = F("items__quantity") * F("items__unit_price")
+
+    orders = Order.objects.filter(
+        restaurant=restaurant,
+        status=Order.Status.PAID,
+        created_at__date=today,
+    )
+
+    total_orders = orders.count()
+    total_revenue = orders.aggregate(total=Sum(total_expr))["total"] or 0
+
+    DailyReport.objects.update_or_create(
+        restaurant=restaurant,
+        date=today,
+        defaults={
+            "total_orders": total_orders,
+            "total_revenue": total_revenue,
+        },
+    )
+
+    return {
+        "total_orders": total_orders,
+        "total_revenue": float(total_revenue),
+    }
+
+
+# ==============================================================
+# ================== PERIOD SUMMARY ============================
+# ==============================================================
+
+def calculate_period_summary(restaurant, days):
+    date_from = timezone.now().date() - timedelta(days=days)
+
+    total_expr = F("items__quantity") * F("items__unit_price")
+
+    orders = Order.objects.filter(
+        restaurant=restaurant,
+        status=Order.Status.PAID,
+        created_at__date__gte=date_from,
+    )
+
+    total_orders = orders.count()
+    total_revenue = orders.aggregate(total=Sum(total_expr))["total"] or 0
+
+    return {
+        "total_orders": total_orders,
+        "total_revenue": float(total_revenue),
+    }

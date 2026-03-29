@@ -1,139 +1,227 @@
-# myapp/serializers.py
+# core/serializers.py
 
 from rest_framework import serializers
-from .models import CustomUser, Order, OrderItem
-
+from .models import (
+    CustomUser,
+    Restaurant,
+    Table,
+    Order,
+    OrderItem,
+    Product,
+    ModifierGroup,
+    ModifierOption,
+    InventoryItem,
+    Category,
+    Menu,
+    Payment,
+)
 
 # ==============================================================================
-# CustomUser Serializer
+# User Serializer
 # ==============================================================================
 
 class CustomUserSerializer(serializers.ModelSerializer):
-    """Serializer for the CustomUser model."""
-
-    full_name = serializers.SerializerMethodField(read_only=True)
-
     class Meta:
         model = CustomUser
         fields = [
-            'id',
-            'username',
-            'email',
-            'first_name',
-            'last_name',
-            'full_name',
-            'role',
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "role",
+            "restaurant",
         ]
-        read_only_fields = ['id', 'email']
-
-    def get_full_name(self, obj):
-        """Return full name derived from first and last names."""
-        return f"{obj.first_name} {obj.last_name}".strip() or obj.username
 
 
 # ==============================================================================
-# Order Item Serializer
+# Inventory Serializer
+# ==============================================================================
+
+class InventoryItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InventoryItem
+        fields = "__all__"
+
+
+# ==============================================================================
+# Table Serializer
+# ==============================================================================
+
+class TableSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Table
+        fields = ["id", "restaurant", "table_number", "capacity", "status"]
+
+
+# ==============================================================================
+# Menu System Serializers
+# ==============================================================================
+
+class ModifierOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ModifierOption
+        fields = ["id", "name", "price_override"]
+
+
+class ModifierGroupSerializer(serializers.ModelSerializer):
+    options = ModifierOptionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ModifierGroup
+        fields = ["id", "name", "min_selection", "max_selection", "options"]
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            "id",
+            "name",
+            "description",
+            "base_price",
+            "image",
+            "is_available",
+            "category",
+            "modifier_groups",
+        ]
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    products = ProductSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Category
+        fields = ["id", "name", "description", "display_order", "products"]
+
+
+class MenuSerializer(serializers.ModelSerializer):
+    categories = CategorySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Menu
+        fields = ["id", "name", "description", "is_active", "restaurant", "categories"]
+
+
+# ==============================================================================
+# Order Serializers
 # ==============================================================================
 
 class OrderItemSerializer(serializers.ModelSerializer):
-    """Serializer for individual items within an order."""
+    """
+    Serializer for items inside an order.
+    Secure against cross-restaurant data leaks.
+    """
 
-    menu_item_name = serializers.CharField(
-        source='menu_item.name', read_only=True
+    # Read representations
+    product = ProductSerializer(read_only=True)
+    modifiers = ModifierOptionSerializer(many=True, read_only=True)
+
+    # Write fields (restricted per restaurant)
+    product_id = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.none(),
+        source="product",
+        write_only=True,
     )
-    variant_name = serializers.CharField(
-        source='variant.name', read_only=True, allow_null=True
-    )
-    price = serializers.DecimalField(
-        source='menu_item.price', max_digits=10, decimal_places=2, read_only=True
+
+    modifier_ids = serializers.PrimaryKeyRelatedField(
+        queryset=ModifierOption.objects.none(),
+        source="modifiers",
+        many=True,
+        write_only=True,
+        required=False,
     )
 
     class Meta:
         model = OrderItem
         fields = [
-            'id',
-            'menu_item_name',
-            'variant_name',
-            'quantity',
-            'notes',
-            'price',
+            "id",
+            "order",
+            "product",
+            "modifiers",
+            "quantity",
+            "notes",
+            "final_price",
+            "product_id",
+            "modifier_ids",
         ]
-        read_only_fields = ['id', 'menu_item_name', 'variant_name', 'price']
+        read_only_fields = ["order", "final_price"]
 
+    # ✅ Multi-tenant protection
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-# ==============================================================================
-# Order Serializer (Main)
-# ==============================================================================
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            restaurant = request.user.restaurant
+
+            self.fields["product_id"].queryset = Product.objects.filter(
+                restaurant=restaurant
+            )
+
+            self.fields["modifier_ids"].queryset = ModifierOption.objects.filter(
+                modifier_group__product__restaurant=restaurant
+            )
+
 
 class OrderSerializer(serializers.ModelSerializer):
-    """
-    Main serializer for the Order model.
-    Includes nested items for both read and broadcasting via Channels.
-    """
-
     items = OrderItemSerializer(many=True, read_only=True)
-    table_number = serializers.IntegerField(
-        source='table.table_number', read_only=True
-    )
-    status_display = serializers.CharField(
-        source='get_status_display', read_only=True
-    )
+    staff = CustomUserSerializer(read_only=True)
     total_price = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
-            'id',
-            'table_number',
-            'status',
-            'status_display',
-            'created_at',
-            'updated_at',
-            'items',
-            'total_price',
+            "id",
+            "restaurant",
+            "table",
+            "status",
+            "created_at",
+            "updated_at",
+            "items",
+            "staff",
+            "total_price",
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ["created_at", "updated_at"]
 
     def get_total_price(self, obj):
-        """Calculate total price of all order items."""
-        try:
-            return sum(
-                (item.menu_item.price or 0) * item.quantity
-                for item in getattr(obj, 'items', [])
-            )
-        except Exception:
-            return 0.00
-
-    def validate_status(self, value):
-        """Ensure the status value is valid according to Order model choices."""
-        valid_statuses = [choice[0] for choice in Order.STATUS_CHOICES]
-        if value not in valid_statuses:
-            raise serializers.ValidationError(f"Invalid status: {value}")
-        return value
+        return obj.total_price()
 
 
 # ==============================================================================
-# Integration Helper: Build payloads for Channels Consumers
+# Payment Serializer (SECURE)
+# ==============================================================================
+
+class PaymentSerializer(serializers.ModelSerializer):
+    """
+    Payment data should NEVER be writable from frontend.
+    Stripe webhook controls status updates.
+    """
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "order",
+            "amount",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+# ==============================================================================
+# Channels Helper
 # ==============================================================================
 
 def serialize_order_for_channels(order):
     """
-    Helper function for WebSocket broadcasting.
-
-    Usage:
-        serialized_data = serialize_order_for_channels(order)
-        await channel_layer.group_send("kitchen_display", {
-            "type": "send_order_update",
-            "order": serialized_data,
-        })
+    Used by signals.py to serialize order safely for WebSocket broadcast.
     """
-    serializer = OrderSerializer(order)
-    return serializer.data
+    return OrderSerializer(order).data
 
 
-def serialize_order_list_for_channels(orders_queryset):
-    """
-    Helper for serializing multiple orders at once (e.g., all open orders for KDS).
-    """
-    serializer = OrderSerializer(orders_queryset, many=True)
-    return serializer.data
+
+

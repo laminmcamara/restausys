@@ -1,0 +1,33 @@
+{% extends "core/dashboard_base.html" %}
+{% block title %}Refunds & Voids{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <h1 class="text-3xl font-bold mb-6">Refunds & Voids</h1>
+
+  <table class="w-full bg-white rounded shadow">
+    <tr class="border-b bg-gray-50">
+      <th class="p-3">Order #</th>
+      <th class="p-3">Amount</th>
+      <th class="p-3">Reason</th>
+      <th class="p-3">Staff</th>
+      <th class="p-3">Actions</th>
+    </tr>
+
+    {% for order in refundable_orders %}
+    <tr class="border-b">
+      <td class="p-3">{{ order.id }}</td>
+      <td class="p-3">₱{{ order.total }}</td>
+      <td class="p-3">{{ order.reason|default:"—" }}</td>
+      <td class="p-3">{{ order.staff }}</td>
+      <td class="p-3">
+        <a href="{% url 'core:refund-process' order.id %}"
+           class="text-red-600">Refund</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+</div>
+{% endblock %}

@@ -1,0 +1,13 @@
+<div>
+    <!-- CART COMPONENT -->
+    {% if cart_items %}
+      {% for item in cart_items %}
+        <div class="flex justify-between mb-2">
+          <span>{{ item.name }} x {{ item.quantity }}</span>
+          <span>${{ item.total }}</span>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="text-gray-500">Cart is empty.</p>
+    {% endif %}
+  </div>

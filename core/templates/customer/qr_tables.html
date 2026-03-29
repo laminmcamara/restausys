@@ -1,0 +1,15 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<h2>Customer Table QR Codes</h2>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill,200px);gap:20px;">
+{% for table in tables %}
+    <div style="text-align:center;border:1px solid #ddd;padding:20px;border-radius:10px;">
+        <h3>Table {{ table.number }}</h3>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={{ request.build_absolute_uri }}/customer/display/?table_id={{ table.number }}" />
+    </div>
+{% endfor %}
+</div>
+{% endblock %}

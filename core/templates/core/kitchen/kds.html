@@ -1,0 +1,329 @@
+{% extends "core/dashboard_base.html" %}
+{% load static %}
+
+{% block dashboard_content %}
+<style>
+    :root {
+        --bg-color: #2b2b2b; /* Darker background for less eye strain in kitchens */
+        --ticket-bg: #ffffff;
+        --header-bg: #1a1a1a;
+        --header-text: #ffffff;
+        --border-color: #444444;
+        --shadow-color: rgba(0, 0, 0, 0.2);
+        --font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+        
+        --status-preparing: #337ab7; /* Blue */
+        --status-ready: #5cb85c;     /* Green */
+        --status-completed: #777777; /* Gray */
+
+        --timer-normal: #333;
+        --timer-warn: #f0ad4e;     /* Orange */
+        --timer-urgent: #d9534f;    /* Red */
+    }
+
+    /* Remove default browser margin and set body styles */
+    body {
+        background-color: var(--bg-color);
+        font-family: var(--font-family);
+        margin: 0;
+    }
+
+    .kds-header {
+        background-color: var(--header-bg);
+        color: var(--header-text);
+        padding: 1rem 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        border-bottom: 2px solid var(--border-color);
+    }
+
+    .kds-header h1 {
+        margin: 0;
+        font-size: 2.5rem; /* Larger title */
+        font-weight: 600;
+    }
+
+    .filters a {
+        color: var(--header-text);
+        text-decoration: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        margin-left: 1rem;
+        font-size: 1.2rem; /* Larger filter buttons */
+        font-weight: 500;
+        transition: background-color 0.2s;
+    }
+
+    .filters a:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .filters a.active {
+        background-color: var(--status-preparing);
+        color: white;
+        font-weight: 700;
+    }
+
+    .ticket-grid {
+        display: grid;
+        /* Increase minmax for wider tickets */
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); 
+        gap: 2rem; /* More space between tickets */
+        padding: 2rem;
+    }
+
+    .ticket {
+        background-color: var(--ticket-bg);
+        border-radius: 12px;
+        box-shadow: 0 8px 16px var(--shadow-color);
+        display: flex;
+        flex-direction: column;
+        border-top: 10px solid var(--status-preparing); /* Status color bar */
+    }
+    .ticket.status-READY { border-top-color: var(--status-ready); }
+    .ticket.status-COMPLETED { border-top-color: var(--status-completed); }
+
+    .ticket-header {
+        padding: 1rem 1.5rem;
+        border-bottom: 2px solid #eee;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .ticket-info h2 {
+        margin: 0;
+        font-size: 2.5rem; /* Big order number */
+        font-weight: 700;
+        color: #000;
+    }
+    .ticket-info h2 small {
+        font-size: 1.8rem; /* Big table name */
+        font-weight: 500;
+        color: #333;
+    }
+    
+    .ticket-timer {
+        font-size: 2.2rem; /* Prominent timer */
+        font-weight: 700;
+        min-width: 100px;
+        text-align: right;
+    }
+
+    .ticket-body {
+        padding: 1.5rem;
+        flex-grow: 1;
+    }
+
+    .ticket-body ul {
+        list-style-type: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    /* Style for each food item line */
+    .ticket-body li {
+        font-size: 2rem; /* HUGE item font size */
+        font-weight: 600;
+        margin-bottom: 1.25rem;
+        display: flex;
+        align-items: baseline;
+        line-height: 1.2;
+        border-bottom: 1px dashed #ccc;
+        padding-bottom: 1.25rem;
+    }
+    .ticket-body li:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+
+    .item-quantity {
+        font-weight: 800; /* Extra-bold quantity */
+        font-size: 2.5rem; /* Larger than item name */
+        margin-right: 1.5rem;
+        min-width: 60px; /* Ensure alignment */
+        color: #000;
+    }
+
+    .item-details {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .item-modifiers {
+        list-style-type: none; /* No bullets for modifiers */
+        padding-left: 0;
+        margin-top: 0.5rem;
+        font-size: 1.4rem; /* Large but smaller than item */
+        font-weight: 500;
+        color: #555;
+    }
+    .item-modifiers li::before {
+        content: "↳ "; /* Arrow to indicate sub-item */
+        color: #888;
+    }
+
+    .ticket-footer {
+        padding: 1rem;
+        border-top: 2px solid #eee;
+        background-color: #f9f9f9;
+        text-align: center;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+    }
+
+    .action-button {
+        border: none;
+        padding: 1rem 2rem; /* Much larger button padding */
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 1.5rem; /* Large button text */
+        width: calc(100% - 2rem); /* Make button wide */
+        margin: 0.5rem 1rem;
+        color: white;
+        transition: transform 0.1s ease;
+    }
+    .action-button:active {
+        transform: scale(0.98);
+    }
+
+    .btn-ready { background-color: var(--status-ready); }
+    .btn-complete { background-color: var(--status-completed); }
+
+    .no-tickets {
+        text-align: center;
+        font-size: 2.5rem;
+        color: #999;
+        padding: 5rem;
+        grid-column: 1 / -1; /* Span full width */
+    }
+</style>
+
+<header class="kds-header">
+    <h1>Kitchen Orders</h1>
+    <nav class="filters">
+        <a href="{% url 'core:kitchen_display' %}" class="{% if not status_filter %}active{% endif %}">Active</a>
+        {% for status_value, status_name in status_choices %}
+            <a href="?status={{ status_value }}" class="{% if status_filter == status_value %}active{% endif %}">{{ status_name }}</a>
+        {% endfor %}
+    </nav>
+</header>
+
+<main class="ticket-grid">
+    {% for ticket in tickets %}
+        <!-- Pass the ticket creation time to the data attribute in ISO format for easy JS parsing -->
+        <div class="ticket status-{{ ticket.status }}" data-created-at="{{ ticket.created_at|date:"c" }}">
+            <div class="ticket-header">
+                <div class="ticket-info">
+                    <h2>#{{ ticket.order.id }} <small>({{ ticket.order.table.name|default:"Takeout" }})</small></h2>
+                </div>
+                <!-- This div will be populated by JavaScript -->
+                <div class="ticket-timer">00:00</div>
+            </div>
+            <div class="ticket-body">
+                <ul>
+                    {% for item in ticket.order.items.all %}
+                        <li>
+                            <span class="item-quantity">{{ item.quantity }}x</span>
+                            <div class="item-details">
+                                <span class="item-name">{{ item.product.name }}</span>
+                                {% if item.modifiers.all %}
+                                    <ul class="item-modifiers">
+                                    {% for modifier in item.modifiers.all %}
+                                        <li>{{ modifier.name }}</li>
+                                    {% endfor %}
+                                    </ul>
+                                {% endif %}
+                            </div>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% if ticket.status != all_statuses.COMPLETED %}
+            <div class="ticket-footer">
+                <form method="POST" action="{% url 'core:kitchen_display' %}" style="display: inline;">
+                    {% csrf_token %}
+                    <input type="hidden" name="ticket_id" value="{{ ticket.id }}">
+                    <input type="hidden" name="current_filter" value="{{ status_filter|default:'' }}">
+                    
+                    {% if ticket.status == all_statuses.PREPARING %}
+                        <input type="hidden" name="new_status" value="{{ all_statuses.READY }}">
+                        <button type="submit" class="action-button btn-ready">Mark as Ready</button>
+                    {% elif ticket.status == all_statuses.READY %}
+                        <input type="hidden" name="new_status" value="{{ all_statuses.COMPLETED }}">
+                        <button type="submit" class="action-button btn-complete">Complete &amp; Clear</button>
+                    {% endif %}
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    {% empty %}
+        <div class="no-tickets">
+            <p>🎉 All Caught Up! 🎉</p>
+        </div>
+    {% endfor %}
+</main>
+
+<script>
+    // This script calculates and updates the running timer for each ticket.
+    document.addEventListener('DOMContentLoaded', function() {
+        const tickets = document.querySelectorAll('.ticket');
+        const WARN_THRESHOLD_SECONDS = 300; // 5 minutes
+        const URGENT_THRESHOLD_SECONDS = 600; // 10 minutes
+
+        function updateTimers() {
+            const now = new Date();
+            
+            tickets.forEach(ticket => {
+                const timerElement = ticket.querySelector('.ticket-timer');
+                // Skip if ticket is completed or has no timer element
+                if (!timerElement || ticket.classList.contains('status-COMPLETED')) {
+                    if(timerElement) timerElement.style.display = 'none';
+                    return;
+                }
+
+                const createdAtString = ticket.dataset.createdAt;
+                const createdAt = new Date(createdAtString);
+                
+                const elapsedSeconds = Math.floor((now - createdAt) / 1000);
+                
+                const minutes = Math.floor(elapsedSeconds / 60);
+                const seconds = elapsedSeconds % 60;
+                
+                // Format as MM:SS
+                timerElement.textContent = 
+                    `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+                // Apply color coding based on age
+                if (elapsedSeconds >= URGENT_THRESHOLD_SECONDS) {
+                    timerElement.style.color = 'var(--timer-urgent)';
+                } else if (elapsedSeconds >= WARN_THRESHOLD_SECONDS) {
+                    timerElement.style.color = 'var(--timer-warn)';
+                } else {
+                    timerElement.style.color = 'var(--timer-normal)';
+                }
+            });
+        }
+
+        // Update timers every second
+        setInterval(updateTimers, 1000);
+        
+        // Run once immediately on load
+        updateTimers();
+
+        // Optional: Auto-refresh the whole page every 5 minutes to catch any missed updates
+        // This is a fallback and can be adjusted or removed.
+        const pageRefreshInterval = 300000; // 5 minutes
+        setTimeout(() => {
+            window.location.reload();
+        }, pageRefreshInterval);
+    });
+</script>
+
+{% endblock %}

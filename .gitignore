@@ -1,20 +1,48 @@
-# Environment files
+# ---------------------------
+# Python
+# ---------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---------------------------
+# Virtual Environment
+# ---------------------------
+venv/
+.env
 .env*
+
+# Keep example env file
 !.env.example
 
-# Python virtual environments
-venv/
-*.pyc
-__pycache__/
-
-# Django stuff:
+# ---------------------------
+# Django
+# ---------------------------
 db.sqlite3
-static/
+*.sqlite3
+staticfiles/
 media/
 
-# VS Code, PyCharm, etc.
+# ---------------------------
+# Node / React
+# ---------------------------
+node_modules/
+dist/
+
+# ---------------------------
+# IDE
+# ---------------------------
 .vscode/
 .idea/
 
+# ---------------------------
 # Logs
+# ---------------------------
 *.log
+pw.html
+
+# ---------------------------
+# OS
+# ---------------------------
+.DS_Store

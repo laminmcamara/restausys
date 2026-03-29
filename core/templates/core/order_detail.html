@@ -73,7 +73,7 @@
               <td class="px-4 py-3 font-medium text-gray-800">{{ item.menu_item.name }}</td>
               <td class="px-4 py-3">{{ item.quantity }}</td>
               <td class="px-4 py-3">${{ item.price|floatformat:2 }}</td>
-              <td class="px-4 py-3 text-right">${{ item.price|floatformat:2|add:item.quantity|floatformat:2 }}</td>
+              <td class="px-4 py-3 text-right">${{ item.quantity|floatformat:0|add:item.price|floatformat:2 }}</td>
             </tr>
           {% empty %}
             <tr>
@@ -86,6 +86,15 @@
 
     <!-- ACTIONS -->
     <div class="flex flex-wrap justify-end gap-3">
+
+      {% if order.status != "COMPLETED" and order.status != "PAID" %}
+        <!-- QR Pay Button -->
+        <a href="/pay/{{ order.id }}/"
+           class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-md">
+          📱 Pay via QR
+        </a>
+      {% endif %}
+
       {% if order.status != "COMPLETED" %}
         <form method="post" action="{% url 'core:order-complete' order.id %}">
           {% csrf_token %}
@@ -95,6 +104,7 @@
           </button>
         </form>
       {% endif %}
+
       <form method="post" action="{% url 'core:order-delete' order.id %}">
         {% csrf_token %}
         <button type="submit"

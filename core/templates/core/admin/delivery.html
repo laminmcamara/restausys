@@ -1,0 +1,47 @@
+{% extends "core/dashboard_base.html" %}
+{% block title %}Delivery Management{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <h1 class="text-3xl font-bold mb-6">Delivery / Rider Management</h1>
+
+  <a href="{% url 'core:rider-add' %}"
+     class="px-4 py-2 bg-indigo-600 text-white rounded-lg">
+    Add Rider
+  </a>
+
+  <table class="mt-4 w-full bg-white rounded shadow">
+    <tr class="border-b bg-gray-50">
+      <th class="p-3">Name</th>
+      <th class="p-3">Status</th>
+      <th class="p-3">Current Delivery</th>
+      <th class="p-3">Actions</th>
+    </tr>
+
+    {% for rider in riders %}
+    <tr class="border-b">
+      <td class="p-3">{{ rider.name }}</td>
+      <td class="p-3">
+        {% if rider.active %}
+        <span class="text-green-600">Active</span>
+        {% else %}
+        <span class="text-gray-500">Offline</span>
+        {% endif %}
+      </td>
+      <td class="p-3">
+        {% if rider.current_order %}
+        Order #{{ rider.current_order.id }}
+        {% else %}
+        —
+        {% endif %}
+      </td>
+      <td class="p-3">
+        <a href="{% url 'core:rider-edit' rider.id %}" class="text-indigo-600">Edit</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+</div>
+{% endblock %}

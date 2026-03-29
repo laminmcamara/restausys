@@ -1,0 +1,94 @@
+{% extends 'core/base.html' %}
+
+{% block title %}Settings - RestaurantSys{% endblock %}
+
+{% block page_title %}
+    <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
+        Application Settings
+    </h1>
+{% endblock %}
+
+
+{% block content %}
+<div class="mt-6">
+    <!-- Settings Form Card -->
+    <div class="bg-white dark:bg-slate-800 shadow-md rounded-lg p-6 md:p-8">
+        
+        <form method="post">
+            {% csrf_token %}
+
+            <div class="space-y-8">
+                <!-- Section 1: General Settings -->
+                <div>
+                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2 mb-4">
+                        General
+                    </h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Restaurant Name -->
+                        <div>
+                            <label for="restaurant-name" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Restaurant Name</label>
+                            <input type="text" name="restaurant_name" id="restaurant-name" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" placeholder="My Awesome Restaurant" value="{{ settings.restaurant_name }}">
+                        </div>
+
+                        <!-- Currency Symbol -->
+                        <div>
+                            <label for="currency-symbol" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Currency Symbol</label>
+                            <input type="text" name="currency_symbol" id="currency-symbol" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" value="{{ settings.currency_symbol }}">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Display & Theme -->
+                <div>
+                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2 mb-4">
+                        Display & Theme
+                    </h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Default Theme (Dropdown) -->
+                        <div>
+                            <label for="default-theme" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Default Theme</label>
+                            <select name="default_theme" id="default-theme" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white">
+                                <option value="system" {% if settings.default_theme == 'system' %}selected{% endif %}>System Preference</option>
+                                <option value="light" {% if settings.default_theme == 'light' %}selected{% endif %}>Light Mode</option>
+                                <option value="dark" {% if settings.default_theme == 'dark' %}selected{% endif %}>Dark Mode</option>
+                            </select>
+                        </div>
+                        <!-- Items per Page -->
+                        <div>
+                            <label for="items-per-page" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Items per Page</label>
+                            <input type="number" name="items_per_page" id="items-per-page" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" value="{{ settings.items_per_page }}" min="5" max="100">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 3: Notifications -->
+                <div>
+                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2 mb-4">
+                        Notifications
+                    </h2>
+                    <div class="space-y-4">
+                        <!-- Email Notifications (Checkbox) -->
+                        <div class="flex items-center">
+                            <input id="email-notifications" name="email_notifications" type="checkbox" value="true" class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" {% if settings.email_notifications %}checked{% endif %}>
+                            <label for="email-notifications" class="ml-3 text-sm font-medium text-gray-900 dark:text-gray-300">Receive email notifications for daily sales reports</label>
+                        </div>
+                        <!-- Low Stock Alerts (Checkbox) -->
+                        <div class="flex items-center">
+                            <input id="stock-alerts" name="stock_alerts" type="checkbox" value="true" class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" {% if settings.stock_alerts %}checked{% endif %}>
+                            <label for="stock-alerts" class="ml-3 text-sm font-medium text-gray-900 dark:text-gray-300">Enable low stock alerts on the dashboard</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Form Actions -->
+            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                <button type="submit" class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">
+                    Save Changes
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>
+{% endblock %}

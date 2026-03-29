@@ -1,0 +1,49 @@
+{% extends "core/dashboard_base.html" %}
+{% load static %}
+
+{% block title %}POS Dashboard{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'core/css/dashboard.css' %}">
+{% endblock %}
+
+{% block dashboard_content %}
+<div id="pos-app">
+
+    <!-- LEFT: TABLE GRID -->
+    <aside id="tableGrid" class="pos-tables">
+        <!-- Tables rendered dynamically by dashboard.js -->
+    </aside>
+
+    <!-- CENTER: MENU -->
+    <section class="pos-menu">
+        <div id="category-bar" class="category-bar"></div>
+        <div id="menu-items-grid" class="menu-grid"></div>
+    </section>
+
+    <!-- RIGHT: ORDER SUMMARY -->
+    <aside class="pos-order">
+        <h2>Current Order</h2>
+
+        <div id="order-summary-list" class="order-list">
+            <!-- Cart items injected here -->
+        </div>
+
+        <div class="order-footer">
+            <div class="order-total-row">
+                <span>Total:</span>
+                <strong>$<span id="order-total">0.00</span></strong>
+            </div>
+
+            <button id="submit-order" class="submit-btn" disabled>
+                Submit Order
+            </button>
+        </div>
+    </aside>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{% static 'core/js/dashboard.js' %}"></script>
+{% endblock %}

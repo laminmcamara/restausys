@@ -1,0 +1,12 @@
+/* main.css */
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+}
+
+.navbar {
+    padding: 10px 20px;
+    background: #111;
+    color: white;
+}

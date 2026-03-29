@@ -1,0 +1,16 @@
+<script src="https://js.stripe.com/v3/"></script>
+
+<div id="status">Loading…</div>
+
+<script>
+const stripe = Stripe("{{ STRIPE_PUBLIC_KEY }}");
+
+stripe.confirmCardPayment("{{ client_secret }}")
+.then(res => {
+    if (res.error) {
+        document.getElementById("status").textContent = "Payment failed.";
+    } else {
+        document.getElementById("status").textContent = "Payment successful.";
+    }
+});
+</script>

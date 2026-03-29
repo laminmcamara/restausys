@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Order Status</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style> body { font-family:sans-serif; padding:20px; } </style>
+</head>
+<body>
+
+<h2>Order Status</h2>
+
+<p>Current status: <strong id="status">{{ order.status }}</strong></p>
+
+{% if order.status != "PAID" %}
+<button onclick="window.location='/table/order/{{ order.id }}/pay/';">
+    Pay for Order
+</button>
+{% endif %}
+
+<script>
+setInterval(async () => {
+    let r = await fetch("/api/orders/?id={{ order.id }}");
+    let data = await r.json();
+    if (data.status)
+        document.getElementById("status").innerText = data.status;
+}, 5000);
+</script>
+
+</body>
+</html>

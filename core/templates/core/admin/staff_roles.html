@@ -1,0 +1,38 @@
+{% extends "core/dashboard_base.html" %}
+{% block title %}Staff Roles{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <h1 class="text-3xl font-bold mb-6">Staff Roles & Permissions</h1>
+
+  <a href="{% url 'core:role-create' %}"
+     class="px-4 py-2 bg-indigo-600 text-white rounded-lg mb-4 inline-block">
+    Add Role
+  </a>
+
+  <table class="w-full bg-white rounded-lg shadow">
+    <tr class="border-b bg-gray-50">
+      <th class="p-3 text-left">Role</th>
+      <th class="p-3 text-left">Permissions</th>
+      <th class="p-3 text-left">Actions</th>
+    </tr>
+
+    {% for role in roles %}
+    <tr class="border-b">
+      <td class="p-3 font-semibold">{{ role.name }}</td>
+      <td class="p-3 text-sm text-gray-600">
+        {{ role.permissions_list }}
+      </td>
+      <td class="p-3">
+        <a href="{% url 'core:role-edit' role.id %}"
+           class="text-indigo-600 mr-3">Edit</a>
+        <a href="{% url 'core:role-delete' role.id %}"
+           class="text-red-600">Delete</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+</div>
+{% endblock %}

@@ -1,89 +1,94 @@
-{% extends 'core/base.html' %}
+{% extends "core/dashboard_base.html" %}
 {% load static %}
-{% block title %}Manager Dashboard{% endblock %}
+{% block title %}Manager Dashboard — RestaurantSys{% endblock %}
 
-{% block content %}
-<h1 class="mb-4">Manager Dashboard</h1>
+{% block dashboard_content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-6">Manager Dashboard</h1>
 
 <!-- Date Filter Form -->
-<form method="GET" class="mb-4">
-    <div class="form-row">
-        <div class="form-group col-md-5">
-            <label for="start_date">Start Date</label>
-            <input type="date" class="form-control" id="start_date" name="start_date" value="{{ start_date }}">
-        </div>
-        <div class="form-group col-md-5">
-            <label for="end_date">End Date</label>
-            <input type="date" class="form-control" id="end_date" name="end_date" value="{{ end_date }}">
-        </div>
-        <div class="form-group col-md-2">
-            <label>&nbsp;</label>
-            <button type="submit" class="btn btn-primary form-control">Filter</button>
-        </div>
-    </div>
+<form method="GET" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+  <div>
+    <label for="start_date" class="text-sm font-medium text-gray-700">Start Date</label>
+    <input type="date" id="start_date" name="start_date" value="{{ start_date }}" class="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+  </div>
+  <div>
+    <label for="end_date" class="text-sm font-medium text-gray-700">End Date</label>
+    <input type="date" id="end_date" name="end_date" value="{{ end_date }}" class="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+  </div>
+  <div class="flex items-end">
+    <button type="submit" class="w-full bg-indigo-600 text-white py-2 rounded-md hover:bg-indigo-700 transition">
+      Filter
+    </button>
+  </div>
 </form>
 
+<!-- DASHBOARD GRID -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <!-- Sales Data -->
+  <div class="bg-white p-5 rounded shadow">
+    <h2 class="text-lg font-semibold mb-3">Sales Data</h2>
+    <canvas id="salesChart"></canvas>
+  </div>
 
-<div class="row">
-    <div class="col-md-6">
-        <h2>Sales Data</h2>
-        <canvas id="salesChart"></canvas>
-    </div>
-    <div class="col-md-6">
-        <h2>Inventory Levels</h2>
-        <ul class="list-group">
-            {% for item in inventory_levels %}
-                <li class="list-group-item">{{ item.item_name }}: {{ item.quantity }}</li>
-            {% endfor %}
-        </ul>
-    </div>
+  <!-- Inventory Levels -->
+  <div class="bg-white p-5 rounded shadow">
+    <h2 class="text-lg font-semibold mb-3">Inventory Levels</h2>
+    <ul class="divide-y divide-gray-200">
+      {% for item in inventory_levels %}
+      <li class="py-2 flex justify-between">
+        <span>{{ item.item_name }}</span>
+        <span class="font-medium text-gray-700">{{ item.quantity }}</span>
+      </li>
+      {% empty %}
+      <li class="py-2 text-sm text-gray-500">No inventory items available.</li>
+      {% endfor %}
+    </ul>
+  </div>
 </div>
 
-<div class="row mt-4">
-    <div class="col-md-12">
-        <h2>Staff Performance</h2>
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Staff Member</th>
-                    <th>Performance Score</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for staff in staff_performance %}
-                    <tr>
-                        <td>{{ staff.staff_member }}</td>
-                        <td>{{ staff.performance_score }}</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+<!-- Staff Performance -->
+<div class="bg-white p-5 rounded shadow mt-6">
+  <h2 class="text-lg font-semibold mb-3">Staff Performance</h2>
+  <div class="overflow-x-auto">
+    <table class="min-w-full text-left border border-gray-200">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="py-2 px-3">Staff Member</th>
+          <th class="py-2 px-3">Performance Score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for staff in staff_performance %}
+        <tr class="border-b border-gray-100">
+          <td class="py-2 px-3">{{ staff.staff_member }}</td>
+          <td class="py-2 px-3">{{ staff.performance_score }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="2" class="py-3 text-center text-gray-500">No performance data.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    const ctx = document.getElementById('salesChart').getContext('2d');
-    const salesChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: {{ sales_data.labels|safe }},
-            datasets: [{
-                label: 'Sales Amount',
-                data: {{ sales_data.values|safe }},
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 2,
-                fill: false
-            }]
-        },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
-    });
+const ctx = document.getElementById('salesChart').getContext('2d');
+new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: {{ sales_data.labels|safe }},
+    datasets: [{
+      label: 'Sales Amount',
+      data: {{ sales_data.values|safe }},
+      borderColor: 'rgba(79,70,229,1)',
+      backgroundColor: 'rgba(79,70,229,0.1)',
+      borderWidth: 2,
+      fill: true,
+      tension: 0.35
+    }]
+  },
+  options: { responsive: true, scales: { y: { beginAtZero: true } } }
+});
 </script>
 {% endblock %}

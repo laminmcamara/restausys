@@ -1,0 +1,44 @@
+{% extends "core/dashboard_base.html" %}
+{% block title %}Inventory{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6">
+
+  <div class="flex justify-between items-center mb-4">
+    <h1 class="text-2xl font-bold text-gray-800">Inventory</h1>
+
+    <a href="{% url 'core:inventory-add' %}"
+       class="px-4 py-2 bg-indigo-600 text-white rounded-lg">Add Item</a>
+  </div>
+
+  <table class="w-full bg-white rounded-lg shadow">
+    <tr class="border-b bg-gray-50">
+      <th class="p-3 text-left">Item</th>
+      <th class="p-3 text-left">Stock</th>
+      <th class="p-3 text-left">Unit</th>
+      <th class="p-3 text-left">Low Stock</th>
+      <th class="p-3 text-left">Actions</th>
+    </tr>
+
+    {% for item in inventory %}
+    <tr class="border-b">
+      <td class="p-3">{{ item.name }}</td>
+      <td class="p-3">{{ item.quantity }}</td>
+      <td class="p-3">{{ item.unit }}</td>
+      <td class="p-3">
+        {% if item.quantity <= item.low_stock_threshold %}
+        <span class="text-red-600 font-semibold">Low</span>
+        {% else %}
+        <span class="text-green-600 font-semibold">OK</span>
+        {% endif %}
+      </td>
+      <td class="p-3">
+        <a href="{% url 'core:inventory-edit' item.id %}" class="text-indigo-600 mr-3">Edit</a>
+        <a href="{% url 'core:inventory-delete' item.id %}" class="text-red-600">Delete</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+</div>
+{% endblock %}

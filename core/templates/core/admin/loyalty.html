@@ -1,0 +1,34 @@
+{% extends "core/dashboard_base.html" %}
+{% block title %}Loyalty Program{% endblock %}
+
+{% block dashboard_content %}
+<div class="p-6 space-y-6">
+
+  <div class="flex justify-between">
+    <h1 class="text-3xl font-bold">Loyalty Program</h1>
+    <a href="{% url 'core:loyalty-add-tier' %}"
+       class="px-4 py-2 bg-indigo-600 text-white rounded-lg">Add Tier</a>
+  </div>
+
+  <table class="w-full bg-white rounded shadow">
+    <tr class="border-b bg-gray-50">
+      <th class="p-3">Tier Name</th>
+      <th class="p-3">Points Required</th>
+      <th class="p-3">Reward</th>
+      <th class="p-3">Actions</th>
+    </tr>
+
+    {% for tier in tiers %}
+    <tr class="border-b">
+      <td class="p-3">{{ tier.name }}</td>
+      <td class="p-3">{{ tier.points_required }}</td>
+      <td class="p-3">{{ tier.reward }}</td>
+      <td class="p-3">
+        <a href="{% url 'core:loyalty-edit-tier' tier.id %}" class="text-indigo-600">Edit</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+</div>
+{% endblock %}

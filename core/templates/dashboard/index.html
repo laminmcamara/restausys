@@ -1,0 +1,129 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<style>
+  .dashboard {
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 20px;
+  }
+  .summary-card, .order-card {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+  }
+  .order-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 20px;
+  }
+  .order-card h3 {
+      margin-bottom: 8px;
+  }
+  ul {
+      margin: 0;
+      padding-left: 20px;
+  }
+</style>
+
+<h2>Restaurant Dashboard</h2>
+
+<div class="dashboard">
+    <!-- Summary Section -->
+    <div>
+        <div class="summary-card">
+            <h3>Overview</h3>
+            <p><b>Total Orders Today:</b> <span id="sum-total">0</span></p>
+            <p><b>Cooking:</b> <span id="sum-cooking">0</span></p>
+            <p><b>Ready:</b> <span id="sum-ready">0</span></p>
+            <p><b>Served:</b> <span id="sum-served">0</span></p>
+            <p><b>Paid:</b> <span id="sum-paid">0</span></p>
+        </div>
+    </div>
+
+    <!-- Live Orders -->
+    <div class="order-list" id="order-list"></div>
+</div>
+
+<script>
+/* ----------------------------------------------------------
+   1) Connect Dashboard WebSocket
+---------------------------------------------------------- */
+const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+const socket = new WebSocket(`${wsScheme}://${window.location.host}/ws/orders/`);
+
+socket.onopen = () => console.log("🟢 Dashboard WebSocket Connected");
+socket.onclose = () => console.warn("🔴 Dashboard WS Disconnected");
+
+/* ----------------------------------------------------------
+   2) Incoming updates
+---------------------------------------------------------- */
+socket.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+
+    if (data.type === "order_update") {
+        renderOrderCard(data.order);
+        updateSummary();
+    }
+};
+
+/* ----------------------------------------------------------
+   3) Render or update order card
+---------------------------------------------------------- */
+function renderOrderCard(order) {
+    const list = document.getElementById("order-list");
+    let card = document.getElementById("dash-order-" + order.id);
+
+    if (!card) {
+        card = document.createElement("div");
+        card.id = "dash-order-" + order.id;
+        card.className = "order-card";
+        list.appendChild(card);
+    }
+
+    card.innerHTML = `
+        <h3>Order #${order.id}</h3>
+        <p><b>Table:</b> ${order.table}</p>
+        <p><b>Status:</b> ${order.status.toUpperCase()}</p>
+        <p><b>Items:</b></p>
+        <ul>
+            ${order.items.map(i => `<li>${i.qty} × ${i.name}</li>`).join("")}
+        </ul>
+    `;
+}
+
+/* ----------------------------------------------------------
+   4) Update summary counts
+---------------------------------------------------------- */
+function updateSummary() {
+    const cards = document.querySelectorAll(".order-card");
+    const count = { total: 0, cooking: 0, ready: 0, served: 0, paid: 0 };
+
+    cards.forEach(card => {
+        count.total++;
+        const status = card.innerHTML.match(/Status:<\/b> (\w+)/i)[1].toLowerCase();
+        if (count[status] !== undefined) count[status]++;
+    });
+
+    document.getElementById("sum-total").textContent = count.total;
+    document.getElementById("sum-cooking").textContent = count.cooking;
+    document.getElementById("sum-ready").textContent = count.ready;
+    document.getElementById("sum-served").textContent = count.served;
+    document.getElementById("sum-paid").textContent = count.paid;
+}
+
+/* ----------------------------------------------------------
+   5) Load initial orders (REST)
+---------------------------------------------------------- */
+fetch("/pos/api/orders/")
+    .then(res => res.json())
+    .then(data => {
+        data.orders.forEach(order => renderOrderCard(order));
+        updateSummary();
+    });
+</script>
+
+{% endblock %}

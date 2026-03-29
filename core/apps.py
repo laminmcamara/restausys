@@ -1,23 +1,19 @@
-# core/apps.py
-
 from django.apps import AppConfig
-import logging
+from django.utils.translation import gettext_lazy as _
 
 
 class CoreConfig(AppConfig):
-    """App configuration for the Core application."""
+    """
+    Configuration for the 'core' application.
+    Ensures signal handlers are connected when Django starts.
+    """
 
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'core'
-    verbose_name = "Core Application"
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "core"
+    verbose_name = _("Core Application")
 
     def ready(self):
         """
-        Import signal modules when Django app registry is fully loaded.
-        This ensures models and channel layers are ready before signal binding.
+        Import signal handlers so they are registered.
         """
-        try:
-            import core.signals  # noqa: F401  # Import solely for side effects
-            logging.getLogger(__name__).info("✅ core.signals module loaded successfully.")
-        except Exception as e:
-            logging.getLogger(__name__).exception(f"⚠️ Failed to import core.signals: {e}")
+        import core.signals  # noqa

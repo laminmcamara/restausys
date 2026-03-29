@@ -1,0 +1,142 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<h2>Analytics Dashboard</h2>
+
+<style>
+  .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      margin-bottom: 20px;
+  }
+  .kpi {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+  }
+  .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+  }
+  canvas {
+      background: white;
+      padding: 10px;
+      border-radius: 12px;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+  }
+</style>
+
+<div class="kpi-grid">
+    <div class="kpi"><h3>Total Orders</h3><p id="kpi-orders">0</p></div>
+    <div class="kpi"><h3>Total Revenue</h3><p id="kpi-revenue">$0.00</p></div>
+    <div class="kpi"><h3>Avg Order Value</h3><p id="kpi-avg">$0.00</p></div>
+    <div class="kpi"><h3>Ready Orders</h3><p id="kpi-ready">0</p></div>
+</div>
+
+<div class="charts-grid">
+    <canvas id="chartRevenue"></canvas>
+    <canvas id="chartItems"></canvas>
+</div>
+
+<script>
+let chartRevenue = null;
+let chartItems = null;
+
+/* ----------------------------------------------------------
+   Fetch analytics summary
+---------------------------------------------------------- */
+function loadAnalytics() {
+    fetch("/api/analytics/")
+        .then(res => res.json())
+        .then(drawAnalytics);
+}
+
+/* ----------------------------------------------------------
+   Render KPI + Charts
+---------------------------------------------------------- */
+function drawAnalytics(data) {
+
+    document.getElementById("kpi-orders").innerText = data.total_orders;
+    document.getElementById("kpi-revenue").innerText = "$" + data.total_revenue.toFixed(2);
+    document.getElementById("kpi-avg").innerText = "$" + data.avg_order.toFixed(2);
+    document.getElementById("kpi-ready").innerText = data.status_counts.ready;
+
+    /* ----------- Revenue by Hour Chart -------------- */
+    const revenueLabels = data.hourly_revenue.map(x => x.hour + ":00");
+    const revenueValues = data.hourly_revenue.map(x => x.total);
+
+    if (!chartRevenue) {
+        chartRevenue = new Chart(document.getElementById("chartRevenue"), {
+            type: "line",
+            data: {
+                labels: revenueLabels,
+                datasets: [{
+                    label: "Revenue by Hour",
+                    data: revenueValues,
+                    borderColor: "#4e73df",
+                    borderWidth: 2,
+                    fill: false
+                }]
+            }
+        });
+    } else {
+        chartRevenue.data.labels = revenueLabels;
+        chartRevenue.data.datasets[0].data = revenueValues;
+        chartRevenue.update();
+    }
+
+    /* ----------- Best Selling Items Chart -------------- */
+    const itemLabels = data.best_items.map(x => x.name);
+    const itemValues = data.best_items.map(x => x.qty);
+
+    if (!chartItems) {
+        chartItems = new Chart(document.getElementById("chartItems"), {
+            type: "bar",
+            data: {
+                labels: itemLabels,
+                datasets: [{
+                    label: "Top Selling Items",
+                    data: itemValues,
+                    backgroundColor: "#1cc88a"
+                }]
+            }
+        });
+    } else {
+        chartItems.data.labels = itemLabels;
+        chartItems.data.datasets[0].data = itemValues;
+        chartItems.update();
+    }
+}
+
+    let lastDate = new Date().toDateString();
+    
+    // Check every 10 seconds
+    setInterval(() => {
+        let now = new Date().toDateString();
+    
+        if (now !== lastDate) {
+            lastDate = now;
+    
+            // Show popup message
+            alert("New day started — Daily sales reset!");
+    
+            // Reload analytics data
+            loadAnalytics();
+        }
+    }, 10000);
+
+/* ----------------------------------------------------------
+   Auto refresh every 15 seconds
+---------------------------------------------------------- */
+loadAnalytics();
+setInterval(loadAnalytics, 15000);
+</script>
+
+{% endblock %}

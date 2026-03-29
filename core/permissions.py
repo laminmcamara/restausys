@@ -1,57 +1,117 @@
-"""
-permissions.py
-
-Custom role-based admin access control for the Global Restaurant Management Platform.
-"""
-
 from django.contrib import admin
-from django.core.exceptions import PermissionDenied
-from .models import CustomUser
+from rest_framework.permissions import BasePermission, SAFE_METHODS
 
+
+# ===================================================================
+# 1. DJANGO ADMIN PERMISSION BASE
+# ===================================================================
 
 class RoleRestrictedAdmin(admin.ModelAdmin):
-    """
-    A base admin class that automatically enforces role-based view, add, change, and delete permissions.
-    """
 
-    def has_module_permission(self, request):
-        """Managers and Super Admins can see the module."""
-        user = request.user
-        if not user.is_authenticated:
-            return False
-        return user.is_superuser or user.role in [
-            CustomUser.Roles.SUPER_ADMIN,
-            CustomUser.Roles.MANAGER
-        ]
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+
+        if request.user.is_superuser:
+            return qs
+
+        if hasattr(request.user, "restaurant") and request.user.restaurant:
+            return qs.filter(restaurant=request.user.restaurant)
+
+        return qs.none()
 
     def has_view_permission(self, request, obj=None):
-        user = request.user
-        if user.is_superuser or user.role in [
-            CustomUser.Roles.SUPER_ADMIN,
-            CustomUser.Roles.MANAGER,
-            CustomUser.Roles.CASHIER,
-            CustomUser.Roles.SERVER,
-        ]:
+        if request.user.is_superuser:
             return True
+        return request.user.is_authenticated
+
+    def has_change_permission(self, request, obj=None):
+        if request.user.is_superuser:
+            return True
+
+        if getattr(request.user, "role", None) == "manager":
+            if obj is not None:
+                return obj.restaurant == request.user.restaurant
+            return True
+
         return False
 
     def has_add_permission(self, request):
-        user = request.user
-        return user.is_superuser or user.role in [
-            CustomUser.Roles.SUPER_ADMIN,
-            CustomUser.Roles.MANAGER
-        ]
+        if request.user.is_superuser:
+            return True
 
-    def has_change_permission(self, request, obj=None):
-        user = request.user
-        return user.is_superuser or user.role in [
-            CustomUser.Roles.SUPER_ADMIN,
-            CustomUser.Roles.MANAGER
-        ]
+        return getattr(request.user, "role", None) == "manager"
 
     def has_delete_permission(self, request, obj=None):
-        user = request.user
-        return user.is_superuser or user.role in [
-            CustomUser.Roles.SUPER_ADMIN,
-            CustomUser.Roles.MANAGER
-        ]
+        return self.has_change_permission(request, obj)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk and not request.user.is_superuser:
+            if hasattr(request.user, "restaurant"):
+                obj.restaurant = request.user.restaurant
+
+        super().save_model(request, obj, form, change)
+
+
+# ===================================================================
+# 2. DRF PERMISSIONS
+# ===================================================================
+
+class IsStaffOfRestaurant(BasePermission):
+    message = "You do not have permission to view or edit this object."
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        if not hasattr(obj, "restaurant"):
+            return False
+
+        # ✅ Restrict both read & write to same restaurant
+        return obj.restaurant == request.user.restaurant
+
+
+class IsOwnerOrManager(BasePermission):
+    message = "Only the restaurant owner or a manager can perform this action."
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        if getattr(request.user, "role", None) == "manager":
+            return True
+
+        if (
+            hasattr(request.user, "restaurant")
+            and request.user.restaurant
+            and request.user.restaurant.owner == request.user
+        ):
+            return True
+
+        return False
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        if not hasattr(obj, "restaurant"):
+            return False
+
+        if (
+            getattr(request.user, "role", None) == "manager"
+            and request.user.restaurant == obj.restaurant
+        ):
+            return True
+
+        if obj.restaurant.owner == request.user:
+            return True
+
+        return False
