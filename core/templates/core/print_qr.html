@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container mt-5 text-center">
+
+    <div class="card shadow-sm p-4 mx-auto" style="max-width: 500px;">
+
+        <h2 class="mb-3">Table {{ table.table_number }}</h2>
+        <p class="text-muted">Scan to view the menu and place your order</p>
+
+        <img src="{{ qr_code_image }}"
+             alt="QR Code for Table {{ table.table_number }}"
+             class="img-fluid my-3"
+             style="max-width: 300px;">
+
+        <button onclick="window.print()" class="btn btn-primary mt-3">
+            Print QR Code
+        </button>
+
+    </div>
+
+</div>
+
+<style>
+    @media print {
+        nav, footer, .btn {
+            display: none !important;
+        }
+
+        body {
+            background: white !important;
+        }
+
+        .card {
+            border: none !important;
+            box-shadow: none !important;
+        }
+    }
+</style>
+
+{% endblock %}

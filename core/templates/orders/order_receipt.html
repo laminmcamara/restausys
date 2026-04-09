@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Receipt #{{ order.id }}</title>
+    <style>
+        body {
+            font-family: monospace;
+            width: 300px;
+            margin: auto;
+        }
+
+        .center { text-align: center; }
+        .line { border-top: 1px dashed #000; margin: 8px 0; }
+
+        @media print {
+            button { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="center">
+    <h3>Restaurant Name</h3>
+    <p>Receipt #{{ order.id }}</p>
+    <p>{{ order.created_at|date:"M d, Y H:i" }}</p>
+</div>
+
+<div class="line"></div>
+
+{% for item in order.items.all %}
+<div>
+    {{ item.product.name }} x{{ item.quantity }}
+    <br>
+    ${{ item.total_price|floatformat:2 }}
+</div>
+{% endfor %}
+
+<div class="line"></div>
+
+<p><strong>Total:</strong> ${{ order.total_amount|floatformat:2 }}</p>
+<p>Status: {{ order.status }}</p>
+
+<div class="line"></div>
+
+<div class="center">
+    <p>Thank you!</p>
+</div>
+
+<button onclick="window.print()">Print</button>
+
+<script>
+window.onload = function() {
+    window.print();
+};
+</script>
+
+</body>
+</html>

@@ -64,7 +64,8 @@ INSTALLED_APPS = [
     "unfold",
     # "unfold.contrib.filters",
     # "unfold.contrib.forms",
-
+    "daphne",
+    "channels",
     # 2. Django core apps
     "django.contrib.admin",
     "django.contrib.auth",
@@ -72,7 +73,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "channels",
+    
     "django.contrib.sites",
     "django_extensions",
 
@@ -138,6 +139,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "django.template.context_processors.static",
                 "django.template.context_processors.i18n",  # 🌍 language context
+                'core.context_processors.restaurant_context',
             ],
         },
     },
@@ -160,9 +162,9 @@ DATABASES = {
 # ==============================================================================
 # in settings.py
 AUTH_USER_MODEL = "core.CustomUser"
-LOGIN_URL = reverse_lazy("core:login")
-LOGIN_REDIRECT_URL = reverse_lazy("core:home")
-LOGOUT_REDIRECT_URL = reverse_lazy("core:home")
+LOGIN_URL = "core:login"
+LOGIN_REDIRECT_URL = "core:home"
+LOGOUT_REDIRECT_URL = "core:login"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -205,31 +207,55 @@ LOCALE_PATHS = [BASE_DIR / "locale"]
 # STATIC & MEDIA FILES
 # ==============================================================================
 
+STATIC_URL = "/static/"
 
-STATIC_URL = "static/"
-STATICFILES_DIRS = [BASE_DIR / 'core' / 'static']
+STATICFILES_DIRS = [
+    BASE_DIR / "core" / "static"
+]
+
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+
 # ==============================================================================
-# CHANNELS CONFIGURATION
+# CHANNELS CONFIGURATION (ENV-BASED)
 # ==============================================================================
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [(os.getenv("REDIS_HOST", "127.0.0.1"), 6379)],
+ASGI_APPLICATION = "restaurant_management.asgi.application"
+
+USE_REDIS = os.getenv("USE_REDIS", "false").lower() == "true"
+
+if USE_REDIS:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [
+                    (
+                        os.getenv("REDIS_HOST", "127.0.0.1"),
+                        int(os.getenv("REDIS_PORT", 6379)),
+                    )
+                ],
+            },
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
 
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",   # ✅ Browser login
+        "rest_framework_simplejwt.authentication.JWTAuthentication",  # ✅ Mobile/API
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
 }
 
@@ -277,7 +303,7 @@ LOGGING = {
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "simple"},
         "file": {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "concurrent_log_handler.ConcurrentRotatingFileHandler",
             "filename": LOG_DIR / "django.log",
             "maxBytes": 5_000_000,
             "backupCount": 5,

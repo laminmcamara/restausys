@@ -268,7 +268,8 @@ class CustomerDisplayConsumer(SafeConsumer):
             })
 
     async def disconnect(self, code):
-        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        if hasattr(self, "group_name"):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def order_update(self, event):
         await self.safe_send(event["data"])
@@ -298,11 +299,12 @@ class CustomerDisplayConsumer(SafeConsumer):
             "table": order.table.name,
             "status": order.status,
             "items": [
-                {
-                    "name": item.product.name,
-                    "qty": item.quantity,
-                    "price": float(item.price),
-                }
-                for item in order.items.all()
-            ]
-        }
+    {
+        "name": item.product.name,
+        "qty": item.quantity,
+        "price": float(item.final_price) / item.quantity if item.quantity else 0,
+    }
+    for item in order.items.all()
+]
+            
+}

@@ -1,30 +1,101 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Order Status</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style> body { font-family:sans-serif; padding:20px; } </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block content %}
 
-<h2>Order Status</h2>
+<div class="container mt-5 text-center">
 
-<p>Current status: <strong id="status">{{ order.status }}</strong></p>
+    <div class="card shadow-sm p-4 mx-auto" style="max-width: 500px;">
 
-{% if order.status != "PAID" %}
-<button onclick="window.location='/table/order/{{ order.id }}/pay/';">
-    Pay for Order
-</button>
-{% endif %}
+        <h3 class="mb-3">Order Status</h3>
+
+        <p class="fs-5">
+            Current Status:
+            <strong id="status-badge" class="badge bg-primary">
+                {{ order.get_status_display }}
+            </strong>
+        </p>
+
+        {% if order.status != "PAID" %}
+            <a href="{% url 'pay_order' order.id %}"
+               class="btn btn-success mt-3">
+                Pay for Order
+            </a>
+        {% endif %}
+
+    </div>
+
+</div>
 
 <script>
-setInterval(async () => {
-    let r = await fetch("/api/orders/?id={{ order.id }}");
-    let data = await r.json();
-    if (data.status)
-        document.getElementById("status").innerText = data.status;
-}, 5000);
+document.addEventListener("DOMContentLoaded", function () {
+
+    const badge = document.getElementById("status-badge");
+    const apiUrl = "{% url 'order_status_api' order.id %}";
+
+    let pollingInterval = 5000;  // 5 seconds
+    let polling;
+
+    function updateBadge(status) {
+        badge.innerText = status;
+
+        badge.className = "badge ";
+
+        switch (status) {
+            case "PAID":
+                badge.className += "bg-success";
+                stopPolling();
+                break;
+            case "PREPARING":
+                badge.className += "bg-warning text-dark";
+                break;
+            case "READY":
+                badge.className += "bg-info text-dark";
+                break;
+            case "CANCELLED":
+                badge.className += "bg-danger";
+                stopPolling();
+                break;
+            default:
+                badge.className += "bg-secondary";
+        }
+    }
+
+    async function checkStatus() {
+        try {
+            const response = await fetch(apiUrl, {
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest"
+                }
+            });
+
+            if (!response.ok) return;
+
+            const data = await response.json();
+
+            if (data.status) {
+                updateBadge(data.status);
+            }
+
+        } catch (error) {
+            console.error("Status update failed:", error);
+        }
+    }
+
+    function startPolling() {
+        polling = setInterval(checkStatus, pollingInterval);
+    }
+
+    function stopPolling() {
+        if (polling) {
+            clearInterval(polling);
+        }
+    }
+
+    // Start polling only if not already paid
+    if (badge.innerText !== "PAID") {
+        startPolling();
+    }
+
+});
 </script>
 
-</body>
-</html>
+{% endblock %}

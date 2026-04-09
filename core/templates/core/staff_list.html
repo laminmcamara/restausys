@@ -1,0 +1,53 @@
+{% extends "core/base.html" %}
+
+{% block title %}Staff Members{% endblock %}
+
+{% block content %}
+
+<div class="page-wrapper">
+    <div class="card">
+
+        <div class="card-header card-header-flex">
+            <div>
+                <h2>Staff Members</h2>
+                <p>Manage your restaurant team.</p>
+            </div>
+
+            {% if request.user.can_manage_staff %}
+                <a href="{% url 'core:create_staff' %}" class="btn-primary">
+                    + Add Staff
+                </a>
+            {% endif %}
+        </div>
+
+        {% if staff %}
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in staff %}
+                        <tr>
+                            <td>{{ user.username }}</td>
+                            <td>
+                                <span class="role-badge">
+                                    {{ user.get_role_display }}
+                                </span>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="empty-state">
+                No staff members found.
+            </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}

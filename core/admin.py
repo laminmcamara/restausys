@@ -3,28 +3,84 @@ from django.utils.safestring import mark_safe
 
 from .permissions import RoleRestrictedAdmin  
 
+from django.forms.models import model_to_dict
+from django.core.exceptions import PermissionDenied
+
 from .models import (
     Company, Restaurant, CustomUser, Table,
     Menu, Category, Cuisine, Product,
     ModifierGroup, ModifierOption,
     InventoryItem, RecipeItem, MultiCurrencyPrice,
     Order, OrderItem, KitchenTicket, Payment,
-    Shift, Attendance,
+    Attendance,
     Customer, LoyaltyTier,
     Rider, Refund,
     AnalyticsSnapshot, APIToken,
     ChatMessage, PaymentMethod,
+    AuditLog,
+    CashierShift,
 )
+
+
+class AuditAdminMixin:
+    """
+    Logs CREATE, UPDATE, DELETE actions automatically.
+    """
+
+    def save_model(self, request, obj, form, change):
+        is_create = not change
+
+        old_data = {}
+        if change:
+            try:
+                old_obj = self.model.objects.get(pk=obj.pk)
+                old_data = model_to_dict(old_obj)
+            except self.model.DoesNotExist:
+                pass
+
+        super().save_model(request, obj, form, change)
+
+        new_data = model_to_dict(obj)
+
+        changes = {}
+
+        if change:
+            for field, old_value in old_data.items():
+                new_value = new_data.get(field)
+                if old_value != new_value:
+                    changes[field] = {
+                        "old": str(old_value),
+                        "new": str(new_value),
+                    }
+
+        AuditLog.objects.create(
+            user=request.user,
+            restaurant=getattr(obj, "restaurant", None),
+            action="CREATE" if is_create else "UPDATE",
+            model_name=self.model.__name__,
+            object_id=str(obj.pk),
+            changes=changes if changes else None,
+        )
+
+    def delete_model(self, request, obj):
+        AuditLog.objects.create(
+            user=request.user,
+            restaurant=getattr(obj, "restaurant", None),
+            action="DELETE",
+            model_name=self.model.__name__,
+            object_id=str(obj.pk),
+        )
+
+        super().delete_model(request, obj)
+
 
 # ==============================================================================
 # MULTI-TENANT BASE ADMIN
 # ==============================================================================
 
-class RestaurantRestrictedAdmin(admin.ModelAdmin):
+class RestaurantRestrictedAdmin(AuditAdminMixin, admin.ModelAdmin):
     """
-    Ensures restaurant-level data isolation.
-    Superuser (platform owner) sees everything.
-    Restaurant users only see their own data.
+    SaaS-grade multi-tenant isolation.
     """
 
     def get_queryset(self, request):
@@ -33,29 +89,32 @@ class RestaurantRestrictedAdmin(admin.ModelAdmin):
         if request.user.is_superuser:
             return qs
 
-        if hasattr(request.user, "restaurant") and request.user.restaurant:
-            if hasattr(self.model, "restaurant"):
-                return qs.filter(restaurant=request.user.restaurant)
+        if hasattr(self.model, "restaurant"):
+            return qs.filter(restaurant=request.user.restaurant)
 
         return qs.none()
 
     def save_model(self, request, obj, form, change):
-        if not request.user.is_superuser:
-            if hasattr(obj, "restaurant"):
-                obj.restaurant = request.user.restaurant
+        if not request.user.is_superuser and hasattr(obj, "restaurant"):
+            obj.restaurant = request.user.restaurant
+
+        # attach actor for audit logging
+        obj._actor = request.user
         super().save_model(request, obj, form, change)
 
-    def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        """
-        Prevent cross-tenant foreign key selection.
-        """
-        if not request.user.is_superuser:
-            if db_field.name == "restaurant":
-                kwargs["queryset"] = Restaurant.objects.filter(
-                    id=request.user.restaurant.id
-                )
-        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+    def has_module_permission(self, request):
+        return request.user.is_superuser or request.user.role in [
+            CustomUser.Roles.MANAGER,
+            CustomUser.Roles.CASHIER,
+            CustomUser.Roles.COOK,
+        ]
 
+    def has_delete_permission(self, request, obj=None):
+        # Never allow deletion of finalized financial records
+        if obj and hasattr(obj, "status"):
+            if str(obj.status).upper() in ["PAID", "COMPLETED"]:
+                return False
+        return super().has_delete_permission(request, obj)
 
 # ==============================================================================
 # INLINE MODELS
@@ -197,7 +256,18 @@ class OrderAdmin(RestaurantRestrictedAdmin):
             return f"{obj.restaurant.currency} {total:.2f}"
         return f"{total:.2f}"
 
+    def has_change_permission(self, request, obj=None):
+        if request.user.role == CustomUser.Roles.COOK:
+            return False
+        return super().has_change_permission(request, obj)
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.role == CustomUser.Roles.COOK:
+            return qs.filter(status="IN_PROGRESS")
+        return qs
+    
+    
 # ==============================================================================
 # MAIN SYSTEM ADMINS
 # ==============================================================================
@@ -209,23 +279,29 @@ class CustomUserAdmin(RestaurantRestrictedAdmin):
     search_fields = ('username', 'email')
     autocomplete_fields = ['restaurant']
 
+    def save_model(self, request, obj, form, change):
+        if not request.user.is_superuser:
+            obj.restaurant = request.user.restaurant
 
+            if obj.role == CustomUser.Roles.MANAGER:
+                raise PermissionDenied("Managers cannot create other managers.")
+
+            obj.is_superuser = False
+
+        obj._actor = request.user
+        super().save_model(request, obj, form, change)
+        
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    # Platform-level only (you)
-    list_display = ('name', 'email', 'phone', 'active')
-    list_filter = ('active',)
-    search_fields = ('name',)
+    def has_module_permission(self, request):
+        return request.user.is_superuser
 
 
 @admin.register(Restaurant)
 class RestaurantAdmin(admin.ModelAdmin):
-    # Platform-level only
-    list_display = ('name', 'company', 'status', 'city')
-    list_filter = ('company', 'status')
-    search_fields = ('name', 'city')
-    autocomplete_fields = ['company']
-
+    search_fields = ("name",)
+    def has_module_permission(self, request):
+        return request.user.is_superuser
 
 @admin.register(InventoryItem)
 class InventoryItemAdmin(RestaurantRestrictedAdmin):
@@ -249,17 +325,48 @@ class KitchenTicketAdmin(RestaurantRestrictedAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(RestaurantRestrictedAdmin):
-    list_display = ("id", "order", "amount", "status", "created_at")
-    list_filter = ("status", "created_at")
-    search_fields = ("order__id", "stripe_payment_intent")
-    autocomplete_fields = ['order']
+    list_display = (
+        "id",
+        "order",
+        "method",
+        "amount",
+        "status",
+        "stripe_payment_intent",
+        "created_at",
+    )
 
+    list_filter = ("status", "method", "created_at")
+    search_fields = ("order__id", "stripe_payment_intent", "reference")
 
-@admin.register(Shift)
-class ShiftAdmin(RestaurantRestrictedAdmin):
-    list_display = ('employee', 'restaurant', 'role', 'start_time', 'end_time')
-    list_filter = ('restaurant', 'role')
-    search_fields = ('employee__username',)
+    readonly_fields = (
+        "stripe_payment_intent",
+        "created_at",
+        "updated_at",
+    )
+
+    autocomplete_fields = ["order"]
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Never delete financial records
+
+@admin.register(CashierShift)
+class CashierShiftAdmin(RestaurantRestrictedAdmin):
+    list_display = (
+        "user",
+        "restaurant",
+        "start_time",
+        "end_time",
+        "starting_cash",
+        "closing_cash",
+        "is_active",
+    )
+
+    list_filter = ("restaurant", "is_active", "start_time")
+    search_fields = ("user__username",)
+    readonly_fields = ("start_time",)
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Financial shift records should not be deleted
 
 
 @admin.register(Attendance)
@@ -284,10 +391,17 @@ class RiderAdmin(RestaurantRestrictedAdmin):
 
 @admin.register(Refund)
 class RefundAdmin(RestaurantRestrictedAdmin):
-    list_display = ('order', 'amount', 'processed_by', 'created_at')
-    list_filter = ('created_at',)
-    search_fields = ('order__id', 'processed_by__username')
+    list_display = (
+        "order",
+        "amount",
+        "processed_by",
+        "created_at"
+    )
 
+    readonly_fields = ("created_at",)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 @admin.register(AnalyticsSnapshot)
 class AnalyticsSnapshotAdmin(RestaurantRestrictedAdmin):
@@ -330,3 +444,40 @@ class TableAdmin(RestaurantRestrictedAdmin):
                 f'<img src="{obj.qr_code.url}" width="150" height="150">'
             )
         return "No QR code generated yet."
+    
+    
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "timestamp",
+        "user",
+        "restaurant",
+        "action",
+        "model_name",
+        "object_id",
+    )
+
+    list_filter = ("action", "restaurant", "timestamp")
+    search_fields = ("model_name", "object_id", "user__username")
+
+    readonly_fields = [f.name for f in AuditLog._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_module_permission(self, request):
+        user = request.user
+
+        if not user.is_authenticated:
+            return False
+
+        if user.is_superuser:
+            return True
+
+        return getattr(user, "role", None) == CustomUser.Roles.MANAGER

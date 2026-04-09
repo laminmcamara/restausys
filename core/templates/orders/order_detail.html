@@ -1,31 +1,50 @@
 {% extends "core/dashboard_base.html" %}
-{% block content %}
+{% load static %}
+{% block dashboard_content %}
 
-<div class="p-6">
+<div class="p-6 max-w-4xl mx-auto">
 
-    <!-- Header -->
+    <!-- ✅ HEADER -->
     <div class="flex justify-between items-center mb-6">
-        <h1 class="text-2xl font-bold">Order #{{ order.id }}</h1>
 
-        <span class="px-3 py-1 text-sm rounded
-            {% if order.status == 'PAID' %}
-                bg-green-100 text-green-700
-            {% elif order.status == 'PENDING' %}
-                bg-yellow-100 text-yellow-700
-            {% elif order.status == 'CANCELLED' %}
-                bg-red-100 text-red-700
-            {% else %}
-                bg-gray-100 text-gray-700
-            {% endif %}
-        ">
-            {{ order.status }}
-        </span>
+        <h1 class="text-2xl font-bold">
+            Order #{{ order.id }}
+        </h1>
+    
+        <div class="flex items-center gap-4">
+    
+            <!-- ✅ PRINT BUTTON -->
+            <button onclick="openPrintView()"
+                    class="bg-gray-900 hover:bg-black text-white text-sm px-4 py-2 rounded shadow">
+                🖨 Print Receipt
+            </button>
+    
+            <!-- ✅ STATUS BADGE -->
+            <span id="order-status-badge"
+                  class="px-3 py-1 text-sm rounded font-semibold
+                  {% if order.status == 'PAID' %}
+                      bg-green-100 text-green-700
+                  {% elif order.status == 'PENDING' %}
+                      bg-yellow-100 text-yellow-700
+                  {% elif order.status == 'CANCELLED' %}
+                      bg-red-100 text-red-700
+                  {% else %}
+                      bg-gray-100 text-gray-700
+                  {% endif %}
+                  ">
+                {{ order.status }}
+            </span>
+    
+        </div>
+    
     </div>
 
-    <!-- Order Info -->
-    <div class="bg-white shadow rounded-lg p-6 space-y-4">
+    <!-- ✅ ORDER CARD -->
+    <div id="order-card"
+         class="bg-white shadow rounded-lg p-6 space-y-6 transition">
 
-        <div class="grid grid-cols-2 gap-6">
+        <!-- Order Info -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
 
             <div>
                 <p class="text-sm text-gray-500">Customer</p>
@@ -45,13 +64,15 @@
 
         <hr>
 
+        <!-- ✅ TOTAL -->
         <div>
             <p class="text-sm text-gray-500 mb-2">Total Amount</p>
-            <p class="text-2xl font-bold">
-                ${{ order.total_amount }}
+            <p class="text-2xl font-bold text-gray-900">
+                ${{ order.total_amount|floatformat:2 }}
             </p>
         </div>
 
+        <!-- ✅ BACK LINK -->
         <div class="pt-4">
             <a href="{% url 'core:orders' %}"
                class="text-blue-600 hover:underline text-sm">
@@ -62,5 +83,80 @@
     </div>
 
 </div>
+
+<!-- ✅ REAL-TIME STATUS UPDATE SCRIPT -->
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const orderId = "{{ order.id }}";
+    const badge = document.getElementById("order-status-badge");
+    const card = document.getElementById("order-card");
+
+    const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsURL = `${wsScheme}://${window.location.host}/ws/pos/`;
+
+    function connectDetailWS() {
+        const socket = new WebSocket(wsURL);
+
+        socket.onopen = () => console.log("Order detail WS connected.");
+
+        socket.onclose = () => {
+            console.warn("Detail WS disconnected. Reconnecting...");
+            setTimeout(connectDetailWS, 2000);
+        };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            // ✅ Only react if this order changed
+            if (data.type === "order_update" && String(data.order_id) === orderId) {
+
+                const newStatus = data.status;
+
+                // Update badge text
+                badge.textContent = newStatus;
+
+                // Reset classes
+                badge.className = "px-3 py-1 text-sm rounded font-semibold ";
+
+                if (newStatus === "PAID") {
+                    badge.classList.add("bg-green-100", "text-green-700");
+                } else if (newStatus === "PENDING") {
+                    badge.classList.add("bg-yellow-100", "text-yellow-700");
+                } else if (newStatus === "CANCELLED") {
+                    badge.classList.add("bg-red-100", "text-red-700");
+                } else {
+                    badge.classList.add("bg-gray-100", "text-gray-700");
+                }
+
+                // ✅ Flash animation
+                card.classList.add("bg-green-50");
+                setTimeout(() => {
+                    card.classList.remove("bg-green-50");
+                }, 1500);
+            }
+
+            // ✅ Stripe Payment Event
+            if (data.event === "order_paid" && String(data.order_id) === orderId) {
+                badge.textContent = "PAID";
+                badge.className = "px-3 py-1 text-sm rounded font-semibold bg-green-100 text-green-700";
+
+                card.classList.add("bg-green-50");
+                setTimeout(() => {
+                    card.classList.remove("bg-green-50");
+                }, 1500);
+            }
+        };
+    }
+
+    connectDetailWS();
+});
+
+function openPrintView() {
+    const url = "{% url 'core:order-receipt' order.id %}";
+    const win = window.open(url, "_blank", "width=400,height=700");
+    win.focus();
+}
+</script>
 
 {% endblock %}

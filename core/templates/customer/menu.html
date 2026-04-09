@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ restaurant.name }} Menu</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .product { margin-bottom: 15px; }
+        .price { font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<h2>{{ restaurant.name }}</h2>
+<h4>Table {{ table.table_number }}</h4>
+
+<hr>
+
+{% for product in products %}
+    <div class="product">
+        <div>{{ product.name }}</div>
+        <div class="price">${{ product.base_price }}</div>
+    </div>
+{% empty %}
+    <p>No items available.</p>
+{% endfor %}
+
+</body>
+</html>

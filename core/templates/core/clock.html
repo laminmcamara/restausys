@@ -1,6 +1,6 @@
-{% extends 'core/base.html' %}
+{% extends 'core/dashboard_base.html' %}
 
-{% block content %}
+{% block dashboard_content %}
 <div class="container">
     <h1>Clock In/Out</h1>
     <form method="post" action="{% url 'core:clock_in_out' %}">

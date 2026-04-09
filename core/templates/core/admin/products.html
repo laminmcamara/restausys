@@ -5,33 +5,77 @@
 {% block dashboard_content %}
 <div class="p-6">
 
-  <div class="flex justify-between items-center mb-4">
+  <div class="flex justify-between items-center mb-6">
     <h1 class="text-2xl font-bold">Products</h1>
 
     <a href="{% url 'core:product-create' %}"
-       class="px-4 py-2 bg-indigo-600 text-white rounded">Add Product</a>
+       class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded shadow">
+       + Add Product
+    </a>
   </div>
 
-  <table class="w-full bg-white rounded shadow">
-    <tr class="border-b bg-gray-50">
-      <th class="p-3 text-left">Image</th>
-      <th class="p-3 text-left">Name</th>
-      <th class="p-3 text-left">Price</th>
-      <th class="p-3 text-left">Actions</th>
-    </tr>
+  {% if products %}
+  <div class="overflow-x-auto">
+    <table class="w-full bg-white rounded shadow overflow-hidden">
+      <thead>
+        <tr class="border-b bg-gray-50 text-gray-600 text-sm uppercase tracking-wider">
+          <th class="p-3 text-left">Image</th>
+          <th class="p-3 text-left">Name</th>
+          <th class="p-3 text-left">Price</th>
+          <th class="p-3 text-left">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for product in products %}
+        <tr class="border-b hover:bg-gray-50 transition">
+          
+          <!-- ✅ Safe Image Rendering -->
+          <td class="p-3">
+            {% if product.image %}
+              <img src="{{ product.image.url }}"
+                   class="h-12 w-12 object-cover rounded">
+            {% else %}
+              <div class="h-12 w-12 bg-gray-200 rounded flex items-center justify-center text-xs text-gray-400">
+                No Image
+              </div>
+            {% endif %}
+          </td>
 
-    {% for product in products %}
-    <tr class="border-b">
-      <td class="p-3"><img src="{{ product.image.url }}" class="h-12 rounded"></td>
-      <td class="p-3">{{ product.name }}</td>
-      <td class="p-3">₱{{ product.price }}</td>
-      <td class="p-3">
-        <a href="{% url 'core:product-edit' product.id %}" class="text-indigo-600 mr-3">Edit</a>
-        <a href="{% url 'core:product-delete' product.id %}" class="text-red-600">Delete</a>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
+          <td class="p-3 font-medium text-gray-800">
+            {{ product.name }}
+          </td>
+
+          <td class="p-3 text-gray-700">
+            ₱{{ product.price }}
+          </td>
+
+          <td class="p-3">
+            <a href="{% url 'core:product-edit' product.id %}"
+               class="text-indigo-600 hover:underline mr-4">
+               Edit
+            </a>
+            <a href="{% url 'core:product-delete' product.id %}"
+               class="text-red-600 hover:underline">
+               Delete
+            </a>
+          </td>
+
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <!-- ✅ Empty State -->
+  <div class="bg-white p-10 rounded shadow text-center">
+    <p class="text-gray-500 text-lg mb-4">No products yet.</p>
+    <a href="{% url 'core:product-create' %}"
+       class="px-4 py-2 bg-indigo-600 text-white rounded">
+       Create Your First Product
+    </a>
+  </div>
+  {% endif %}
 
 </div>
 {% endblock %}

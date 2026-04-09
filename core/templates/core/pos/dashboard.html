@@ -173,7 +173,7 @@
 </style>
 {% endblock %}
 
-{% block content %}
+{% block dashboard_content %}
 <div id="pos-screen" class="screen active">
 
     <div class="pos-container">
@@ -223,6 +223,10 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script>
+    window.posData = {{ pos_data_json|safe }};
+</script>
+
 <script>
 
 /* ============================================================

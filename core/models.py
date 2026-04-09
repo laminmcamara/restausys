@@ -62,13 +62,17 @@ class Company(TimeStampedModel):
 
 phone_regex = RegexValidator(
     regex=r'^\+?1?\d{9,15}$',
-    message="Use international format: +999999999. Up to 15 digits."
+    message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed."
 )
+
 
 class CustomUser(AbstractUser):
 
+    # =====================================================
+    # ROLES
+    # =====================================================
+
     class Roles(models.TextChoices):
-        SUPER_ADMIN = 'SUPER_ADMIN', 'Super Admin'
         MANAGER = 'MANAGER', 'Manager'
         SERVER = 'SERVER', 'Server'
         COOK = 'COOK', 'Cook'
@@ -76,13 +80,21 @@ class CustomUser(AbstractUser):
         CUSTOMER = 'CUSTOMER', 'Customer'
         STAFF = 'STAFF', 'General Staff'
 
+    # =====================================================
+    # RELATIONS
+    # =====================================================
+
     restaurant = models.ForeignKey(
         'core.Restaurant',
+        on_delete=models.PROTECT,
+        related_name='users',
         null=True,
-        blank=True,
-        on_delete=models.PROTECT,  # ✅ PROTECT instead of SET_NULL
-        related_name='users'
+        blank=True
     )
+
+    # =====================================================
+    # FIELDS
+    # =====================================================
 
     email = models.EmailField(unique=True)
 
@@ -107,64 +119,155 @@ class CustomUser(AbstractUser):
         blank=True
     )
 
+    # =====================================================
+    # SAVE LOGIC
+    # =====================================================
+
     def save(self, *args, **kwargs):
-        if not self.is_superuser:
-            self.is_staff = self.role in [
-                self.Roles.MANAGER,
-                self.Roles.CASHIER,
-                self.Roles.SUPER_ADMIN,
-            ]
+
+        # ✅ Non-superusers must belong to a restaurant
+        if not self.is_superuser and not self.restaurant:
+            raise ValidationError ("Non-superusers must belong to a restaurant.")
+
+        # ✅ Superuser = full platform owner
+        if self.is_superuser:
+            self.is_staff = True
+        else:
+            # ✅ Only MANAGER gets Django admin access
+            self.is_staff = self.role == self.Roles.MANAGER
+
         super().save(*args, **kwargs)
+
+    # =====================================================
+    # ROLE HELPERS (RBAC LAYER)
+    # =====================================================
+
+    @property
+    def is_owner(self):
+        return self.is_superuser
+
+    @property
+    def is_manager(self):
+        return self.role == self.Roles.MANAGER or self.is_owner
+
+    @property
+    def is_cashier(self):
+        return self.role == self.Roles.CASHIER or self.is_manager
+
+    @property
+    def is_server(self):
+        return self.role == self.Roles.SERVER
+
+    @property
+    def is_cook(self):
+        return self.role == self.Roles.COOK
+
+    @property
+    def is_customer(self):
+        return self.role == self.Roles.CUSTOMER
+
+    @property
+    def is_general_staff(self):
+        return self.role == self.Roles.STAFF
+
+    # =====================================================
+    # PERMISSION CAPABILITIES
+    # =====================================================
+
+    @property
+    def can_manage_staff(self):
+        return self.is_owner or self.role == self.Roles.MANAGER
+    
+    
+    @property
+    def can_access_pos(self):
+        return self.is_cashier or self.is_server
+
+    @property
+    def can_access_kitchen(self):
+        return self.is_cook or self.is_manager
+
+    @property
+    def can_view_reports(self):
+        return self.is_manager
+
+    @property
+    def can_manage_settings(self):
+        return self.is_manager
+    
+    # =====================================================
+    # STRING REPRESENTATION
+    # =====================================================
 
     def __str__(self):
         return f"{self.username} ({self.role})"
     
-class Shift(models.Model):
-    employee = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
-        related_name="shifts"
-    )
-    restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name="shifts")
-    start_time = models.DateTimeField()
-    end_time = models.DateTimeField()
-    role = models.CharField(max_length=50)
-
-    def __str__(self):
-        return f"{self.employee} - {self.role} ({self.start_time:%b %d})"
-
 class Attendance(models.Model):
     employee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="attendances"
     )
+
     restaurant = models.ForeignKey(
         "core.Restaurant",
         on_delete=models.CASCADE,
         related_name="attendances"
     )
-    check_in = models.DateTimeField(auto_now_add=True)
+
+    check_in = models.DateTimeField(default=timezone.now)
     check_out = models.DateTimeField(blank=True, null=True)
+
+    # Optional — keep only if Shift model exists
     shift = models.ForeignKey(
-        "core.Shift",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="attendances"
-    )
+    "core.CashierShift",
+    on_delete=models.CASCADE,
+    related_name="attendances"
+)
 
     class Meta:
         ordering = ["-check_in"]
 
-    def __str__(self):
-        return f"{self.employee} - {self.restaurant.name} ({self.check_in:%Y-%m-%d})"
+    # =====================================================
+    # VALIDATION
+    # =====================================================
+
+    def clean(self):
+        # ✅ Prevent CUSTOMER from clocking in
+        if self.employee.role == self.employee.Roles.CUSTOMER:
+            raise ValidationError("Customers cannot have attendance records.")
+
+        # ✅ Ensure employee belongs to this restaurant
+        if not self.employee.is_superuser and self.employee.restaurant != self.restaurant:
+            raise ValidationError("Employee does not belong to this restaurant.")
+
+        # ✅ Prevent multiple open attendances
+        if not self.pk:
+            active = Attendance.objects.filter(
+                employee=self.employee,
+                check_out__isnull=True
+            ).exists()
+
+            if active:
+                raise ValidationError("Employee already has an active attendance record.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    # =====================================================
+    # HELPERS
+    # =====================================================
 
     @property
     def duration(self):
         if self.check_out:
             return self.check_out - self.check_in
-        return None
+        return timezone.now() - self.check_in  # live duration if still clocked in
 
+    def __str__(self):
+        return f"{self.employee} - {self.restaurant.name} ({self.check_in:%Y-%m-%d})"
+    
 # =============================================================================
 # === CUSTOMER & LOYALTY ======================================================
 # =============================================================================
@@ -207,6 +310,7 @@ class Restaurant(TimeStampedModel):
     logo = models.ImageField(upload_to="restaurants/logos/", null=True, blank=True)
     phone_number = models.CharField(max_length=20, blank=True)
     status = models.CharField(max_length=10, choices=RestaurantStatus.choices, default=RestaurantStatus.OPEN)
+    display_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
 
     def __str__(self):
         return f"{self.name} ({self.company.name})"
@@ -251,11 +355,40 @@ class Table(models.Model):
         qr_data = f"{site}/table/{self.access_token}/"
         qr_img = qrcode.make(qr_data).convert("RGB")
 
+        # ✅ NEW CODE STARTS HERE
+        restaurant_logo = self.restaurant.logo if hasattr(self.restaurant, "logo") else None
+
         width, height = qr_img.size
-        new_height = height + 60
+
+        logo_height = 0
+        logo_img = None
+
+        if restaurant_logo and hasattr(restaurant_logo, "path"):
+            try:
+                logo_img = Image.open(restaurant_logo.path)
+                logo_img.thumbnail((width, 100))
+                logo_height = logo_img.size[1] + 20
+            except Exception:
+                logo_img = None
+
+        text_space = 60
+        new_height = height + text_space + logo_height
+
         combined = Image.new("RGB", (width, new_height), "white")
 
-        combined.paste(qr_img, (0, 0))
+        current_y = 0
+
+        # ✅ Paste logo if exists
+        if logo_img:
+            logo_x = (width - logo_img.size[0]) // 2
+            combined.paste(logo_img, (logo_x, current_y))
+            current_y += logo_height
+
+        # ✅ Paste QR
+        combined.paste(qr_img, (0, current_y))
+        current_y += height
+        # ✅ NEW CODE ENDS HERE
+
         draw = ImageDraw.Draw(combined)
 
         try:
@@ -268,7 +401,7 @@ class Table(models.Model):
         text_width = text_bbox[2] - text_bbox[0]
         text_x = (width - text_width) // 2
 
-        draw.text((text_x, height + 20), text, font=font, fill="black")
+        draw.text((text_x, current_y + 20), text, font=font, fill="black")
 
         buffer = BytesIO()
         combined.save(buffer, format="PNG")
@@ -277,27 +410,7 @@ class Table(models.Model):
         filename = f"qr_table_{safe_label}_{self.id}.png"
         self.qr_code.save(filename, File(buffer), save=False)
         buffer.close()
-
-    def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        old_table_number = None
-
-        if not is_new:
-            old = Table.objects.filter(pk=self.pk).first()
-            if old:
-                old_table_number = old.table_number
-
-        # generate QR for new table
-        if is_new and not self.qr_code:
-            self.generate_qr_code()
-
-        super().save(*args, **kwargs)
-
-        # regenerate QR only if number changed
-        if not is_new and old_table_number != self.table_number:
-            self.generate_qr_code()
-            super().save(update_fields=["qr_code"])
-
+    
 # =============================================================================
 # === INVENTORY & RECIPES =====================================================
 # =============================================================================
@@ -514,79 +627,148 @@ class MultiCurrencyPrice(models.Model):
 # === ORDERS, PAYMENTS & KITCHEN ==============================================
 # =============================================================================
 
+# =============================================================================
+# ORDERS
+# =============================================================================
+
 class Order(TimeStampedModel):
 
+    # -------------------------------------------------
+    # ORDER TYPE (Dine-in, Takeout, Delivery)
+    # -------------------------------------------------
+    class OrderType(models.TextChoices):
+        DINE_IN = "DINE_IN", "Dine In"
+        TAKEOUT = "TAKEOUT", "Takeout"
+        DELIVERY = "DELIVERY", "Delivery"
+
+    # -------------------------------------------------
+    # ORDER STATUS (Operational flow)
+    # -------------------------------------------------
     class Status(models.TextChoices):
-        PLACED = 'PLACED', 'Placed'
-        IN_PROGRESS = 'IN_PROGRESS', 'In Progress'
-        READY = 'READY', 'Ready'
-        SERVED = 'SERVED', 'Served'
-        PAID = 'PAID', 'Paid'
-        CANCELED = 'CANCELED', 'Canceled'
-        COMPLETED = 'COMPLETED', 'Completed'
+        DRAFT = "DRAFT", "Draft"
+        PLACED = "PLACED", "Placed"
+        IN_PROGRESS = "IN_PROGRESS", "In Progress"
+        READY = "READY", "Ready"
+        SERVED = "SERVED", "Served"
+        CANCELED = "CANCELED", "Canceled"
+        COMPLETED = "COMPLETED", "Completed"
+
+    # -------------------------------------------------
+    # PAYMENT STATUS (Financial state)
+    # -------------------------------------------------
+    class PaymentStatus(models.TextChoices):
+        UNPAID = "UNPAID", "Unpaid"
+        PARTIALLY_PAID = "PARTIALLY_PAID", "Partially Paid"
+        PAID = "PAID", "Paid"
+        REFUNDED = "REFUNDED", "Refunded"
 
     class Meta:
+        ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["restaurant", "status"]),
+            models.Index(fields=["restaurant", "order_type"]),
             models.Index(fields=["created_at"]),
         ]
 
+    # -------------------------------------------------
+    # IDENTIFICATION
+    # -------------------------------------------------
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
+    
+    order_number = models.PositiveIntegerField(
+    editable=False,
+    null=True,
+    blank=True
+    )
+       
     restaurant = models.ForeignKey(
-        'core.Restaurant',
+        "core.Restaurant",
         on_delete=models.PROTECT,
-        related_name='orders'
+        related_name="orders"
     )
 
+    # -------------------------------------------------
+    # RELATIONS
+    # -------------------------------------------------
     customer = models.ForeignKey(
-        'core.Customer',
+        "core.Customer",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name='orders'
+        related_name="orders"
     )
 
     table = models.ForeignKey(
-        'core.Table',
+        "core.Table",
         null=True,
         blank=True,
         on_delete=models.PROTECT
     )
 
+    # -------------------------------------------------
+    # CORE ORDER FIELDS
+    # -------------------------------------------------
+    order_type = models.CharField(
+        max_length=20,
+        choices=OrderType.choices,
+        default=OrderType.DINE_IN
+    )
+
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.PLACED
+        default=Status.DRAFT
     )
 
-    tax = models.DecimalField(
-        max_digits=8,
-        decimal_places=2,
-        default=Decimal('0.00')
+    payment_status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID
     )
 
-    service_charge = models.DecimalField(
-        max_digits=8,
-        decimal_places=2,
-        default=Decimal('0.00')
-    )
+    notes = models.TextField(blank=True, null=True)
 
-    customer_session = models.CharField(
-        max_length=50,
-        blank=True,
-        null=True
-    )
+    # -------------------------------------------------
+    # FINANCIALS
+    # -------------------------------------------------
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    tax = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    service_charge = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    discount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    customer_session = models.CharField(max_length=50, blank=True, null=True)
 
     objects = OrderManager()
 
-    @property
-    def total_price(self):
-        total_items_price = self.items.aggregate(
-            total=Sum('final_price')
-        )['total'] or Decimal('0.00')
+    # =============================================================================
+    # CALCULATIONS
+    # =============================================================================
 
-        return total_items_price + self.tax + self.service_charge
+    def calculate_totals(self):
+        subtotal = self.items.aggregate(
+            total=Sum("final_price")
+        )["total"] or Decimal("0.00")
+
+        self.subtotal = subtotal
+        self.total = subtotal + self.tax + self.service_charge - self.discount
+
+        super().save(update_fields=["subtotal", "total"])
+
+    # =============================================================================
+    # STATUS HELPERS
+    # =============================================================================
+
+    @property
+    def is_active(self):
+        return self.status not in [
+            self.Status.CANCELED,
+            self.Status.COMPLETED,
+        ]
+
+    @property
+    def is_paid(self):
+        return self.payment_status == self.PaymentStatus.PAID
 
     @property
     def elapsed_time(self):
@@ -602,18 +784,68 @@ class Order(TimeStampedModel):
             return "yellow"
         return "red"
 
-    def ensure_kitchen_ticket(self):
-        if (
-            self.status == Order.Status.IN_PROGRESS
-            and not hasattr(self, "kitchen_ticket")
-        ):
-            KitchenTicket.objects.create(order=self)
-            return True
-        return False
+    # =============================================================================
+    # STATUS TRANSITIONS
+    # =============================================================================
+
+    def mark_as_placed(self):
+        if self.status == self.Status.DRAFT:
+            self.status = self.Status.PLACED
+            self.save(update_fields=["status"])
+
+    def send_to_kitchen(self):
+        if self.status in [self.Status.PLACED, self.Status.DRAFT]:
+            self.status = self.Status.IN_PROGRESS
+            self.save(update_fields=["status"])
+
+    def mark_ready(self):
+        if self.status == self.Status.IN_PROGRESS:
+            self.status = self.Status.READY
+            self.save(update_fields=["status"])
+
+    def mark_served(self):
+        if self.status == self.Status.READY:
+            self.status = self.Status.SERVED
+            self.save(update_fields=["status"])
+
+    def complete_order(self):
+        if self.payment_status == self.PaymentStatus.PAID:
+            self.status = self.Status.COMPLETED
+            self.save(update_fields=["status"])
+
+    # =============================================================================
+    # SAVE OVERRIDE (KITCHEN AUTOMATION)
+    # =============================================================================
+
+    def save(self, *args, **kwargs):
+        creating = self._state.adding
+
+        # Generate sequential order number per restaurant
+        if creating and not self.order_number:
+            last_number = (
+            Order.objects.filter(restaurant=self.restaurant)
+            .aggregate(models.Max("order_number"))["order_number__max"]
+            )
+            self.order_number = (last_number or 0) + 1
+
+        old_status = None
+        if not creating:
+            old_status = Order.objects.filter(pk=self.pk).values_list(
+            "status", flat=True
+            ).first()
+
+        super().save(*args, **kwargs)
+
+        # Only trigger when status changes TO IN_PROGRESS
+        if self.status == self.Status.IN_PROGRESS and old_status != self.Status.IN_PROGRESS:
+            KitchenTicket.objects.get_or_create(order=self)
+    # =============================================================================
+    # STRING REPRESENTATION
+    # =============================================================================
 
     def __str__(self):
-        return f"Order {str(self.id)[:8]} ({self.restaurant.name})"
-
+        return f"Order #{self.order_number} - {self.restaurant.name}"
+    
 class OrderItem(models.Model):
 
     class Meta:
@@ -682,8 +914,8 @@ class OrderItem(models.Model):
         return self.final_price
 
     def __str__(self):
-        return f"{self.quantity}x {self.product.name} for Order {self.order.id}"
-    
+        return f"{self.quantity}x {self.product.name} for Order #{self.order.order_number}" 
+       
 class KitchenTicket(models.Model):
     order = models.OneToOneField("core.Order", on_delete=models.CASCADE, related_name="kitchen_ticket")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -694,7 +926,7 @@ class KitchenTicket(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"Kitchen Ticket #{self.pk} for Order {self.order.id}"
+        return f"Kitchen Ticket #{self.pk} for Order #{self.order.order_number}"
 
 class AnalyticsSnapshot(models.Model):
     restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name='analytics')
@@ -895,32 +1127,171 @@ class DailyReport(models.Model):
     def __str__(self):
         return f"{self.restaurant.name} - {self.date}"
 
-class Settings(models.Model):
-    """
-    A model to store application-wide settings.
-    This is designed to have only ONE row (singleton pattern).
-    """
-    # General Settings
-    restaurant_name = models.CharField(max_length=100, default="RestaurantSys")
-    currency_symbol = models.CharField(max_length=5, default="$")
 
-    # Display & Theme Settings
+class Settings(models.Model):
+
+    restaurant = models.OneToOneField(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="settings",
+        null=True,
+        blank=True,
+    )
+
+    # ===============================
+    # General Settings
+    # ===============================
+
+    restaurant_display_name = models.CharField(max_length=150)
+    currency_symbol = models.CharField(max_length=5, default="$")
+    timezone = models.CharField(max_length=50, default="UTC")
+
+    # ===============================
+    # Tax & Charges
+    # ===============================
+
+    tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    service_charge_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    prices_include_tax = models.BooleanField(default=False)
+
+    # ===============================
+    # Order Behavior
+    # ===============================
+
+    auto_mark_order_paid = models.BooleanField(default=False)
+    allow_split_payments = models.BooleanField(default=True)
+    allow_table_merge = models.BooleanField(default=True)
+
+    # ===============================
+    # Receipt Settings
+    # ===============================
+
+    show_logo_on_receipt = models.BooleanField(default=True)
+    receipt_footer_text = models.CharField(max_length=255, blank=True, null=True)
+
+    # ===============================
+    # Inventory Settings
+    # ===============================
+
+    stock_alerts_enabled = models.BooleanField(default=True)
+    auto_deduct_inventory = models.BooleanField(default=True)
+
+    # ✅ ADD THIS SECTION HERE
+    # ===============================
+    # Notification Settings
+    # ===============================
+
+    email_notifications_enabled = models.BooleanField(default=True)
+    send_daily_sales_report = models.BooleanField(default=False)
+    low_stock_email_alerts = models.BooleanField(default=True)
+    notify_on_new_order = models.BooleanField(default=True)
+
+    # ===============================
+    # UI Settings
+    # ===============================
+
     THEME_CHOICES = [
         ('system', 'System Preference'),
         ('light', 'Light Mode'),
         ('dark', 'Dark Mode'),
     ]
-    default_theme = models.CharField(max_length=10, choices=THEME_CHOICES, default='system')
+
+    default_theme = models.CharField(
+        max_length=10,
+        choices=THEME_CHOICES,
+        default='system'
+    )
+
     items_per_page = models.PositiveIntegerField(default=20)
 
-    # Notification Settings
-    email_notifications = models.BooleanField(default=True)
-    stock_alerts = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return "Application Settings"
+        return f"{self.restaurant.name} Settings"
+    
+class CashierShift(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="cashier_shifts"
+    )
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE)
+    start_time = models.DateTimeField(auto_now_add=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+    starting_cash = models.DecimalField(max_digits=10, decimal_places=2)
+    closing_cash = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    
+
+class AuditLog(models.Model):
+    ACTION_CHOICES = (
+        ("CREATE", "Create"),
+        ("UPDATE", "Update"),
+        ("DELETE", "Delete"),
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_logs",
+    )
+
+    restaurant = models.ForeignKey(
+        "Restaurant",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="audit_logs",
+    )
+
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+
+    model_name = models.CharField(max_length=100)
+    object_id = models.CharField(max_length=100)
+
+    changes = models.JSONField(null=True, blank=True)
+
+    timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        # Enforces that there's only one settings object
-        verbose_name = "Application Settings"
-        verbose_name_plural = "Application Settings"
+        ordering = ["-timestamp"]
+        verbose_name = "Audit Log"
+        verbose_name_plural = "Audit Logs"
+
+    def __str__(self):
+        return f"{self.timestamp} | {self.user} | {self.action} | {self.model_name}"
+    
+    
+class Shift(models.Model):
+
+    restaurant = models.ForeignKey(
+        'Restaurant',
+        on_delete=models.CASCADE,
+        related_name='shifts'
+    )
+
+    staff = models.ForeignKey(
+        'CustomUser',
+        on_delete=models.CASCADE,
+        related_name='shifts'
+    )
+
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-start_time']
+    
+    def clean(self):
+        if self.staff.restaurant != self.restaurant:
+            raise ValidationError("Staff must belong to the same restaurant.")
+    
+    def __str__(self):
+        return f"{self.staff.username} | {self.start_time} - {self.end_time}"

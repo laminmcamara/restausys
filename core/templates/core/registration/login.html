@@ -1,17 +1,37 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login</title>
-</head>
-<body>
-    <h1>Login</h1>
+{% extends "core/base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div style="max-width: 400px; margin: 60px auto;">
+    <h2 style="text-align:center;">Restaurant System Login</h2>
+
+    {% if form.errors %}
+        <div style="color: red; margin-bottom: 15px;">
+            Invalid username or password.
+        </div>
+    {% endif %}
+
     <form method="post">
         {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Login</button>
+        
+        <div style="margin-bottom: 15px;">
+            <label>Username</label>
+            {{ form.username }}
+        </div>
+
+        <div style="margin-bottom: 15px;">
+            <label>Password</label>
+            {{ form.password }}
+        </div>
+
+        <button type="submit" style="width:100%; padding:10px;">
+            Login
+        </button>
     </form>
-    <p><a href="{% url 'password_reset' %}">Forgot your password?</a></p>
-</body>
-</html>
+
+    <div style="text-align:center; margin-top: 15px;">
+        <a href="{% url 'core:password_reset' %}">Forgot password?</a>
+    </div>
+</div>
+{% endblock %}

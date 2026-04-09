@@ -1,8 +1,6 @@
 # core/inlines.py
 
 from django.contrib import admin
-from django.utils.html import format_html
-from django.db.models import Sum
 from .models import OrderItem, Payment
 
 
@@ -63,5 +61,6 @@ class PaymentInline(admin.TabularInline):
     ordering = ("-created_at",)
 
     def amount_display(self, obj):
-        return f"${obj.amount:.2f}"
+        return f"{settings.CURRENCY_SYMBOL}{obj.amount:.2f}"
+
     amount_display.short_description = "Amount"

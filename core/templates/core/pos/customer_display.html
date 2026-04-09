@@ -1,4 +1,4 @@
-{% extends "dashboard_base.html" %}
+{% extends "core/dashboard_base.html" %}
 {% load static %}
 
 {% block title %}Your Order Status{% endblock %}
@@ -72,149 +72,174 @@
         </div>
     </div>
 </div>
-
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-
-    /* ----------------------------------------------------------
-       1) DOM Element & State Management
-    ---------------------------------------------------------- */
-    const states = {
-        loading: document.getElementById('loading-state'),
-        error: document.getElementById('error-state'),
-        order: document.getElementById('order-state')
-    };
-
-    const orderElements = {
-        id: document.getElementById('order-id'),
-        table: document.getElementById('order-table'),
-        itemsList: document.getElementById('order-items-list'),
-        statusBadge: document.getElementById('order-status-badge'),
-        statusIcon: document.getElementById('order-status-icon'),
-        statusText: document.getElementById('order-status-text'),
-        statusMessage: document.getElementById('order-status-message'),
-        errorMessage: document.getElementById('error-message'),
-    };
+    document.addEventListener('DOMContentLoaded', function() {
     
-    // A map to define styles for each status. Easy to update!
-    const statusDetails = {
-        'preparing': {
-            text: 'Preparing',
-            colorClasses: 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300',
-            icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
-            message: 'Our chefs are carefully preparing your meal.'
-        },
-        'ready': {
-            text: 'Ready',
-            colorClasses: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300',
-            icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
-            message: 'Your order is ready! A staff member is on the way.'
-        },
-        'delivered': {
-            text: 'Delivered',
-            colorClasses: 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300',
-            icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path d="M9 12.75L11.25 15 15 9.75" /></svg>`,
-            message: 'Enjoy your meal!'
-        },
-        'cancelled': {
-            text: 'Cancelled',
-            colorClasses: 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300',
-            icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>`,
-            message: 'This order has been cancelled.'
+        /* ----------------------------------------------------------
+           0) Sound Setup
+        ---------------------------------------------------------- */
+        const readySound = new Audio("{% static 'sounds/order-ready.mp3' %}");
+        readySound.preload = "auto";
+    
+        let previousStatus = null;
+    
+        function playReadySound() {
+            readySound.currentTime = 0;
+            readySound.play().catch(err => {
+                console.warn("Sound playback blocked until user interaction.", err);
+            });
         }
-    };
-
-    function showState(stateName) {
-        Object.values(states).forEach(el => el.classList.add('hidden'));
-        if (states[stateName]) {
-            states[stateName].classList.remove('hidden');
-        }
-    }
-
-    /* ----------------------------------------------------------
-       2) Extract table_id from URL
-    ---------------------------------------------------------- */
-    function getParam(name) {
-        const url = new URL(window.location.href);
-        return url.searchParams.get(name);
-    }
-
-    const tableId = getParam("table_id");
-    if (!tableId) {
-        orderElements.errorMessage.textContent = "The Table ID is missing from the URL. Please scan the QR code on your table again.";
-        showState('error');
-        throw new Error("No table ID provided in URL.");
-    }
-
-    /* ----------------------------------------------------------
-       3) Connect WebSocket to the specific table group
-    ---------------------------------------------------------- */
-    const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(
-        `${wsScheme}://${window.location.host}/ws/customer/?table_id=${tableId}`
-    );
-
-    socket.onopen = () => console.log(`🟢 Customer WS connected (table ${tableId})`);
-    socket.onclose = () => {
-        console.warn("🔴 Customer WS disconnected");
-        orderElements.errorMessage.textContent = "Connection lost. Please refresh the page or scan the QR code again.";
-        showState('error');
-    };
-    socket.onerror = (error) => {
-        console.error("WebSocket Error:", error);
-        orderElements.errorMessage.textContent = "A connection error occurred. Please check your network and refresh the page.";
-        showState('error');
-    };
-
-    /* ----------------------------------------------------------
-       4) Handle order updates from the backend
-    ---------------------------------------------------------- */
-    socket.onmessage = function(e) {
-        try {
-            const data = JSON.parse(e.data);
-            if (data.type === "order_update" && data.order) {
-                renderCustomerOrder(data.order);
-                showState('order');
-            } else if (data.type === "no_order_found") {
-                orderElements.errorMessage.textContent = "There is no active order for this table. Please place an order with a staff member.";
-                showState('error');
+    
+        /* ----------------------------------------------------------
+           1) DOM Element & State Management
+        ---------------------------------------------------------- */
+        const states = {
+            loading: document.getElementById('loading-state'),
+            error: document.getElementById('error-state'),
+            order: document.getElementById('order-state')
+        };
+    
+        const orderElements = {
+            id: document.getElementById('order-id'),
+            table: document.getElementById('order-table'),
+            itemsList: document.getElementById('order-items-list'),
+            statusBadge: document.getElementById('order-status-badge'),
+            statusIcon: document.getElementById('order-status-icon'),
+            statusText: document.getElementById('order-status-text'),
+            statusMessage: document.getElementById('order-status-message'),
+            errorMessage: document.getElementById('error-message'),
+        };
+        
+        const statusDetails = {
+            'preparing': {
+                text: 'Preparing',
+                colorClasses: 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300',
+                icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+                message: 'Our chefs are carefully preparing your meal.'
+            },
+            'ready': {
+                text: 'Ready',
+                colorClasses: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300',
+                icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`,
+                message: '🎉 Your order is ready! A staff member is on the way.'
+            },
+            'delivered': {
+                text: 'Delivered',
+                colorClasses: 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300',
+                icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path d="M9 12.75L11.25 15 15 9.75" /></svg>`,
+                message: 'Enjoy your meal!'
+            },
+            'cancelled': {
+                text: 'Cancelled',
+                colorClasses: 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300',
+                icon: `<svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>`,
+                message: 'This order has been cancelled.'
             }
-        } catch (err) {
-            console.error("Error processing message:", err);
+        };
+    
+        function showState(stateName) {
+            Object.values(states).forEach(el => el.classList.add('hidden'));
+            if (states[stateName]) {
+                states[stateName].classList.remove('hidden');
+            }
         }
-    };
+    
+        /* ----------------------------------------------------------
+         2) Get table_id from Django context (URL path)
+---------------------------------------------------------- */
 
-    /* ----------------------------------------------------------
-       5) Render the customer's order details into the UI
-    ---------------------------------------------------------- */
-    function renderCustomerOrder(order) {
-        // Basic Info
-        orderElements.id.textContent = `#${order.id}`;
-        orderElements.table.textContent = order.table;
+         const tableId = "{{ table_id }}";
 
-        // Items List
-        orderElements.itemsList.innerHTML = order.items.map(item => `
-            <li class="flex justify-between items-center py-4 text-left">
-                <div>
-                    <p class="font-semibold text-slate-800 dark:text-slate-200">${item.name}</p>
-                    <p class="text-sm text-slate-500 dark:text-slate-400">Quantity: ${item.qty}</p>
-                </div>
-                <p class="font-mono text-slate-700 dark:text-slate-300">$${(item.price * item.qty).toFixed(2)}</p>
-            </li>
-        `).join("");
-
-        // Status Badge and Message
-        const status = order.status.toLowerCase();
-        const details = statusDetails[status] || statusDetails['preparing']; // Default to preparing if status is unknown
-
-        orderElements.statusBadge.className = 'inline-flex items-center gap-3 px-6 py-3 rounded-full font-semibold text-lg transition-colors duration-300 ' + details.colorClasses;
-        orderElements.statusIcon.innerHTML = details.icon;
-        orderElements.statusText.textContent = details.text;
-        orderElements.statusMessage.textContent = details.message;
-    }
-
-    // Initially show the loading state
-    showState('loading');
-});
-</script>
+         if (!tableId) {
+         orderElements.errorMessage.textContent =
+        "Configuration error: Table ID missing.";
+        showState('error');
+        throw new Error("No table ID provided by backend.");
+        }
+    
+        /* ----------------------------------------------------------
+           3) Connect WebSocket
+        ---------------------------------------------------------- */
+        const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+        const socket = new WebSocket(
+            `${wsScheme}://${window.location.host}/ws/customer_display/?table_id=${tableId}`
+        );
+    
+        socket.onopen = () => console.log(`🟢 Customer WS connected (table ${tableId})`);
+    
+        socket.onclose = () => {
+            console.warn("🔴 Customer WS disconnected");
+            orderElements.errorMessage.textContent = "Connection lost. Please refresh the page or scan the QR code again.";
+            showState('error');
+        };
+    
+        socket.onerror = (error) => {
+            console.error("WebSocket Error:", error);
+            orderElements.errorMessage.textContent = "A connection error occurred. Please check your network and refresh the page.";
+            showState('error');
+        };
+    
+        /* ----------------------------------------------------------
+           4) Handle order updates
+        ---------------------------------------------------------- */
+        socket.onmessage = function(e) {
+            try {
+                const data = JSON.parse(e.data);
+    
+                if (data.type === "order_update" && data.order) {
+                    const newStatus = data.order.status.toLowerCase();
+    
+                    // ✅ Play sound only when transitioning to READY
+                    if (previousStatus && previousStatus !== "ready" && newStatus === "ready") {
+                        playReadySound();
+                    }
+    
+                    previousStatus = newStatus;
+    
+                    renderCustomerOrder(data.order);
+                    showState('order');
+                }
+    
+                else if (data.type === "no_order_found") {
+                    orderElements.errorMessage.textContent = "There is no active order for this table. Please place an order with a staff member.";
+                    showState('error');
+                }
+    
+            } catch (err) {
+                console.error("Error processing message:", err);
+            }
+        };
+    
+        /* ----------------------------------------------------------
+           5) Render UI
+        ---------------------------------------------------------- */
+        function renderCustomerOrder(order) {
+            orderElements.id.textContent = `#${order.id}`;
+            orderElements.table.textContent = order.table;
+    
+            orderElements.itemsList.innerHTML = order.items.map(item => `
+                <li class="flex justify-between items-center py-4 text-left">
+                    <div>
+                        <p class="font-semibold text-slate-800 dark:text-slate-200">${item.name}</p>
+                        <p class="text-sm text-slate-500 dark:text-slate-400">Quantity: ${item.qty}</p>
+                    </div>
+                    <p class="font-mono text-slate-700 dark:text-slate-300">$${(item.price * item.qty).toFixed(2)}</p>
+                </li>
+            `).join("");
+    
+            const status = order.status.toLowerCase();
+            const details = statusDetails[status] || statusDetails['preparing'];
+    
+            orderElements.statusBadge.className =
+                'inline-flex items-center gap-3 px-6 py-3 rounded-full font-semibold text-lg transition-colors duration-300 ' +
+                details.colorClasses;
+    
+            orderElements.statusIcon.innerHTML = details.icon;
+            orderElements.statusText.textContent = details.text;
+            orderElements.statusMessage.textContent = details.message;
+        }
+    
+        showState('loading');
+    });
+    </script>
 {% endblock %}

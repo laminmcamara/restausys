@@ -221,7 +221,7 @@
         <div class="ticket status-{{ ticket.status }}" data-created-at="{{ ticket.created_at|date:"c" }}">
             <div class="ticket-header">
                 <div class="ticket-info">
-                    <h2>#{{ ticket.order.id }} <small>({{ ticket.order.table.name|default:"Takeout" }})</small></h2>
+                    <h2>#{{ ticket.order.order_number }} <small>({{ ticket.order.table.table_number|default:"Takeout" }})</small></h2>                
                 </div>
                 <!-- This div will be populated by JavaScript -->
                 <div class="ticket-timer">00:00</div>

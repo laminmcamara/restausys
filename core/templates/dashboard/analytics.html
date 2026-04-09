@@ -1,10 +1,10 @@
-{% extends "core/base.html" %}
+{% extends "core/dashboard_base.html" %}
 {% load static %}
 
-{% block content %}
+{% block dashboard_content %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-<h2>Analytics Dashboard</h2>
+<h2 class="mb-4">Analytics Dashboard</h2>
 
 <style>
   .kpi-grid {
@@ -22,7 +22,7 @@
   }
   .charts-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 20px;
   }
   canvas {
@@ -34,10 +34,10 @@
 </style>
 
 <div class="kpi-grid">
-    <div class="kpi"><h3>Total Orders</h3><p id="kpi-orders">0</p></div>
-    <div class="kpi"><h3>Total Revenue</h3><p id="kpi-revenue">$0.00</p></div>
-    <div class="kpi"><h3>Avg Order Value</h3><p id="kpi-avg">$0.00</p></div>
-    <div class="kpi"><h3>Ready Orders</h3><p id="kpi-ready">0</p></div>
+    <div class="kpi"><h5>Total Orders</h5><p id="kpi-orders">0</p></div>
+    <div class="kpi"><h5>Total Revenue</h5><p id="kpi-revenue">$0.00</p></div>
+    <div class="kpi"><h5>Avg Order Value</h5><p id="kpi-avg">$0.00</p></div>
+    <div class="kpi"><h5>Ready Orders</h5><p id="kpi-ready">0</p></div>
 </div>
 
 <div class="charts-grid">
@@ -49,18 +49,13 @@
 let chartRevenue = null;
 let chartItems = null;
 
-/* ----------------------------------------------------------
-   Fetch analytics summary
----------------------------------------------------------- */
 function loadAnalytics() {
-    fetch("/api/analytics/")
+    fetch("{% url 'core:analytics_api' %}")
         .then(res => res.json())
-        .then(drawAnalytics);
+        .then(drawAnalytics)
+        .catch(err => console.error("Analytics error:", err));
 }
 
-/* ----------------------------------------------------------
-   Render KPI + Charts
----------------------------------------------------------- */
 function drawAnalytics(data) {
 
     document.getElementById("kpi-orders").innerText = data.total_orders;
@@ -68,7 +63,6 @@ function drawAnalytics(data) {
     document.getElementById("kpi-avg").innerText = "$" + data.avg_order.toFixed(2);
     document.getElementById("kpi-ready").innerText = data.status_counts.ready;
 
-    /* ----------- Revenue by Hour Chart -------------- */
     const revenueLabels = data.hourly_revenue.map(x => x.hour + ":00");
     const revenueValues = data.hourly_revenue.map(x => x.total);
 
@@ -84,7 +78,8 @@ function drawAnalytics(data) {
                     borderWidth: 2,
                     fill: false
                 }]
-            }
+            },
+            options: { responsive: true }
         });
     } else {
         chartRevenue.data.labels = revenueLabels;
@@ -92,7 +87,6 @@ function drawAnalytics(data) {
         chartRevenue.update();
     }
 
-    /* ----------- Best Selling Items Chart -------------- */
     const itemLabels = data.best_items.map(x => x.name);
     const itemValues = data.best_items.map(x => x.qty);
 
@@ -106,7 +100,8 @@ function drawAnalytics(data) {
                     data: itemValues,
                     backgroundColor: "#1cc88a"
                 }]
-            }
+            },
+            options: { responsive: true }
         });
     } else {
         chartItems.data.labels = itemLabels;
@@ -115,26 +110,6 @@ function drawAnalytics(data) {
     }
 }
 
-    let lastDate = new Date().toDateString();
-    
-    // Check every 10 seconds
-    setInterval(() => {
-        let now = new Date().toDateString();
-    
-        if (now !== lastDate) {
-            lastDate = now;
-    
-            // Show popup message
-            alert("New day started — Daily sales reset!");
-    
-            // Reload analytics data
-            loadAnalytics();
-        }
-    }, 10000);
-
-/* ----------------------------------------------------------
-   Auto refresh every 15 seconds
----------------------------------------------------------- */
 loadAnalytics();
 setInterval(loadAnalytics, 15000);
 </script>

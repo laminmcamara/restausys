@@ -1,14 +1,16 @@
 from decimal import Decimal
 
 from django.db.models.signals import post_save, m2m_changed
+from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.dispatch import receiver
 from django.db.models import Sum
+from django.utils import timezone
+from django.conf import settings
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
-from .models import Order, OrderItem
-
+from .models import Order, OrderItem, Attendance
 
 # ==============================
 # ✅ ORDER BROADCASTING
@@ -71,3 +73,56 @@ def recalculate_order_item_price(sender, instance, action, **kwargs):
     OrderItem.objects.filter(pk=instance.pk).update(
         final_price=final_price
     )
+    
+# ==============================
+# ✅ AUTO ATTENDANCE (LOGIN)
+# ==============================
+
+@receiver(user_logged_in)
+def auto_clock_in(sender, request, user, **kwargs):
+    """
+    Automatically clock in staff on login if they have an active shift.
+    Never crash login.
+    """
+
+    # SaaS admin should not clock in
+    if user.is_superuser:
+        return
+
+    # Must belong to a restaurant
+    if not user.restaurant:
+        return
+
+    # Try to get an active cashier shift (adjust if your model differs)
+    active_shift = user.cashier_shifts.filter(is_active=True).first()
+
+    if not active_shift:
+        return  # No active shift → don't create attendance
+
+    Attendance.objects.get_or_create(
+        user=user,
+        shift=active_shift,
+        clock_out__isnull=True,  # prevent duplicate open attendance
+        defaults={
+            "clock_in": timezone.now(),
+        }
+    )
+
+# ==============================
+# ✅ AUTO ATTENDANCE (LOGOUT)
+# ==============================
+
+@receiver(user_logged_out)
+def auto_clock_out(sender, request, user, **kwargs):
+
+    if not user:
+        return
+
+    active_attendance = Attendance.objects.filter(
+        employee=user,
+        check_out__isnull=True
+    ).first()
+
+    if active_attendance:
+        active_attendance.check_out = timezone.now()
+        active_attendance.save()

@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
-from .models import CustomUser, Shift, Order, OrderItem, InventoryItem
+from .models import CustomUser, Shift, Order, OrderItem, InventoryItem, Product
+from django.contrib.auth import get_user_model
 
 
 # ==============================================================================
@@ -65,7 +66,7 @@ class ShiftForm(StyledModelForm):
 
     class Meta:
         model = Shift
-        fields = ['employee', 'start_time', 'end_time']
+        fields = ['staff', 'start_time', 'end_time']
         widgets = {
             'start_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
             'end_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
@@ -96,11 +97,14 @@ class OrderItemForm(StyledModelForm):
 
     class Meta:
         model = OrderItem
-        fields = ["menu_item", "variant", "quantity", "notes"]
+        fields = ["product", "modifiers", "quantity", "notes"]
         widgets = {
-            'notes': forms.Textarea(attrs={'rows': 2}),
+            "notes": forms.Textarea(attrs={"rows": 2}),
         }
-
+        labels = {
+            "product": "Menu Item",
+            "notes": "Special Instructions",
+        }
 
 # ==============================================================================
 # Inventory Management Form
@@ -113,4 +117,37 @@ class InventoryItemForm(StyledModelForm):
 
     class Meta:
         model = InventoryItem
-        fields = ['name', 'quantity', 'unit', 'low_stock_threshold']
+        fields = ['name', 'quantity', 'unit', 'reorder_level']
+        
+
+User = get_user_model()
+
+class StaffCreateForm(forms.ModelForm):
+    password = forms.CharField(widget=forms.PasswordInput)
+
+    class Meta:
+        model = User
+        fields = ["username", "first_name", "last_name", "email", "role", "password"]
+
+    def save(self, restaurant, commit=True):
+        user = super().save(commit=False)
+        user.set_password(self.cleaned_data["password"])
+        user.restaurant = restaurant
+        user.is_staff = True
+        if commit:
+            user.save()
+        return user
+    
+class ProductForm(forms.ModelForm):
+    class Meta:
+        model = Product
+        fields = [
+            "name",
+            "category",
+            "description",
+            "base_price",
+            "image",
+            "is_available",
+            "display_order",
+            "halal",
+        ]

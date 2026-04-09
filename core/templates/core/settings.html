@@ -3,92 +3,258 @@
 {% block title %}Settings - RestaurantSys{% endblock %}
 
 {% block page_title %}
-    <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
-        Application Settings
-    </h1>
+<h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
+    Restaurant Settings
+</h1>
 {% endblock %}
-
 
 {% block content %}
 <div class="mt-6">
-    <!-- Settings Form Card -->
-    <div class="bg-white dark:bg-slate-800 shadow-md rounded-lg p-6 md:p-8">
-        
+    <div class="bg-white dark:bg-slate-800 shadow-md rounded-xl p-6">
+
         <form method="post">
             {% csrf_token %}
 
-            <div class="space-y-8">
-                <!-- Section 1: General Settings -->
-                <div>
-                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2 mb-4">
-                        General
-                    </h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- Restaurant Name -->
-                        <div>
-                            <label for="restaurant-name" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Restaurant Name</label>
-                            <input type="text" name="restaurant_name" id="restaurant-name" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" placeholder="My Awesome Restaurant" value="{{ settings.restaurant_name }}">
-                        </div>
-
-                        <!-- Currency Symbol -->
-                        <div>
-                            <label for="currency-symbol" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Currency Symbol</label>
-                            <input type="text" name="currency_symbol" id="currency-symbol" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" value="{{ settings.currency_symbol }}">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Section 2: Display & Theme -->
-                <div>
-                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2 mb-4">
-                        Display & Theme
-                    </h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- Default Theme (Dropdown) -->
-                        <div>
-                            <label for="default-theme" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Default Theme</label>
-                            <select name="default_theme" id="default-theme" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white">
-                                <option value="system" {% if settings.default_theme == 'system' %}selected{% endif %}>System Preference</option>
-                                <option value="light" {% if settings.default_theme == 'light' %}selected{% endif %}>Light Mode</option>
-                                <option value="dark" {% if settings.default_theme == 'dark' %}selected{% endif %}>Dark Mode</option>
-                            </select>
-                        </div>
-                        <!-- Items per Page -->
-                        <div>
-                            <label for="items-per-page" class="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Items per Page</label>
-                            <input type="number" name="items_per_page" id="items-per-page" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" value="{{ settings.items_per_page }}" min="5" max="100">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Section 3: Notifications -->
-                <div>
-                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2 mb-4">
-                        Notifications
-                    </h2>
-                    <div class="space-y-4">
-                        <!-- Email Notifications (Checkbox) -->
-                        <div class="flex items-center">
-                            <input id="email-notifications" name="email_notifications" type="checkbox" value="true" class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" {% if settings.email_notifications %}checked{% endif %}>
-                            <label for="email-notifications" class="ml-3 text-sm font-medium text-gray-900 dark:text-gray-300">Receive email notifications for daily sales reports</label>
-                        </div>
-                        <!-- Low Stock Alerts (Checkbox) -->
-                        <div class="flex items-center">
-                            <input id="stock-alerts" name="stock_alerts" type="checkbox" value="true" class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" {% if settings.stock_alerts %}checked{% endif %}>
-                            <label for="stock-alerts" class="ml-3 text-sm font-medium text-gray-900 dark:text-gray-300">Enable low stock alerts on the dashboard</label>
-                        </div>
-                    </div>
-                </div>
+            <!-- Tabs Navigation -->
+            <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
+                <nav class="flex flex-wrap gap-2">
+                    {% for tab in settings_tabs %}
+                        <button type="button"
+                                class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300"
+                                data-tab="{{ tab }}">
+                            {{ tab|title }}
+                        </button>
+                    {% endfor %}
+                </nav>
             </div>
 
-            <!-- Form Actions -->
-            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
-                <button type="submit" class="text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">
-                    Save Changes
+            <div class="space-y-8">
+
+                <!-- GENERAL -->
+                <div class="tab-content" id="general">
+                    <h2 class="section-title">General</h2>
+
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="form-label">Restaurant Display Name</label>
+                            <input type="text" name="restaurant_display_name"
+                                   value="{{ object.restaurant_display_name }}"
+                                   class="form-input">
+                        </div>
+
+                        <div>
+                            <label class="form-label">Currency Symbol</label>
+                            <input type="text" name="currency_symbol"
+                                   value="{{ object.currency_symbol }}"
+                                   class="form-input">
+                        </div>
+
+                        <div>
+                            <label class="form-label">Timezone</label>
+                            <input type="text" name="timezone"
+                                   value="{{ object.timezone }}"
+                                   class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAX -->
+                <div class="tab-content hidden" id="tax">
+                    <h2 class="section-title">Tax & Charges</h2>
+
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="form-label">Tax %</label>
+                            <input type="number" step="0.01"
+                                   name="tax_percentage"
+                                   value="{{ object.tax_percentage }}"
+                                   class="form-input">
+                        </div>
+
+                        <div>
+                            <label class="form-label">Service Charge %</label>
+                            <input type="number" step="0.01"
+                                   name="service_charge_percentage"
+                                   value="{{ object.service_charge_percentage }}"
+                                   class="form-input">
+                        </div>
+                    </div>
+
+                    <div class="mt-4 flex items-center">
+                        <input type="checkbox" name="prices_include_tax"
+                               {% if object.prices_include_tax %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Prices Include Tax</label>
+                    </div>
+                </div>
+
+                <!-- ORDERS -->
+                <div class="tab-content hidden" id="orders">
+                    <h2 class="section-title">Order Behavior</h2>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="auto_mark_order_paid"
+                               {% if object.auto_mark_order_paid %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Auto Mark Order Paid</label>
+                    </div>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="allow_split_payments"
+                               {% if object.allow_split_payments %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Allow Split Payments</label>
+                    </div>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="allow_table_merge"
+                               {% if object.allow_table_merge %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Allow Table Merge</label>
+                    </div>
+                </div>
+
+                <!-- RECEIPT -->
+                <div class="tab-content hidden" id="receipt">
+                    <h2 class="section-title">Receipt Settings</h2>
+
+                    <div class="flex items-center mb-4">
+                        <input type="checkbox" name="show_logo_on_receipt"
+                               {% if object.show_logo_on_receipt %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Show Logo on Receipt</label>
+                    </div>
+
+                    <div>
+                        <label class="form-label">Receipt Footer Text</label>
+                        <textarea name="receipt_footer_text"
+                                  class="form-input">{{ object.receipt_footer_text }}</textarea>
+                    </div>
+                </div>
+
+                <!-- INVENTORY -->
+                <div class="tab-content hidden" id="inventory">
+                    <h2 class="section-title">Inventory Settings</h2>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="stock_alerts_enabled"
+                               {% if object.stock_alerts_enabled %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Stock Alerts Enabled</label>
+                    </div>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="auto_deduct_inventory"
+                               {% if object.auto_deduct_inventory %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Auto Deduct Inventory</label>
+                    </div>
+                </div>
+                 
+
+
+                <div class="card mt-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Customer Display</h5>
+                        <p class="card-text">
+                            Launch the live customer order display screen.
+                        </p>
+                
+                        <a href="{% url 'core:customer_display_shortcut' %}"
+                           target="_blank"
+                           class="btn btn-primary">
+                           Open Customer Display
+                        </a>
+                    </div>
+                </div>
+
+                <!-- NOTIFICATIONS -->
+                <div class="tab-content hidden" id="notifications">
+                    <h2 class="section-title">Notifications</h2>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="email_notifications_enabled"
+                               {% if object.email_notifications_enabled %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Email Notifications</label>
+                    </div>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="send_daily_sales_report"
+                               {% if object.send_daily_sales_report %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Send Daily Sales Report</label>
+                    </div>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="low_stock_email_alerts"
+                               {% if object.low_stock_email_alerts %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Low Stock Email Alerts</label>
+                    </div>
+
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="notify_on_new_order"
+                               {% if object.notify_on_new_order %}checked{% endif %}
+                               class="checkbox">
+                        <label class="ml-3">Notify on New Order</label>
+                    </div>
+                </div>
+
+                <!-- UI -->
+                <div class="tab-content hidden" id="ui">
+                    <h2 class="section-title">UI Settings</h2>
+
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="form-label">Default Theme</label>
+                            <select name="default_theme" class="form-input">
+                                <option value="system" {% if object.default_theme == 'system' %}selected{% endif %}>System</option>
+                                <option value="light" {% if object.default_theme == 'light' %}selected{% endif %}>Light</option>
+                                <option value="dark" {% if object.default_theme == 'dark' %}selected{% endif %}>Dark</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="form-label">Items Per Page</label>
+                            <input type="number" name="items_per_page"
+                                   value="{{ object.items_per_page }}"
+                                   class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Save Button -->
+            <div class="mt-8 border-t pt-6 text-right">
+                <button type="submit"
+                        class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">
+                    Save Settings
                 </button>
             </div>
 
         </form>
     </div>
 </div>
+
+<script>
+    const tabs = document.querySelectorAll(".tab-btn");
+    const contents = document.querySelectorAll(".tab-content");
+
+    tabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            contents.forEach(c => c.classList.add("hidden"));
+            document.getElementById(tab.dataset.tab).classList.remove("hidden");
+
+            tabs.forEach(t => t.classList.remove("bg-blue-600", "text-white"));
+            tab.classList.add("bg-blue-600", "text-white");
+        });
+    });
+
+    if (tabs.length > 0) {
+        tabs[0].click();
+    }
+</script>
+
 {% endblock %}

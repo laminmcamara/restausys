@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container mt-4 text-center">
+
+    <h2>{{ restaurant.name }} - Table QR Codes</h2>
+
+    <div class="row mt-4">
+
+        {% for table in tables %}
+        <div class="col-md-4 col-sm-6 mb-4">
+            <div class="card p-3 shadow-sm text-center">
+                <h5>Table {{ table.table_number }}</h5>
+                <img src="{{ table.qr_code.url }}"
+                     class="img-fluid mt-2"
+                     style="max-width:200px;">
+            </div>
+        </div>
+        {% endfor %}
+
+    </div>
+
+    <button onclick="window.print()" class="btn btn-primary mt-3">
+        Print All
+    </button>
+
+</div>
+
+<style>
+@media print {
+    nav, footer, .btn { display:none !important; }
+}
+</style>
+
+{% endblock %}

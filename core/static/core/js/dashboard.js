@@ -22,9 +22,9 @@ document.addEventListener("DOMContentLoaded", function () {
     // =========================================================================
     // API ENDPOINTS
     // =========================================================================
-    const CATEGORIES_API = "/api/menu-categories/";
-    const MENU_API = "/api/menu-items/";
-    const PLACE_ORDER_API = "/api/new-order/";
+    const CATEGORIES_API = "/api/v1/categories/";
+    const MENU_API = "/api/v1/products/";
+    const PLACE_ORDER_API = "/api/v1/pos-save-order/";
     // =========================================================================
     // CSRF
     // =========================================================================

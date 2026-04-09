@@ -1,0 +1,16 @@
+{% extends "core/base_auth.html" %}
+
+{% block title %}Logged Out{% endblock %}
+
+{% block content %}
+<div style="max-width: 400px; margin: 60px auto; text-align:center;">
+    <h2>You have been logged out</h2>
+
+    <p>Thank you for using the Restaurant System.</p>
+
+    <a href="{% url 'core:login' %}" 
+       style="display:inline-block; margin-top:20px; padding:10px 20px; text-decoration:none;">
+        Log in again
+    </a>
+</div>
+{% endblock %}

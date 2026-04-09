@@ -1,8 +1,8 @@
-{% extends 'core/base.html' %}
+{% extends 'core/dashboard_base.html' %}
 
 {% block title %}Edit Menu Item{% endblock %}
 
-{% block content %}
+{% block dashboard_content %}
     <div class="container">
         <h1>{% if form.instance.pk %}Update{% else %}Create{% endif %} Menu Item</h1>
         <form method="POST">

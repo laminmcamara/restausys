@@ -61,7 +61,7 @@ class TableSerializer(serializers.ModelSerializer):
 class ModifierOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ModifierOption
-        fields = ["id", "name", "price_override"]
+        fields = ["id", "name", "price_adjustment"]
 
 
 class ModifierGroupSerializer(serializers.ModelSerializer):
@@ -69,8 +69,12 @@ class ModifierGroupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ModifierGroup
-        fields = ["id", "name", "min_selection", "max_selection", "options"]
-
+        fields = [
+            "id",
+            "name",
+            "selection_type",
+            "options",
+        ]
 
 class ProductSerializer(serializers.ModelSerializer):
     modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
@@ -187,7 +191,7 @@ class OrderSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at"]
 
     def get_total_price(self, obj):
-        return obj.total_price()
+        return obj.total
 
 
 # ==============================================================================
