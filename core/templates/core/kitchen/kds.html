@@ -1,3 +1,4 @@
+
 {% extends "core/dashboard_base.html" %}
 {% load static %}
 
@@ -325,5 +326,36 @@
         }, pageRefreshInterval);
     });
 </script>
+<script>
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    const socket = new WebSocket(
+        protocol + window.location.host + "/ws/kds/"
+    );
 
+    socket.onopen = function () {
+        console.log("✅ Kitchen WebSocket connected");
+    };
+
+    socket.onmessage = function (event) {
+        const data = JSON.parse(event.data);
+        console.log("📩 Kitchen update received:", data);
+
+        if (data.type === "new_order") {
+            // 🔔 Optional sound
+            // const audio = new Audio("{% static 'core/sounds/notification.mp3' %}");
+            // audio.play();
+
+            // ✅ Reload page to show new ticket
+            window.location.reload();
+        }
+    };
+
+    socket.onerror = function (error) {
+        console.error("❌ Kitchen WebSocket error:", error);
+    };
+
+    socket.onclose = function () {
+        console.warn("⚠️ Kitchen WebSocket disconnected");
+    };
+</script>
 {% endblock %}

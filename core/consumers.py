@@ -6,7 +6,12 @@ from django.utils.timezone import now
 from core.models import ChatMessage, Table, Order
 from django.forms.models import model_to_dict
 logger = logging.getLogger("channels")
+from asgiref.sync import sync_to_async
+from core.serializers import OrderSerializer
+from django.core.serializers.json import DjangoJSONEncoder
 
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # Base Safe Consumer
@@ -15,6 +20,7 @@ logger = logging.getLogger("channels")
 class SafeConsumer(AsyncWebsocketConsumer):
     """
     Base consumer with safe JSON sending and authentication helpers.
+    Fully async-safe (no ORM access in async context).
     """
 
     async def safe_send(self, data: dict):
@@ -30,11 +36,29 @@ class SafeConsumer(AsyncWebsocketConsumer):
         return user
 
     async def get_restaurant_id(self):
+        """
+        Safely retrieve restaurant ID without triggering ORM queries
+        inside async context.
+        """
         user = await self.get_authenticated_user()
         if not user:
             return None
-        return getattr(user, "restaurant_id", None)
 
+        # ✅ SAFE: direct FK id access (no DB query)
+        if hasattr(user, "restaurant_id") and user.restaurant_id:
+            return user.restaurant_id
+
+        # ✅ If restaurant is on profile (requires DB lookup)
+        return await self._get_profile_restaurant_id(user)
+
+    @database_sync_to_async
+    def _get_profile_restaurant_id(self, user):
+        """
+        Runs in thread pool. Safe to access ORM here.
+        """
+        if hasattr(user, "profile") and hasattr(user.profile, "restaurant_id"):
+            return user.profile.restaurant_id
+        return None
 
 # ==============================================================================
 # Staff Chat (Restaurant-Isolated)
@@ -44,33 +68,51 @@ class ChatConsumer(SafeConsumer):
 
     async def connect(self):
         user = await self.get_authenticated_user()
+        print("DEBUG USER:", user)
+
         if not user:
+            print("REJECT: no authenticated user")
             await self.close(code=4001)
             return
 
-        role = getattr(getattr(user, "profile", None), "role", "").lower()
+        role = getattr(user, "role", "").lower()
+        print("DEBUG ROLE:", role)
+
         if role not in ("staff", "manager", "chef", "supervisor"):
+            print("REJECT: invalid role")
             await self.close(code=4003)
             return
 
         restaurant_id = await self.get_restaurant_id()
+        print("DEBUG RESTAURANT ID:", restaurant_id)
+
         if not restaurant_id:
+            print("REJECT: no restaurant")
             await self.close(code=4004)
             return
 
         self.group_name = f"chat_{restaurant_id}"
+        print("DEBUG GROUP NAME:", self.group_name)
 
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
         await self.accept()
+        print("✅ Chat WebSocket accepted")
 
         history = await self._get_recent_messages(restaurant_id)
-        await self.safe_send({"type": "history", "messages": history})
+        await self.safe_send({
+            "type": "history",
+            "messages": history
+        })
 
         await self._broadcast_system_message(
             restaurant_id,
             f"{user.username} joined."
         )
-
+        
     async def disconnect(self, code):
         user = self.scope.get("user")
         if hasattr(self, "group_name"):
@@ -203,108 +245,166 @@ class KitchenDisplayConsumer(SafeConsumer):
             await self.close(code=4001)
             return
 
-        role = getattr(getattr(user, "profile", None), "role", "").lower()
+        role = getattr(user, "role", "").lower()
         if role not in ("chef", "manager", "supervisor"):
             await self.close(code=4003)
             return
 
         restaurant_id = await self.get_restaurant_id()
-        self.group_name = f"kitchen_{restaurant_id}"
-
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
-        await self.accept()
-
-    async def disconnect(self, code):
-        await self.channel_layer.group_discard(self.group_name, self.channel_name)
-
-    async def order_update(self, event):
-        await self.safe_send(event["data"])
-
-
-# ==============================================================================
-# Customer Display Consumer (Per Table + Validated)
-# ==============================================================================
-
-
-class CustomerDisplayConsumer(SafeConsumer):
-
-    async def connect(self):
-        query = self.scope.get("query_string", b"").decode()
-
-        table_id = None
-        if "table_id=" in query:
-            try:
-                table_id = int(query.split("table_id=")[1].split("&")[0])
-            except Exception:
-                await self.close(code=4002)
-                return
-
-        if not table_id:
-            await self.close(code=4002)
-            return
-
-        valid = await self._validate_table(table_id)
-        if not valid:
+        if not restaurant_id:
             await self.close(code=4004)
             return
 
-        self.table_id = table_id
-        self.group_name = f"customer_table_{table_id}"
+        self.group_name = f"kitchen_{restaurant_id}"
 
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
         await self.accept()
-
-        # ✅ SEND CURRENT ACTIVE ORDER IMMEDIATELY
-        order_data = await self._get_active_order(table_id)
-
-        if order_data:
-            await self.safe_send({
-                "type": "order_update",
-                "order": order_data
-            })
-        else:
-            await self.safe_send({
-                "type": "no_order_found"
-            })
 
     async def disconnect(self, code):
         if hasattr(self, "group_name"):
-            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+            await self.channel_layer.group_discard(
+                self.group_name,
+                self.channel_name
+            )
 
     async def order_update(self, event):
         await self.safe_send(event["data"])
+        
+        
+class RestaurantConsumer(SafeConsumer):
 
-    async def order_status_update(self, event):
-        await self.safe_send(event["data"])
+    async def connect(self):
+        user = await self.get_authenticated_user()
+        if not user:
+            await self.close(code=4001)
+            return
 
-    @database_sync_to_async
-    def _validate_table(self, table_id):
-        return Table.objects.filter(id=table_id).exists()
+        requested_restaurant_id = self.scope["url_route"]["kwargs"]["restaurant_id"]
 
-    @database_sync_to_async
-    def _get_active_order(self, table_id):
-        order = (
-            Order.objects
-            .filter(table_id=table_id, status__in=["preparing", "ready"])
-            .prefetch_related("items__product")
-            .order_by("-created_at")
-            .first()
+        user_restaurant_id = await self.get_restaurant_id()
+        if not user_restaurant_id:
+            await self.close(code=4004)
+            return
+
+        # 🚨 Prevent cross‑restaurant access
+        if str(user_restaurant_id) != str(requested_restaurant_id):
+            await self.close(code=4003)
+            return
+
+        self.restaurant_id = requested_restaurant_id
+        self.group_name = f"restaurant_{self.restaurant_id}"
+
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
         )
 
-        if not order:
-            return None
+        await self.accept()
 
-        return {
-            "id": order.id,
-            "table": order.table.name,
-            "status": order.status,
-            "items": [
-    {
-        "name": item.product.name,
-        "qty": item.quantity,
-        "price": float(item.final_price) / item.quantity if item.quantity else 0,
-    }
-    for item in order.items.all()
-]
-            
-}
+    async def disconnect(self, close_code):
+        if hasattr(self, "group_name"):
+            await self.channel_layer.group_discard(
+                self.group_name,
+                self.channel_name
+            )
+
+    async def order_update(self, event):
+        await self.safe_send(event["data"])
+        
+class TableConsumer(SafeConsumer):
+
+    async def connect(self):
+        user = await self.get_authenticated_user()
+        if not user:
+            await self.close(code=4001)
+            return
+
+        self.table_id = int(self.scope["url_route"]["kwargs"]["table_id"])
+
+        # ✅ Fetch table safely
+        table = await sync_to_async(
+            lambda: Table.objects.select_related("restaurant").filter(id=self.table_id).first()
+        )()
+
+        if not table:
+            await self.close(code=4004)
+            return
+
+        user_restaurant_id = await self.get_restaurant_id()
+        if not user_restaurant_id:
+            await self.close(code=4004)
+            return
+
+        # 🚨 Prevent cross-restaurant access
+        if table.restaurant_id != user_restaurant_id:
+            await self.close(code=4003)
+            return
+
+        self.group_name = f"table_{self.table_id}"
+
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+        # ✅ Send latest active order
+        order = await sync_to_async(
+            lambda: Order.objects.filter(
+                table_id=self.table_id
+            ).exclude(
+                status__in=["CANCELED"]
+            ).order_by("-created_at").first()
+        )()
+
+        if order:
+            data = await sync_to_async(
+                lambda: OrderSerializer(order).data
+            )()
+
+            await self.safe_send({
+                "type": "order_update",
+                "order": data
+            })
+        else:
+            await self.safe_send({
+                "type": "order_update",
+                "order": None
+            })
+
+    async def disconnect(self, close_code):
+        if hasattr(self, "group_name"):
+            await self.channel_layer.group_discard(
+                self.group_name,
+                self.channel_name
+            )
+
+    async def order_update(self, event):
+        await self.safe_send(event["data"])
+        
+class CustomerDisplayConsumer(AsyncWebsocketConsumer):
+
+    async def connect(self):
+        self.restaurant_id = self.scope["url_route"]["kwargs"]["restaurant_id"]
+        self.group_name = f"customer_{self.restaurant_id}"
+
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(
+            self.group_name,
+            self.channel_name
+        )
+
+    async def order_update(self, event):
+        await self.send(text_data=json.dumps(event["data"]))

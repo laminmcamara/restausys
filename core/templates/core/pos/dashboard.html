@@ -174,8 +174,17 @@
 {% endblock %}
 
 {% block dashboard_content %}
-<div id="pos-screen" class="screen active">
 
+{% if profile_incomplete %}
+<div class="profile-warning">
+    <div>
+        ⚠️ Your restaurant profile is incomplete. Please add your address details.
+    </div>
+    <a href="{% url 'core:restaurant_settings' %}">Complete Now</a>
+</div>
+{% endif %}
+<div id="pos-screen" class="screen active">
+     {% csrf_token %}
     <div class="pos-container">
 
         <!-- Categories -->
@@ -223,211 +232,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script>
-    window.posData = {{ pos_data_json|safe }};
-</script>
-
-<script>
-
-/* ============================================================
-   LOAD PRODUCT DATA FROM DJANGO
-   Django view passes:
-   window.posData = { categories, products, variants, modifiers }
-============================================================ */
-
-const posData = window.posData || {
-    categories: [],
-    products: [],
-    variants: [],
-    modifiers: [],
-};
-
-
-/* ============================================================
-   CATEGORY SIDEBAR RENDER
-============================================================ */
-
-function renderCategories() {
-    const sidebar = document.getElementById("category-sidebar");
-    sidebar.innerHTML = "";
-
-    // Add ALL category
-    const allBtn = document.createElement("button");
-    allBtn.className = "category-btn active";
-    allBtn.textContent = "All";
-    allBtn.onclick = () => filterProducts(null);
-    sidebar.appendChild(allBtn);
-
-    posData.categories.forEach(cat => {
-        const btn = document.createElement("button");
-        btn.className = "category-btn";
-        btn.textContent = cat.name;
-        btn.onclick = () => filterProducts(cat.id);
-        sidebar.appendChild(btn);
-    });
-}
-
-let activeCategory = null;
-
-
-/* ============================================================
-   PRODUCT GRID RENDER
-============================================================ */
-
-function renderProducts() {
-    const list = document.getElementById("product-list");
-    list.innerHTML = "";
-
-    const filtered = posData.products.filter(p =>
-        !activeCategory || p.category_id === activeCategory
-    );
-
-    filtered.forEach(product => {
-        const card = document.createElement("div");
-        card.className = "product-card";
-        card.onclick = () => openVariantModal(product.id);
-
-        card.innerHTML = `
-            <h3>${product.name}</h3>
-        `;
-
-        list.appendChild(card);
-    });
-}
-
-function filterProducts(categoryId) {
-    activeCategory = categoryId;
-
-    document.querySelectorAll(".category-btn").forEach(btn => {
-        btn.classList.remove("active");
-        if (!categoryId && btn.textContent === "All") btn.classList.add("active");
-        if (categoryId && btn.textContent === posData.categories.find(c => c.id === categoryId).name) {
-            btn.classList.add("active");
-        }
-    });
-
-    renderProducts();
-}
-
-
-/* ============================================================
-   ORDER CART LOGIC
-============================================================ */
-
-let order = {
-    type: "dinein",
-    items: [],
-    subtotal: 0,
-    tax: 0,
-    total: 0,
-};
-
-function addToCart(variantId, modifiers) {
-    const variant = posData.variants.find(v => v.id === variantId);
-    const existing = order.items.find(i => i.variantId === variantId && JSON.stringify(i.modifiers) === JSON.stringify(modifiers));
-
-    if (existing) {
-        existing.qty++;
-    } else {
-        order.items.push({
-            variantId,
-            name: variant.product_name + " - " + variant.name,
-            price: parseFloat(variant.price),
-            qty: 1,
-            modifiers
-        });
-    }
-
-    renderCart();
-}
-
-function renderCart() {
-    const list = document.getElementById("order-items-list");
-    list.innerHTML = "";
-
-    let subtotal = 0;
-
-    order.items.forEach(item => {
-        const total = item.price * item.qty;
-        subtotal += total;
-
-        const div = document.createElement("div");
-        div.className = "order-item";
-
-        div.innerHTML = `
-            <div class="item-info">
-                <h4>${item.name}</h4>
-                ${item.modifiers.map(m => `<p>${m.name} (+${m.price})</p>`).join("")}
-            </div>
-
-            <div class="item-controls">
-                <button onclick="changeQty(${item.variantId}, -1)">-</button>
-                <span>${item.qty}</span>
-                <button onclick="changeQty(${item.variantId}, 1)">+</button>
-            </div>
-
-            <div class="item-total">$${total.toFixed(2)}</div>
-        `;
-
-        list.appendChild(div);
-    });
-
-    // TAX
-    const tax = subtotal * 0.10;
-    const total = subtotal + tax;
-
-    order.subtotal = subtotal;
-    order.tax = tax;
-    order.total = total;
-
-    document.getElementById("subtotal").textContent = "$" + subtotal.toFixed(2);
-    document.getElementById("tax").textContent = "$" + tax.toFixed(2);
-    document.getElementById("total").textContent = "$" + total.toFixed(2);
-
-    broadcastOrderState();
-}
-
-function changeQty(variantId, delta) {
-    const item = order.items.find(i => i.variantId === variantId);
-    if (!item) return;
-
-    item.qty += delta;
-    if (item.qty <= 0) {
-        order.items = order.items.filter(i => i !== item);
-    }
-
-    renderCart();
-}
-
-function clearCart() {
-    order.items = [];
-    renderCart();
-}
-
-
-/* ============================================================
-   PAYMENT / PLACE ORDER
-============================================================ */
-
-document.getElementById("place-order-btn").onclick = () => {
-    if (order.items.length === 0) {
-        alert("No items");
-        return;
-    }
-
-    alert("Payment modal coming next...");
-};
-
-document.getElementById("clear-order-btn").onclick = clearCart;
-
-
-/* ============================================================
-   INIT ON PAGE LOAD
-============================================================ */
-
-renderCategories();
-renderProducts();
-renderCart();
-
-</script>
+<script src="{% static 'core/js/dashboard.js' %}"></script>
 {% endblock %}

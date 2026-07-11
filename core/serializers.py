@@ -14,6 +14,7 @@ from .models import (
     Category,
     Menu,
     Payment,
+    ProductVariant,
 )
 
 # ==============================================================================
@@ -90,6 +91,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "is_available",
             "category",
             "modifier_groups",
+            "variants",
         ]
 
 
@@ -119,11 +121,11 @@ class OrderItemSerializer(serializers.ModelSerializer):
     Secure against cross-restaurant data leaks.
     """
 
-    # Read representations
+    # ✅ Read representations
     product = ProductSerializer(read_only=True)
     modifiers = ModifierOptionSerializer(many=True, read_only=True)
 
-    # Write fields (restricted per restaurant)
+    # ✅ Write fields (restricted per restaurant)
     product_id = serializers.PrimaryKeyRelatedField(
         queryset=Product.objects.none(),
         source="product",
@@ -161,24 +163,46 @@ class OrderItemSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             restaurant = request.user.restaurant
 
+            # ✅ Correct product filtering
             self.fields["product_id"].queryset = Product.objects.filter(
-                restaurant=restaurant
+                category__menu__restaurant=restaurant
             )
 
+            # ✅ Correct modifier filtering
             self.fields["modifier_ids"].queryset = ModifierOption.objects.filter(
-                modifier_group__product__restaurant=restaurant
-            )
+                group__products__category__menu__restaurant=restaurant
+            ).distinct()
+    
+    def create(self, validated_data):
+        modifiers = validated_data.pop("modifiers", [])
 
+        item = OrderItem.objects.create(**validated_data)
+
+        if modifiers:
+            item.modifiers.set(modifiers)
+
+        base_price = item.product.base_price
+        modifiers_total = sum(m.price_adjustment for m in modifiers)
+
+        item.final_price = (base_price + modifiers_total) * item.quantity
+        item.save(update_fields=["final_price"])
+
+        item.order.calculate_totals()
+
+        return item
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     staff = CustomUserSerializer(read_only=True)
     total_price = serializers.SerializerMethodField()
+    display_id = serializers.SerializerMethodField()
+    estimated_time = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
             "id",
+            "display_id",
             "restaurant",
             "table",
             "status",
@@ -187,13 +211,24 @@ class OrderSerializer(serializers.ModelSerializer):
             "items",
             "staff",
             "total_price",
+            "estimated_time",
         ]
         read_only_fields = ["created_at", "updated_at"]
 
     def get_total_price(self, obj):
         return obj.total
 
+    def get_display_id(self, obj):
+        return obj.short_id()
 
+    def get_estimated_time(self, obj):
+        items = list(obj.items.all())
+        return sum(
+            item.product.prep_time * item.quantity
+            for item in items
+            if item.product and item.product.prep_time
+        )
+    
 # ==============================================================================
 # Payment Serializer (SECURE)
 # ==============================================================================
@@ -228,4 +263,12 @@ def serialize_order_for_channels(order):
 
 
 
-
+class ProductVariantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductVariant
+        fields = [
+            "id",
+            "name",
+            "price",
+            "is_default",
+        ]

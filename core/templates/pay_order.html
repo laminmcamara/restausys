@@ -1,16 +1,40 @@
-<script src="https://js.stripe.com/v3/"></script>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pay Order</title>
+    <style>
+        body {
+            font-family: Arial;
+            padding: 40px;
+            text-align: center;
+        }
+        .container {
+            max-width: 500px;
+            margin: auto;
+        }
+        button {
+            padding: 12px 20px;
+            background: black;
+            color: white;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
 
-<div id="status">Loading…</div>
+<div class="container">
+    <h2>{{ restaurant.name }}</h2>
+    <p>Order ID: {{ order.id }}</p>
+    <p><strong>Total: ${{ order.total }}</strong></p>
 
-<script>
-const stripe = Stripe("{{ STRIPE_PUBLIC_KEY }}");
+    <form method="POST">
+        {% csrf_token %}
+        <button type="submit">Pay Now</button>
+    </form>
+</div>
 
-stripe.confirmCardPayment("{{ client_secret }}")
-.then(res => {
-    if (res.error) {
-        document.getElementById("status").textContent = "Payment failed.";
-    } else {
-        document.getElementById("status").textContent = "Payment successful.";
-    }
-});
-</script>
+</body>
+</html>

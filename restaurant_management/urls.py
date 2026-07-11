@@ -10,7 +10,7 @@ urlpatterns = [
 
 if settings.DEBUG:
     # ✅ Serve STATIC files
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    # urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
     # ✅ Serve MEDIA files
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

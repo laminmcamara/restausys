@@ -3,30 +3,106 @@
 <head>
     <title>Order | Table {{ table.table_number }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 15px; }
-        .category { margin-top: 25px; font-size: 22px; font-weight: bold; }
-        .item { padding: 10px 0; border-bottom: 1px solid #eee; }
-        .btn { padding: 8px 14px; background: #333; color: white; border: none; border-radius: 6px; }
-        #cartBtn { position: fixed; bottom: 20px; right: 20px; background:#28a745; }
+        body {
+            font-family: system-ui, sans-serif;
+            margin: 0;
+            padding: 16px;
+            background: #f9fafb;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .category {
+            margin-top: 30px;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .item {
+            background: white;
+            margin-top: 12px;
+            padding: 14px;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        .item-name {
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .qty-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 8px;
+        }
+
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .add-btn {
+            background: #111827;
+            color: white;
+        }
+
+        .qty-btn {
+            background: #e5e7eb;
+        }
+
+        #cartBtn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #16a34a;
+            color: white;
+            padding: 12px 18px;
+            border-radius: 30px;
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+
+        #cartCount {
+            background: white;
+            color: #16a34a;
+            border-radius: 50%;
+            padding: 2px 8px;
+            margin-left: 6px;
+        }
     </style>
 </head>
 <body>
 
 <h1>Table {{ table.table_number }}</h1>
-<p>Select your items.</p>
+<p>Select your items</p>
 
 {% for category, items in categorized_menu.items %}
     <div class="category">{{ category }}</div>
 
     {% for item in items %}
         <div class="item">
-            <div style="font-size:18px;font-weight:bold">{{ item.name }}</div>
+            <div class="item-name">{{ item.name }}</div>
             <div>{{ item.description }}</div>
-            <div style="margin-top:6px;">
-                <button class="btn addBtn"
-                        data-id="{{ item.id }}"
-                        data-name="{{ item.name }}">
+
+            <div class="qty-controls">
+                <button class="btn qty-btn minus"
+                        data-id="{{ item.id }}">−</button>
+
+                <span id="qty-{{ item.id }}">0</span>
+
+                <button class="btn qty-btn plus"
+                        data-id="{{ item.id }}">+</button>
+
+                <button class="btn add-btn addBtn"
+                        data-id="{{ item.id }}">
                     Add
                 </button>
             </div>
@@ -34,25 +110,69 @@
     {% endfor %}
 {% endfor %}
 
-<button id="cartBtn" class="btn">View Cart</button>
+<button id="cartBtn">
+    Cart <span id="cartCount">0</span>
+</button>
 
 <script>
 const token = "{{ table.access_token }}";
+let cartCount = 0;
 
 async function updateCart(itemId, qty) {
-    await fetch(`/api/table/${token}/cart/`, {
-        method: "POST",
-        body: JSON.stringify({ item_id: itemId, quantity: qty })
-    });
+    try {
+        const response = await fetch(`/api/table/${token}/cart/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                item_id: itemId,
+                quantity: qty
+            })
+        });
+
+        if (response.ok) {
+            cartCount += qty;
+            document.getElementById("cartCount").innerText = cartCount;
+        }
+
+    } catch (error) {
+        console.error("Error:", error);
+    }
 }
 
-document.querySelectorAll(".addBtn").forEach(btn => {
+// Quantity buttons
+document.querySelectorAll(".plus").forEach(btn => {
     btn.onclick = () => {
-        updateCart(btn.dataset.id, 1);
-        alert(btn.dataset.name + " added to cart.");
+        const id = btn.dataset.id;
+        const qtySpan = document.getElementById(`qty-${id}`);
+        qtySpan.innerText = parseInt(qtySpan.innerText) + 1;
     };
 });
 
+document.querySelectorAll(".minus").forEach(btn => {
+    btn.onclick = () => {
+        const id = btn.dataset.id;
+        const qtySpan = document.getElementById(`qty-${id}`);
+        let current = parseInt(qtySpan.innerText);
+        if (current > 0) qtySpan.innerText = current - 1;
+    };
+});
+
+// Add button
+document.querySelectorAll(".addBtn").forEach(btn => {
+    btn.onclick = () => {
+        const id = btn.dataset.id;
+        const qty = parseInt(document.getElementById(`qty-${id}`).innerText);
+
+        if (qty > 0) {
+            updateCart(id, qty);
+            document.getElementById(`qty-${id}`).innerText = 0;
+        }
+    };
+});
+
+// Cart button
 document.getElementById("cartBtn").onclick = () =>
     window.location = `/table/${token}/checkout/`;
 </script>

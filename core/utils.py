@@ -104,7 +104,7 @@ def generate_daily_report(restaurant):
 
     orders = Order.objects.filter(
         restaurant=restaurant,
-        status=Order.Status.PAID,
+        Order.PaymentStatus.PAID,   ✅
         created_at__date=today,
     )
 
@@ -137,7 +137,7 @@ def calculate_period_summary(restaurant, days):
 
     orders = Order.objects.filter(
         restaurant=restaurant,
-        status=Order.Status.PAID,
+        Order.PaymentStatus.PAID,
         created_at__date__gte=date_from,
     )
 

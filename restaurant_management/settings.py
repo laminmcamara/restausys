@@ -111,6 +111,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    'core.middleware.SubscriptionMiddleware',
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -140,6 +141,7 @@ TEMPLATES = [
                 "django.template.context_processors.static",
                 "django.template.context_processors.i18n",  # 🌍 language context
                 'core.context_processors.restaurant_context',
+                
             ],
         },
     },
@@ -163,7 +165,7 @@ DATABASES = {
 # in settings.py
 AUTH_USER_MODEL = "core.CustomUser"
 LOGIN_URL = "core:login"
-LOGIN_REDIRECT_URL = "core:home"
+LOGIN_REDIRECT_URL = "core:dashboard"
 LOGOUT_REDIRECT_URL = "core:login"
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -208,10 +210,6 @@ LOCALE_PATHS = [BASE_DIR / "locale"]
 # ==============================================================================
 
 STATIC_URL = "/static/"
-
-STATICFILES_DIRS = [
-    BASE_DIR / "core" / "static"
-]
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
@@ -303,7 +301,7 @@ LOGGING = {
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "simple"},
         "file": {
-            "class": "concurrent_log_handler.ConcurrentRotatingFileHandler",
+            "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "django.log",
             "maxBytes": 5_000_000,
             "backupCount": 5,

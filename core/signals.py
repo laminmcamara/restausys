@@ -10,41 +10,88 @@ from django.conf import settings
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
-from .models import Order, OrderItem, Attendance
+from .models import Order, OrderItem, Attendance, Restaurant, Menu, Category
 
 # ==============================
 # ✅ ORDER BROADCASTING
 # ==============================
-
 @receiver(post_save, sender=Order)
 def broadcast_order_update(sender, instance, created, update_fields=None, **kwargs):
     """
-    Broadcast order updates to POS dashboard when:
-    - Order is created
-    - Order status changes
+    Broadcast order updates when:
+    - Order created
+    - Status changes
     """
 
-    # Only broadcast on creation or explicit status change
-    if not created:
-        if not update_fields or "status" not in update_fields:
+    if not created and update_fields is not None:
+        if "status" not in update_fields:
             return
 
     channel_layer = get_channel_layer()
     if not channel_layer:
         return
 
-    # Lazy import to avoid circular dependency
-    from .serializers import serialize_order_for_channels
+    from .serializers import OrderSerializer
 
+    order_obj = (
+        Order.objects
+        .select_related("restaurant", "table", "created_by")
+        .prefetch_related(
+        "items",
+        "items__product",
+        "items__modifiers",
+    )
+        .get(pk=instance.pk)
+    )
+
+    # ✅ Force queryset evaluation BEFORE serializer
+    list(order_obj.items.all())
+
+    order_data = OrderSerializer(order_obj).data
+
+    data = {
+        "type": "order_update",
+        "order": order_data,
+    }
+
+    # ✅ Restaurant Dashboard
     async_to_sync(channel_layer.group_send)(
-        "pos_dashboard",
+        f"restaurant_{instance.restaurant_id}",
         {
             "type": "order_update",
-            "order": serialize_order_for_channels(instance),
+            "data": data,
         }
     )
 
+    # ✅ POS Screens
+    async_to_sync(channel_layer.group_send)(
+        f"pos_{instance.restaurant_id}",
+        {
+            "type": "order_status_update",
+            "data": data,
+        }
+    )
 
+    # ✅ Kitchen Screens
+    async_to_sync(channel_layer.group_send)(
+        f"kitchen_{instance.restaurant_id}",
+        {
+            "type": "order_update",
+            "data": data,
+        }
+    )
+
+    # ✅ TABLE SCREEN (Add This Part Here)
+    if instance.table_id:
+        async_to_sync(channel_layer.group_send)(
+            f"table_{instance.table_id}",
+            {
+                "type": "order_update",
+                "data": data,
+            }
+        )
+        
+        
 # ==============================
 # ✅ ORDER ITEM PRICE RECALCULATION
 # ==============================
@@ -114,7 +161,7 @@ def auto_clock_in(sender, request, user, **kwargs):
 
 @receiver(user_logged_out)
 def auto_clock_out(sender, request, user, **kwargs):
-
+    channel_layer = get_channel_layer()
     if not user:
         return
 
@@ -126,3 +173,66 @@ def auto_clock_out(sender, request, user, **kwargs):
     if active_attendance:
         active_attendance.check_out = timezone.now()
         active_attendance.save()
+        
+
+# ✅ PUBLIC PICKUP DISPLAY (LIMITED TO LAST 10)
+
+    preparing = (
+        Order.objects.filter(
+            restaurant_id=user.restaurant_id,
+            status__in=["PLACED", "IN_PROGRESS"]
+        )
+        .order_by("-created_at")[:10]
+        .values_list("id", flat=True)
+    )
+
+    ready = (
+        Order.objects.filter(
+            restaurant_id=user.restaurant_id,
+            status="READY"
+        )
+        .order_by("-created_at")[:10]
+        .values_list("id", flat=True)
+    )
+
+    async_to_sync(channel_layer.group_send)(
+        f"customer_{user.restaurant_id}",
+        {
+            "type": "order_update",
+            "data": {
+                "type": "pickup_update",
+                "now_preparing": list(preparing),
+                "ready": list(ready),
+            }
+        }
+    )
+    
+# ==============================
+# ✅ AUTO CREATE DEFAULT MENU STRUCTURE
+# ==============================
+
+@receiver(post_save, sender=Restaurant)
+def create_default_menu_structure(sender, instance, created, **kwargs):
+    """
+    Automatically create default Menu and Category
+    when a new Restaurant is created.
+    """
+
+    if not created:
+        return
+
+    # Prevent duplicate menu creation
+    if Menu.objects.filter(restaurant=instance).exists():
+        return
+
+    # Create default Menu
+    menu = Menu.objects.create(
+        restaurant=instance,
+        name="Main Menu"
+    )
+
+    # Create default Category
+    Category.objects.create(
+        menu=menu,
+        name="General"
+    )

@@ -8,6 +8,30 @@ body {
     background-color: #f4f6f9;
 }
 
+/* Profile Warning Banner */
+.profile-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border-bottom: 1px solid #ffeeba;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.profile-warning a {
+    background-color: #856404;
+    color: white;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    text-decoration: none;
+}
+
+.profile-warning a:hover {
+    opacity: 0.85;
+}
+
 /* ============================================================
    LAYOUT
 ============================================================ */

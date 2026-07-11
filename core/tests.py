@@ -42,7 +42,7 @@ class KitchenDisplayTests(TestCase):
 
     def test_kitchen_display_orders(self):
         # Create a sample order
-        order = Order.objects.create(
+        order = Order.create_for_table(
             status='in_kitchen'
         )
         response = self.client.get(reverse('kitchen_display'))

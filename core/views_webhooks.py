@@ -31,31 +31,50 @@ def stripe_webhook(request):
     except Exception:
         return HttpResponse(status=400)
 
-    # ✅ Log all incoming intents
+    intent_data = event.get("data", {}).get("object", {})
+
+    # ✅ Log webhook event
     PaymentIntentLog.objects.create(
-        intent_id=event["data"]["object"].get("id"),
+        intent_id=intent_data.get("id"),
         payload=event,
     )
 
-    # ✅ Process successful payment
+    # ===============================
+    # ✅ PAYMENT SUCCEEDED
+    # ===============================
     if event["type"] == "payment_intent.succeeded":
-        intent = event["data"]["object"]
-        order_id = intent["metadata"].get("order_id")
 
-        if not order_id:
+        intent = intent_data
+        order_id = intent.get("metadata", {}).get("order_id")
+        restaurant_id = intent.get("metadata", {}).get("restaurant_id")
+
+        if not order_id or not restaurant_id:
             return HttpResponse(status=200)
 
         try:
             with transaction.atomic():
                 order = Order.objects.select_for_update().get(id=order_id)
 
-                # ✅ Idempotency check
-                if order.status == Order.Status.PAID:
+                # ✅ Multi-tenant check
+                if str(order.restaurant.id) != str(restaurant_id):
+                    return HttpResponse(status=400)
+
+                # ✅ Idempotency
+                if order.payment_status == Order.PaymentStatus.PAID:
                     return HttpResponse(status=200)
 
-                order.status = Order.Status.PAID
-                order.save()
+                # ✅ Amount validation
+                expected_amount = int(order.total * 100)
+                if intent["amount"] != expected_amount:
+                    return HttpResponse(status=400)
 
+                # ✅ Update order
+                order.payment_status = Order.PaymentStatus.PAID
+                order.save(update_fields=["payment_status"])
+
+                order.mark_as_placed()
+
+                # ✅ Update payment record
                 payment, _ = Payment.objects.get_or_create(order=order)
                 payment.status = Payment.Status.PAID
                 payment.stripe_payment_intent = intent["id"]
@@ -65,7 +84,7 @@ def stripe_webhook(request):
         except Order.DoesNotExist:
             return HttpResponse(status=200)
 
-        # ✅ WebSocket notification
+        # ✅ WebSocket notify
         layer = get_channel_layer()
         async_to_sync(layer.group_send)(
             "pos_system",
@@ -73,9 +92,29 @@ def stripe_webhook(request):
                 "type": "send_pos_update",
                 "data": {
                     "event": "order_paid",
-                    "order_id": order_id,
+                    "order_id": str(order_id),
                 },
             },
         )
+
+    # ===============================
+    # ✅ PAYMENT FAILED
+    # ===============================
+    elif event["type"] == "payment_intent.payment_failed":
+
+        intent = intent_data
+        order_id = intent.get("metadata", {}).get("order_id")
+
+        if order_id:
+            try:
+                with transaction.atomic():
+                    order = Order.objects.select_for_update().get(id=order_id)
+
+                    if order.payment_status != Order.PaymentStatus.PAID:
+                        order.payment_status = Order.PaymentStatus.FAILED
+                        order.save(update_fields=["payment_status"])
+
+            except Order.DoesNotExist:
+                pass
 
     return HttpResponse(status=200)

@@ -1,0 +1,16 @@
+<div class="modal">
+    <form 
+        hx-post="{% url 'core:category_create' %}"
+        hx-target="#category-table"
+        hx-swap="outerHTML">
+
+        {% csrf_token %}
+
+        <h3>Add Category</h3>
+
+        <label>Name</label>
+        <input type="text" name="name" required>
+
+        <button type="submit">Save</button>
+    </form>
+</div>

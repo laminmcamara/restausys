@@ -31,29 +31,43 @@ document.addEventListener("DOMContentLoaded", function () {
     const badge = document.getElementById("status-badge");
     const apiUrl = "{% url 'order_status_api' order.id %}";
 
-    let pollingInterval = 5000;  // 5 seconds
+    let pollingInterval = 5000;
     let polling;
 
     function updateBadge(status) {
+
+        badge.dataset.status = status;
         badge.innerText = status;
 
         badge.className = "badge ";
 
         switch (status) {
-            case "PAID":
-                badge.className += "bg-success";
-                stopPolling();
+            case "PLACED":
+                badge.className += "bg-secondary";
                 break;
-            case "PREPARING":
+
+            case "IN_PROGRESS":
                 badge.className += "bg-warning text-dark";
                 break;
+
             case "READY":
                 badge.className += "bg-info text-dark";
                 break;
-            case "CANCELLED":
+
+            case "SERVED":
+                badge.className += "bg-success";
+                break;
+
+            case "COMPLETED":
+                badge.className += "bg-success";
+                stopPolling();
+                break;
+
+            case "CANCELED":
                 badge.className += "bg-danger";
                 stopPolling();
                 break;
+
             default:
                 badge.className += "bg-secondary";
         }
@@ -61,11 +75,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     async function checkStatus() {
         try {
-            const response = await fetch(apiUrl, {
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest"
-                }
-            });
+            const response = await fetch(apiUrl);
 
             if (!response.ok) return;
 
@@ -90,8 +100,9 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    // Start polling only if not already paid
-    if (badge.innerText !== "PAID") {
+    const initialStatus = badge.dataset.status;
+
+    if (!["COMPLETED", "CANCELED"].includes(initialStatus)) {
         startPolling();
     }
 

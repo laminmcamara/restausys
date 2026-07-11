@@ -1,0 +1,15 @@
+<h2>Categories</h2>
+
+<button 
+    hx-get="{% url 'core:category_create' %}"
+    hx-target="#modal"
+    hx-swap="innerHTML"
+    class="btn btn-primary">
+    + Add Category
+</button>
+
+<div id="category-table">
+    {% include "core/partials/category_table.html" %}
+</div>
+
+<div id="modal"></div>

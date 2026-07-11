@@ -31,13 +31,13 @@
 <div>
     {{ item.product.name }} x{{ item.quantity }}
     <br>
-    ${{ item.total_price|floatformat:2 }}
+    ${{ item.final_price|floatformat:2 }}
 </div>
 {% endfor %}
 
 <div class="line"></div>
 
-<p><strong>Total:</strong> ${{ order.total_amount|floatformat:2 }}</p>
+<p><strong>Total:</strong> ${{ order.total|floatformat:2 }}</p>
 <p>Status: {{ order.status }}</p>
 
 <div class="line"></div>
@@ -49,10 +49,13 @@
 <button onclick="window.print()">Print</button>
 
 <script>
-window.onload = function() {
+document.addEventListener("DOMContentLoaded", function () {
     window.print();
-};
-</script>
 
+    window.onafterprint = function () {
+        window.close();
+    };
+});
+</script>
 </body>
 </html>

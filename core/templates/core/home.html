@@ -63,14 +63,19 @@
         </h3>
 
         {% if user.is_authenticated %}
-            <a href="{% url 'core:pos_dashboard' %}"
-               class="bg-orange-500 px-8 py-4 rounded-lg font-semibold hover:bg-orange-600 transition">
-               Go to Dashboard
+            <a href="{% url 'core:pos_dashboard' %}" 
+                class="bg-orange-500 px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition">
+                Go to Dashboard
             </a>
         {% else %}
-            <a href="{% url 'core:login' %}"
-               class="bg-orange-500 px-8 py-4 rounded-lg font-semibold hover:bg-orange-600 transition">
-               Get Started
+            <a href="{% url 'core:register' %}" 
+                class="bg-orange-500 px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition">
+                Start Free 14-Day Trial
+            </a>
+
+            <a href="{% url 'core:login' %}" 
+                class="border border-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-blue-900 transition">
+                Login
             </a>
         {% endif %}
     </div>

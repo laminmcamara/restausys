@@ -3,27 +3,238 @@
 <head>
     <title>{{ restaurant.name }} Menu</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <style>
-        body { font-family: Arial; padding: 20px; }
-        .product { margin-bottom: 15px; }
-        .price { font-weight: bold; }
+        body { 
+            font-family: Arial; 
+            padding: 20px; 
+            max-width: 600px; 
+            margin: auto; 
+        }
+
+        .product { 
+            margin-bottom: 15px; 
+            padding: 10px; 
+            border-bottom: 1px solid #ddd;
+        }
+
+        .price { 
+            font-weight: bold; 
+        }
+
+        button {
+            padding: 6px 12px;
+            margin-top: 5px;
+            cursor: pointer;
+        }
+
+        .cart-box {
+            margin-top: 25px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            background: #f9f9f9;
+        }
+
+        .top-actions {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .flash-update {
+            animation: flashBg 1.2s ease;
+        }
+
+        @keyframes flashBg {
+            0% { background-color: #fef3c7; }
+            100% { background-color: white; }
+        }
     </style>
 </head>
+
 <body>
 
 <h2>{{ restaurant.name }}</h2>
 <h4>Table {{ table.table_number }}</h4>
 
+<div class="top-actions">
+    <button onclick="callWaiter()">Call Waiter</button>
+    <button onclick="viewCart()">View Cart (<span id="cart-count">0</span>)</button>
+</div>
+
 <hr>
 
 {% for product in products %}
+    {% if product.default_variant %}
     <div class="product">
-        <div>{{ product.name }}</div>
-        <div class="price">${{ product.base_price }}</div>
+        <div><strong>{{ product.name }}</strong></div>
+        <div class="price">${{ product.default_variant.price }}</div>
+
+        <button 
+            data-id="{{ product.default_variant.id }}"
+            data-name="{{ product.name }}"
+            data-price="{{ product.default_variant.price }}"
+            onclick="addToCart(this)">
+            Add to Cart
+        </button>
     </div>
+    {% endif %}
 {% empty %}
     <p>No items available.</p>
 {% endfor %}
 
+<div class="cart-box" id="cart-box" style="display:none;">
+    <h4>Your Order</h4>
+    <ul id="cart-items"></ul>
+    <p><strong>Total: $<span id="cart-total">0.00</span></strong></p>
+
+    <button onclick="placeOrder()">Place Order</button>
+</div>
+<script>
+let cart = [];
+
+/* =========================
+   ✅ CART LOGIC
+========================= */
+
+function addToCart(btn) {
+    const id = btn.dataset.id;
+    const name = btn.dataset.name;
+    const price = parseFloat(btn.dataset.price);
+
+    if (!id) {
+        console.error("Invalid variant ID");
+        return;
+    }
+
+    // ✅ Merge duplicate items instead of duplicating
+    const existing = cart.find(item => item.variantId === id);
+
+    if (existing) {
+        existing.qty += 1;
+    } else {
+        cart.push({
+            variantId: id,
+            name: name,
+            price: price,
+            qty: 1
+        });
+    }
+
+    document.getElementById("cart-count").innerText =
+        cart.reduce((sum, item) => sum + item.qty, 0);
+}
+
+function viewCart() {
+    const box = document.getElementById("cart-box");
+    const list = document.getElementById("cart-items");
+    const totalEl = document.getElementById("cart-total");
+
+    box.style.display = "block";
+    list.innerHTML = "";
+
+    let total = 0;
+
+    cart.forEach(item => {
+        const lineTotal = item.price * item.qty;
+        total += lineTotal;
+
+        let li = document.createElement("li");
+        li.innerText = `${item.qty}x ${item.name} - $${lineTotal.toFixed(2)}`;
+        list.appendChild(li);
+    });
+
+    totalEl.innerText = total.toFixed(2);
+}
+
+function placeOrder() {
+
+    if (cart.length === 0) {
+        alert("Your cart is empty.");
+        return;
+    }
+
+    if (!confirm("Place this order?")) {
+        return;
+    }
+
+    fetch("{% url 'create_order_api' %}", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": "{{ csrf_token }}"
+        },
+        body: JSON.stringify({
+            items: cart.map(item => ({
+                variantId: item.variantId,
+                qty: item.qty
+            }))
+        })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error("Order failed");
+        return res.json();
+    })
+    .then(data => {
+        if (data.order_id) {
+            window.location.href = "/order/" + data.order_id + "/status/";
+        } else {
+            alert("Order failed. Please try again.");
+        }
+    })
+    .catch(err => {
+        console.error("Order error:", err);
+        alert("Something went wrong. Please try again.");
+    });
+}
+
+function callWaiter() {
+    fetch("{% url 'call_waiter_api' table.id %}", {
+        method: "POST",
+        headers: {
+            "X-CSRFToken": "{{ csrf_token }}"
+        }
+    })
+    .then(res => res.json())
+    .then(() => {
+        alert("✅ Waiter has been notified.");
+    });
+}
+
+/* =========================
+   ✅ LIVE TABLE WEBSOCKET
+========================= */
+
+const tableId = "{{ table.id }}";
+const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+
+const socket = new WebSocket(
+    protocol + window.location.host + "/ws/table/" + tableId + "/"
+);
+
+socket.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    if (data.type === "order_update") {
+
+        console.log("Live order update received:", data);
+
+        if (data.order) {
+            cart = [];
+            document.getElementById("cart-count").innerText = 0;
+            document.getElementById("cart-box").style.display = "none";
+        }
+
+        document.body.classList.add("flash-update");
+        setTimeout(() => {
+            document.body.classList.remove("flash-update");
+        }, 1200);
+    }
+};
+
+socket.onclose = function() {
+    console.warn("Table WebSocket disconnected.");
+};
+</script>
 </body>
 </html>

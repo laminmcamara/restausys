@@ -74,44 +74,35 @@ class IsStaffOfRestaurant(BasePermission):
 
 
 class IsOwnerOrManager(BasePermission):
-    message = "Only the restaurant owner or a manager can perform this action."
+    message = "Only a manager can perform this action."
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        user = request.user
+
+        if not user or not user.is_authenticated:
             return False
 
-        if request.user.is_superuser:
+        if user.is_superuser:
             return True
 
-        if getattr(request.user, "role", None) == "manager":
-            return True
-
-        if (
-            hasattr(request.user, "restaurant")
-            and request.user.restaurant
-            and request.user.restaurant.owner == request.user
-        ):
-            return True
-
-        return False
+        role = getattr(user, "role", "")
+        return role.strip().lower() == "manager"
 
     def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
+        user = request.user
+
+        if not user or not user.is_authenticated:
             return False
 
-        if request.user.is_superuser:
+        if user.is_superuser:
             return True
 
-        if not hasattr(obj, "restaurant"):
+        role = getattr(user, "role", "")
+        if role.strip().lower() != "manager":
             return False
 
-        if (
-            getattr(request.user, "role", None) == "manager"
-            and request.user.restaurant == obj.restaurant
-        ):
-            return True
+        # ✅ Ensure same restaurant (if object has restaurant field)
+        if hasattr(obj, "restaurant"):
+            return obj.restaurant == user.restaurant
 
-        if obj.restaurant.owner == request.user:
-            return True
-
-        return False
+        return True

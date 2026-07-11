@@ -1,0 +1,105 @@
+<div id="order-summary">
+
+    <!-- ✅ CSRF token for HTMX -->
+    <form id="csrf-form">
+        {% csrf_token %}
+    </form>
+
+    <h2 class="text-xl font-bold mb-4">
+        Order #{{ order.order_number }}
+    </h2>
+
+    <div class="space-y-4">
+
+        {% for item in order.items.all %}
+        <div class="flex justify-between items-center border-b pb-3">
+
+            <!-- LEFT SIDE -->
+            <div>
+                <p class="font-medium">
+                    {{ item.product.name }}
+                </p>
+
+                <div class="flex items-center mt-2 space-x-2">
+
+                    <!-- ✅ Decrease -->
+                    <button
+                        hx-post="{% url 'core:update_quantity' order.id item.id %}"
+                        hx-vals='{"action": "decrease"}'
+                        hx-target="#order-summary"
+                        hx-swap="outerHTML"
+                        hx-include="#csrf-form"
+                        hx-disabled-elt="this"
+                        class="px-2 py-1 bg-gray-200 hover:bg-gray-300 rounded transition"
+                    >
+                        −
+                    </button>
+
+                    <!-- Quantity -->
+                    <span class="font-semibold min-w-[20px] text-center">
+                        {{ item.quantity }}
+                    </span>
+
+                    <!-- ✅ Increase -->
+                    <button
+                        hx-post="{% url 'core:update_quantity' order.id item.id %}"
+                        hx-vals='{"action": "increase"}'
+                        hx-target="#order-summary"
+                        hx-swap="outerHTML"
+                        hx-include="#csrf-form"
+                        hx-disabled-elt="this"
+                        class="px-2 py-1 bg-gray-200 hover:bg-gray-300 rounded transition"
+                    >
+                        +
+                    </button>
+
+                    <!-- ✅ Remove -->
+                    <button
+                        hx-post="{% url 'core:remove_item' order.id item.id %}"
+                        hx-target="#order-summary"
+                        hx-swap="outerHTML"
+                        hx-include="#csrf-form"
+                        hx-disabled-elt="this"
+                        class="text-red-500 hover:text-red-700 text-sm ml-4 transition"
+                    >
+                        Remove
+                    </button>
+
+                </div>
+            </div>
+
+            <!-- RIGHT SIDE -->
+            <div class="font-semibold">
+                ${{ item.final_price|floatformat:2 }}
+            </div>
+
+        </div>
+        {% empty %}
+            <p class="text-gray-500 text-center py-4">
+                No items yet
+            </p>
+        {% endfor %}
+
+    </div>
+
+    <!-- ✅ TOTAL SECTION -->
+    <div class="mt-6 border-t pt-4">
+        <div class="flex justify-between font-bold text-lg">
+            <span>Total</span>
+            <span>
+                ${{ order.total_amount|default:order.total|floatformat:2 }}
+            </span>
+        </div>
+    </div>
+
+</div>
+
+<!-- ✅ Global HTMX CSRF Setup -->
+<script>
+document.body.addEventListener('htmx:configRequest', function(event) {
+    const csrfToken = document.querySelector('#csrf-form input[name=csrfmiddlewaretoken]');
+    if (csrfToken) {
+        event.detail.headers['X-CSRFToken'] = csrfToken.value;
+    }
+});
+</script>

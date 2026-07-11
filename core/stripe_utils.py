@@ -13,7 +13,7 @@ def create_payment_intent(order):
 
     try:
         # ✅ total_price is a property now
-        amount_cents = int(order.total_price * 100)
+        amount_cents = int(order.total * 100)
 
         # ✅ Deterministic idempotency key
         idempotency_key = f"order-{order.id}"

@@ -1,0 +1,85 @@
+{% extends "core/dashboard_base.html" %}
+{% load static %}
+
+{% block title %}Pickup Display{% endblock %}
+
+{% block dashboard_content %}
+<div class="min-h-screen bg-slate-900 text-white p-6">
+
+    <div class="text-center mb-10">
+        <h1 class="text-5xl font-bold tracking-wide">
+            {{ restaurant.name }}
+        </h1>
+        <p class="text-slate-400 mt-2 text-lg">
+            Order Pickup Status
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-10">
+
+        <!-- Preparing -->
+        <div class="bg-yellow-500/10 rounded-2xl p-8">
+            <h2 class="text-3xl font-bold text-yellow-400 mb-6 text-center">
+                Preparing
+            </h2>
+            <div id="preparing-list"
+                 class="grid grid-cols-2 sm:grid-cols-3 gap-6 text-center text-4xl font-bold">
+            </div>
+        </div>
+
+        <!-- Ready -->
+        <div class="bg-green-500/10 rounded-2xl p-8">
+            <h2 class="text-3xl font-bold text-green-400 mb-6 text-center">
+                Ready for Pickup
+            </h2>
+            <div id="ready-list"
+                 class="grid grid-cols-2 sm:grid-cols-3 gap-6 text-center text-4xl font-bold">
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const restaurantId = "{{ restaurant.id }}";
+    const wsScheme = location.protocol === "https:" ? "wss" : "ws";
+
+    const socket = new WebSocket(
+        `${wsScheme}://${window.location.host}/ws/customer/${restaurantId}/`
+    );
+
+    const preparingList = document.getElementById("preparing-list");
+    const readyList = document.getElementById("ready-list");
+
+    socket.onmessage = function (event) {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "pickup_update") {
+            renderOrders(preparingList, data.now_preparing, "yellow");
+            renderOrders(readyList, data.ready, "green");
+        }
+    };
+
+    function renderOrders(container, orders, color) {
+        container.innerHTML = "";
+
+        if (!orders || orders.length === 0) {
+            container.innerHTML =
+                "<div class='col-span-full text-slate-500 text-xl'>—</div>";
+            return;
+        }
+
+        orders.forEach(number => {
+            const div = document.createElement("div");
+            div.className =
+                `bg-${color}-500 text-black rounded-xl py-6 shadow-lg`;
+            div.innerText = "#" + number;
+            container.appendChild(div);
+        });
+    }
+
+});
+</script>
+{% endblock %}

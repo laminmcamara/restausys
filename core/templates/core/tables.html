@@ -38,9 +38,9 @@
         
         {% if t.qr_code %}
           <img src="{{ t.qr_code.url }}" 
-               alt="QR Code for Table {{ t.table_number }}" 
-               class="qr-img w-full rounded-lg cursor-pointer aspect-square object-cover"
-               onclick="openPreview('{{ t.qr_code.url }}')" />
+              alt="QR Code for Table {{ t.table_number }}" 
+              class="qr-img preview-btn w-full rounded-lg cursor-pointer aspect-square object-cover"
+              data-url="{{ t.qr_code.url }}" />
         {% else %}
           <div class="flex items-center justify-center w-full h-full aspect-square bg-slate-50 rounded-lg border-2 border-dashed">
             <p class="text-sm text-slate-500">No QR Code Generated</p>
@@ -51,6 +51,12 @@
       <!-- Card Footer with Actions -->
       <div class="p-4 bg-slate-50/70 border-t border-slate-200/80 rounded-b-xl">
         <div class="flex items-center justify-start gap-2 flex-wrap">
+
+          <a class="btn bg-indigo-500 hover:bg-indigo-600 focus:ring-indigo-400"
+              href="{% url 'core:dashboard_table_open' t.id %}">
+              Open POS
+          </a>
+
           <a class="btn bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500"
              href="{{ t.qr_code.url }}"
              download="table_{{ t.table_number }}_qr.png">
@@ -63,9 +69,10 @@
              Print
           </a>
 
-          <button class="btn bg-red-600 hover:bg-red-700 focus:ring-red-500"
-                  data-regenerate-url="{% url 'core:regenerate-qr' t.id %}"
-                  onclick="regenerateQR(this, {{ t.id }})">
+          <button
+              class="btn bg-red-600 hover:bg-red-700 focus:ring-red-500 regenerate-btn"
+              data-id="{{ t.id }}"
+              data-regenerate-url="{% url 'core:regenerate-qr' t.id %}">
               Regenerate
           </button>
         </div>
@@ -78,9 +85,9 @@
 <!-- ===========================
      QR PREVIEW MODAL
 =========================== -->
-<div id="previewModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 hidden" onclick="closePreview()">
-  <div class="bg-white p-2 rounded-lg shadow-xl" onclick="event.stopPropagation()">
-    <img id="previewImage" class="max-w-md max-h-[80vh] rounded-md" alt="QR Code Preview">
+<div id="previewModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 hidden">
+  <div class="bg-white p-2 rounded-lg shadow-xl">
+      <img id="previewImage" class="max-w-md max-h-[80vh] rounded-md" alt="QR Code Preview">
   </div>
 </div>
 {% endblock %}
@@ -111,96 +118,74 @@
 
 {% block extra_scripts %}
 <script>
+document.addEventListener("DOMContentLoaded", function () {
+
   // --- MODAL LOGIC ---
   const previewModal = document.getElementById('previewModal');
   const previewImage = document.getElementById('previewImage');
 
-  function openPreview(url) {
+  // Open modal when clicking QR image
+  document.addEventListener("click", function (e) {
+    const img = e.target.closest(".preview-btn");
+    if (!img) return;
+
+    const url = img.dataset.url;
+    if (!url) return;
+
     previewImage.src = url;
-    previewModal.classList.remove('hidden');
-  }
+    previewModal.classList.remove("hidden");
+  });
 
-  function closePreview() {
-    previewModal.classList.add('hidden');
-    previewImage.src = ''; // Clear src to stop any loading
-  }
+  // Close modal when clicking outside image
+  previewModal.addEventListener("click", function () {
+    previewModal.classList.add("hidden");
+    previewImage.src = "";
+  });
 
-  // --- API LOGIC ---
+  // Prevent modal closing when clicking image
+  previewImage.addEventListener("click", function (e) {
+    e.stopPropagation();
+  });
 
-  /**
-   * Regenerates the QR code for a specific table.
-   * It reads the URL from a data-attribute on the button for better security and maintainability.
-   * @param {HTMLElement} buttonEl - The button element that was clicked.
-   * @param {number} tableId - The ID of the table to update.
-   */
-  async function regenerateQR(buttonEl, tableId) {
-    const url = buttonEl.dataset.regenerateUrl;
-    if (!url) {
-      console.error('Regenerate URL not found on button.');
-      return;
-    }
-
-    try {
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.success) {
-        const img = document.querySelector(`#table-card-${tableId} .qr-img`);
-        if (img) {
-          // Add a cache-busting query parameter to force the browser to reload the image
-          img.src = data.qr_url + '?v=' + new Date().getTime();
-        }
-        // Optionally, show a success notification here
-      } else {
-        console.error('Failed to regenerate QR code:', data.error);
-        // Optionally, show an error notification here
-      }
-    } catch (error) {
-      console.error('An error occurred during QR code regeneration:', error);
-    }
-  }
-
-  /**
-   * Periodically fetches the status of all tables and updates the UI.
-   */
+  // --- STATUS AUTO REFRESH ---
   async function refreshStatuses() {
-    // This URL should correspond to the name of your API endpoint view in urls.py
-    const statusUrl = "{% url 'core:api-table-status' %}"; 
-    
-    // A map to easily associate status names with their corresponding CSS classes.
+    const statusUrl = "{% url 'core:table-list' %}";
+
     const statusClasses = {
-      available: 'bg-green-100 text-green-800',
-      occupied: 'bg-amber-100 text-amber-800',
-      reserved: 'bg-blue-100 text-blue-800',
+      available: ['bg-green-100', 'text-green-800'],
+      occupied: ['bg-amber-100', 'text-amber-800'],
+      reserved: ['bg-blue-100', 'text-blue-800'],
     };
-    const defaultClasses = 'bg-slate-100 text-slate-800';
+
+    const defaultClasses = ['bg-slate-100', 'text-slate-800'];
 
     try {
       const response = await fetch(statusUrl);
       if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-      
+
       const tables = await response.json();
 
       tables.forEach(table => {
         const badge = document.getElementById(`status-badge-${table.id}`);
-        if (badge) {
-          // Update text content
-          badge.textContent = table.status.charAt(0).toUpperCase() + table.status.slice(1);
-          
-          // Update classes by removing old ones and adding the new one
-          badge.classList.remove(...Object.values(statusClasses), defaultClasses);
-          badge.classList.add(...(statusClasses[table.status] || defaultClasses).split(' '));
-        }
+        if (!badge) return;
+
+        badge.className = "status-badge text-xs font-semibold px-2.5 py-1 rounded-full inline-block";
+
+        badge.textContent =
+          table.status.charAt(0).toUpperCase() + table.status.slice(1);
+
+        const colors = statusClasses[table.status] || defaultClasses;
+        badge.classList.add(...colors);
       });
+
     } catch (error) {
       console.warn("Could not refresh table statuses:", error);
     }
   }
 
-  // --- INITIALIZATION ---
-  // Refresh statuses every 5 seconds
   setInterval(refreshStatuses, 5000);
-  // Also run once immediately when the page has loaded
-  document.addEventListener('DOMContentLoaded', refreshStatuses);
+  refreshStatuses();
+
+});
 </script>
 {% endblock %}

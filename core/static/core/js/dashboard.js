@@ -1,5 +1,5 @@
-// C:\Users\Administrator\restaurant_management\core\static\core\js\pos_dashboard.js
 
+// POS Dashboard
 console.log("POS Dashboard JS Loaded");
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -13,6 +13,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const orderTotal = document.getElementById("order-total");
     const submitOrderBtn = document.getElementById("submit-order");
 
+    // If POS elements do not exist, exit safely
+    if (!categoryContainer || !itemContainer || !orderList || !orderTotal || !submitOrderBtn) {
+        console.warn("POS elements not found on this page.");
+        return;
+    }
+
     // =========================================================================
     // STATE
     // =========================================================================
@@ -25,6 +31,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const CATEGORIES_API = "/api/v1/categories/";
     const MENU_API = "/api/v1/products/";
     const PLACE_ORDER_API = "/api/v1/pos-save-order/";
+
     // =========================================================================
     // CSRF
     // =========================================================================
@@ -42,46 +49,47 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         return cookieValue;
     }
+
     const csrftoken = getCookie("csrftoken");
 
     // =========================================================================
     // MENU RENDERING
     // =========================================================================
     function renderCategories(list) {
-        if (!categoryContainer) return;
-
-        categoryContainer.innerHTML = `
-            <button class="category-btn active" data-id="all">All</button>
-        `;
+        let html = `<button class="category-btn active" data-id="all">All</button>`;
 
         list.forEach(cat => {
-            categoryContainer.innerHTML += `
+            html += `
                 <button class="category-btn" data-id="${cat.id}">
                     ${cat.name}
                 </button>
             `;
         });
+
+        categoryContainer.innerHTML = html;
     }
 
     function renderMenuItems(items) {
-        itemContainer.innerHTML = "";
-
         if (!items.length) {
             itemContainer.innerHTML =
                 `<p class="text-slate-500 text-center py-6">No items available.</p>`;
             return;
         }
 
+        let html = "";
+
         items.forEach(i => {
-            itemContainer.innerHTML += `
+            html += `
                <div
                  class="bg-white rounded-lg shadow p-4 hover:shadow-lg cursor-pointer transition"
                  data-id="${i.id}">
                  <h3 class="text-lg font-bold text-slate-800">${i.name}</h3>
-                 <p class="text-slate-600 mt-1">$${parseFloat(i.price).toFixed(2)}</p>
+                 <p class="text-slate-600 mt-1">$${Number(i.price).toFixed(2)}</p>
                </div>
             `;
         });
+
+        itemContainer.innerHTML = html;
     }
 
     function filterMenu(categoryId) {
@@ -100,8 +108,6 @@ document.addEventListener("DOMContentLoaded", function () {
     // CART
     // =========================================================================
     function updateOrderList() {
-        orderList.innerHTML = "";
-
         if (!cart.length) {
             orderList.innerHTML =
                 `<p class="text-center text-slate-500 py-4">No items added yet.</p>`;
@@ -111,12 +117,13 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         let total = 0;
+        let html = "";
 
         cart.forEach(item => {
             const lineTotal = item.price * item.qty;
             total += lineTotal;
 
-            orderList.innerHTML += `
+            html += `
                 <div class="flex justify-between py-2 border-b">
                     <div>
                         <p class="font-semibold">${item.name}</p>
@@ -132,6 +139,7 @@ document.addEventListener("DOMContentLoaded", function () {
             `;
         });
 
+        orderList.innerHTML = html;
         orderTotal.textContent = total.toFixed(2);
         submitOrderBtn.disabled = false;
     }
@@ -148,7 +156,7 @@ document.addEventListener("DOMContentLoaded", function () {
             cart.push({
                 id: product.id,
                 name: product.name,
-                price: parseFloat(product.price),
+                price: Number(product.price),
                 qty: 1,
                 category: product.category_name || "General"
             });
@@ -158,133 +166,26 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // =========================================================================
-    // ENTERPRISE PRINT CONFIG
+    // PRINTING
     // =========================================================================
-    const PRINT_CONFIG = {
-        restaurantName: "My Restaurant",
-        address: "123 Main Street",
-        phone: "555-123-4567",
-        taxRate: 0.08,
-        logoUrl: "/static/images/logo.png",
-        silentMode: false
-    };
-
     function openPrintWindow(html) {
         const w = window.open("", "_blank", "width=380,height=600");
         if (!w) return;
-
         w.document.write(html);
         w.document.close();
         w.focus();
         w.print();
     }
 
-    function printCustomerReceipt(items, orderId) {
-
-        let subtotal = 0;
-        items.forEach(i => subtotal += i.price * i.qty);
-
-        const tax = subtotal * PRINT_CONFIG.taxRate;
-        const total = subtotal + tax;
-
-        let rows = "";
-        items.forEach(item => {
-            const line = item.price * item.qty;
-            rows += `
-                <tr>
-                    <td>${item.qty}x ${item.name}</td>
-                    <td style="text-align:right">$${line.toFixed(2)}</td>
-                </tr>
-            `;
-        });
-
-        const html = `
-        <html>
-        <head>
-            <style>
-                body { font-family: monospace; width: 80mm; padding:10px; }
-                h2,p { text-align:center; margin:2px 0; }
-                hr { border:none; border-top:1px dashed #000; margin:6px 0; }
-                table { width:100%; font-size:12px; }
-                .right { text-align:right; }
-            </style>
-        </head>
-        <body>
-
-            <h2>${PRINT_CONFIG.restaurantName}</h2>
-            <p>${PRINT_CONFIG.address}</p>
-            <p>${PRINT_CONFIG.phone}</p>
-
-            <hr>
-            <p>Order #${orderId}</p>
-            <p>${new Date().toLocaleString()}</p>
-            <hr>
-
-            <table>${rows}</table>
-
-            <hr>
-            <table>
-                <tr>
-                    <td>Subtotal</td>
-                    <td class="right">$${subtotal.toFixed(2)}</td>
-                </tr>
-                <tr>
-                    <td>Tax (${PRINT_CONFIG.taxRate * 100}%)</td>
-                    <td class="right">$${tax.toFixed(2)}</td>
-                </tr>
-                <tr>
-                    <td><strong>TOTAL</strong></td>
-                    <td class="right"><strong>$${total.toFixed(2)}</strong></td>
-                </tr>
-            </table>
-
-            <hr>
-            <p>Thank you!</p>
-
-        </body>
-        </html>
-        `;
-
-        openPrintWindow(html);
-    }
-
     function printKitchenTicket(items, orderId) {
+        let content = `<html><body style="font-family:monospace;">`;
+        content += `<h3>Kitchen Order #${orderId}</h3><hr>`;
 
-        const grouped = {};
         items.forEach(item => {
-            if (!grouped[item.category]) grouped[item.category] = [];
-            grouped[item.category].push(item);
-        });
-
-        let content = `
-        <html>
-        <head>
-            <style>
-                body { font-family: monospace; width:80mm; padding:10px; }
-                h2 { text-align:center; }
-                hr { border:none; border-top:1px dashed #000; margin:6px 0; }
-                .item { font-size:16px; font-weight:bold; margin:4px 0; }
-                .category { margin-top:8px; font-weight:bold; }
-            </style>
-        </head>
-        <body>
-
-            <h2>KITCHEN ORDER</h2>
-            <p>Order #${orderId}</p>
-            <p>${new Date().toLocaleString()}</p>
-            <hr>
-        `;
-
-        Object.keys(grouped).forEach(cat => {
-            content += `<div class="category">${cat}</div>`;
-            grouped[cat].forEach(item => {
-                content += `<div class="item">${item.qty}x ${item.name}</div>`;
-            });
-            content += `<hr>`;
+            content += `<p><strong>${item.qty}x</strong> ${item.name}</p>`;
         });
 
         content += `</body></html>`;
-
         openPrintWindow(content);
     }
 
@@ -292,7 +193,6 @@ document.addEventListener("DOMContentLoaded", function () {
     // ORDER SUBMIT
     // =========================================================================
     async function submitOrder() {
-
         if (!cart.length) return;
 
         submitOrderBtn.disabled = true;
@@ -301,6 +201,7 @@ document.addEventListener("DOMContentLoaded", function () {
         try {
             const res = await fetch(PLACE_ORDER_API, {
                 method: "POST",
+                credentials: "same-origin",
                 headers: {
                     "Content-Type": "application/json",
                     "X-CSRFToken": csrftoken,
@@ -313,13 +214,9 @@ document.addEventListener("DOMContentLoaded", function () {
             const data = await res.json();
 
             if (data.success) {
-
                 printKitchenTicket(cart, data.order_id);
-                printCustomerReceipt(cart, data.order_id);
-
                 cart = [];
                 updateOrderList();
-
             } else {
                 alert(data.error || "Order failed.");
             }
@@ -332,7 +229,7 @@ document.addEventListener("DOMContentLoaded", function () {
         submitOrderBtn.innerText = "Submit Order";
     }
 
-    submitOrderBtn?.addEventListener("click", submitOrder);
+    submitOrderBtn.addEventListener("click", submitOrder);
 
     // =========================================================================
     // INIT
@@ -340,8 +237,8 @@ document.addEventListener("DOMContentLoaded", function () {
     async function init() {
         try {
             const [catRes, itemRes] = await Promise.all([
-                fetch(CATEGORIES_API),
-                fetch(MENU_API)
+                fetch(CATEGORIES_API, { credentials: "same-origin" }),
+                fetch(MENU_API, { credentials: "same-origin" })
             ]);
 
             const categories = await catRes.json();
@@ -360,33 +257,31 @@ document.addEventListener("DOMContentLoaded", function () {
     // =========================================================================
     // EVENTS
     // =========================================================================
-    categoryContainer?.addEventListener("click", e => {
+    categoryContainer.addEventListener("click", e => {
         if (e.target.classList.contains("category-btn")) {
             filterMenu(e.target.dataset.id);
         }
     });
 
-    itemContainer?.addEventListener("click", e => {
+    itemContainer.addEventListener("click", e => {
         const card = e.target.closest("[data-id]");
-        if (card) {
-            addToCart(parseInt(card.dataset.id));
-        }
+        if (card) addToCart(Number(card.dataset.id));
     });
 
-    orderList?.addEventListener("click", e => {
-        const id = parseInt(e.target.dataset.id);
+    orderList.addEventListener("click", e => {
+        const id = Number(e.target.dataset.id);
 
         if (e.target.classList.contains("change-qty")) {
-            const act = e.target.dataset.act;
             const item = cart.find(i => i.id === id);
             if (!item) return;
 
-            if (act === "inc") item.qty++;
-            if (act === "dec") {
+            if (e.target.dataset.act === "inc") item.qty++;
+            if (e.target.dataset.act === "dec") {
                 item.qty--;
                 if (item.qty <= 0)
                     cart = cart.filter(i => i.id !== id);
             }
+
             updateOrderList();
         }
 

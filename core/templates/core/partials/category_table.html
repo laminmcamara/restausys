@@ -1,0 +1,35 @@
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for category in categories %}
+        <tr id="category-{{ category.id }}">
+            <td>{{ category.name }}</td>
+            <td>
+                <button
+                    hx-get="{% url 'core:category_edit' category.id %}"
+                    hx-target="#modal"
+                    hx-swap="innerHTML">
+                    Edit
+                </button>
+
+                <button
+                    hx-post="{% url 'core:category_delete' category.id %}"
+                    hx-target="#category-table"
+                    hx-swap="outerHTML"
+                    hx-confirm="Are you sure?">
+                    Delete
+                </button>
+            </td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="2">No categories yet.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

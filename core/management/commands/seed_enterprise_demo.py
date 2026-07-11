@@ -161,7 +161,7 @@ class Command(BaseCommand):
 
             table = random.choice(tables)
 
-            order = Order.objects.create(
+            order = Order.create_for_table(
                 restaurant=restaurant,
                 table=table,
                 order_type=Order.OrderType.DINE_IN,

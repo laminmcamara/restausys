@@ -1,17 +1,19 @@
-from django.urls import re_path
+from django.urls import re_path, path
 from . import consumers
 
 websocket_urlpatterns = [
 
-    # Kitchen Display System (KDS)
-    re_path(r"^ws/kds/$", consumers.KitchenDisplayConsumer.as_asgi()),
+    path("ws/restaurant/<int:restaurant_id>/", consumers.RestaurantConsumer.as_asgi()),
+    path("ws/table/<int:table_id>/", consumers.TableConsumer.as_asgi()),
 
-    # Customer Display (requires ?table_id=)
-    re_path(r"^ws/customer_display/$", consumers.CustomerDisplayConsumer.as_asgi()),
+    path("ws/kds/", consumers.KitchenDisplayConsumer.as_asgi()),
+    path("ws/pos/", consumers.POSConsumer.as_asgi()),
+    path("ws/chat/", consumers.ChatConsumer.as_asgi()),
 
-    # POS Terminals
-    re_path(r"^ws/pos/$", consumers.POSConsumer.as_asgi()),
-
-    # Staff Chat
-    re_path(r"^ws/chat/$", consumers.ChatConsumer.as_asgi()),
+    # ✅ Public Customer Display
+    path(
+    "ws/customer/<int:restaurant_id>/",
+    consumers.CustomerDisplayConsumer.as_asgi()
+),
+    
 ]
