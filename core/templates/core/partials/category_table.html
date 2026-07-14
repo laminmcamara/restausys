@@ -1,34 +1,56 @@
-<table>
+<table class="table">
     <thead>
         <tr>
             <th>Name</th>
-            <th>Actions</th>
+            <th>Products</th>
+            <th>Status</th>
+            <th style="text-align:right;">Actions</th>
         </tr>
     </thead>
+
     <tbody>
         {% for category in categories %}
-        <tr id="category-{{ category.id }}">
-            <td>{{ category.name }}</td>
+        <tr>
+            <td><strong>{{ category.name }}</strong></td>
+
+            <td>{{ category.product_count }}</td>
+
             <td>
+                {% if category.is_active %}
+                    <span class="status-badge status-open">Active</span>
+                {% else %}
+                    <span class="status-badge status-closed">Inactive</span>
+                {% endif %}
+            </td>
+
+            <td style="text-align:right;">
+
+                <!-- ✅ Edit -->
                 <button
                     hx-get="{% url 'core:category_edit' category.id %}"
                     hx-target="#modal"
-                    hx-swap="innerHTML">
+                    hx-swap="innerHTML"
+                    class="btn btn-secondary">
                     Edit
                 </button>
 
+                <!-- ✅ Delete -->
                 <button
-                    hx-post="{% url 'core:category_delete' category.id %}"
-                    hx-target="#category-table"
-                    hx-swap="outerHTML"
-                    hx-confirm="Are you sure?">
+                    hx-get="{% url 'core:category_delete' category.id %}"
+                    hx-target="#modal"
+                    hx-swap="innerHTML"
+                    class="btn btn-danger">
                     Delete
                 </button>
+
             </td>
         </tr>
+
         {% empty %}
         <tr>
-            <td colspan="2">No categories yet.</td>
+            <td colspan="4" style="text-align:center; padding:40px;">
+                No categories yet.
+            </td>
         </tr>
         {% endfor %}
     </tbody>

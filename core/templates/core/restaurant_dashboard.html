@@ -1,66 +1,137 @@
 {% extends "core/dashboard_base.html" %}
-{% load static %}
-{% block title %}Restaurant Dashboard — RestaurantSys{% endblock %}
+{% block content %}
 
-{% block dashboard_content %}
-<h1 class="text-2xl font-bold text-gray-800 mb-6">Restaurant Dashboard</h1>
+<h1 class="page-title">Dashboard</h1>
+<p class="page-subtitle">
+    Welcome back. Here’s what’s happening today.
+</p>
 
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-  <div class="bg-white rounded-lg shadow p-6 text-center">
-    <h3 class="text-sm text-gray-500 mb-2">Today’s Orders</h3>
-    <p class="text-3xl font-bold text-indigo-600">{{ today_orders }}</p>
-  </div>
-  <div class="bg-white rounded-lg shadow p-6 text-center">
-    <h3 class="text-sm text-gray-500 mb-2">Today’s Revenue</h3>
-    <p class="text-3xl font-bold text-green-600">${{ today_revenue|floatformat:2 }}</p>
-  </div>
-  <div class="bg-white rounded-lg shadow p-6 text-center">
-    <h3 class="text-sm text-gray-500 mb-2">This Week’s Orders</h3>
-    <p class="text-3xl font-bold text-indigo-600">{{ total_orders }}</p>
-  </div>
-  <div class="bg-white rounded-lg shadow p-6 text-center">
-    <h3 class="text-sm text-gray-500 mb-2">This Week’s Revenue</h3>
-    <p class="text-3xl font-bold text-green-600">${{ total_revenue|floatformat:2 }}</p>
-  </div>
+<!-- ================= KPI GRID ================= -->
+<div class="kpi-grid">
+
+    <!-- TODAY ORDERS -->
+    <div class="kpi-card">
+        <div class="kpi-title">
+            Today’s Orders
+            <div class="kpi-sub">
+                {{ today_label|date:"M d, Y" }}
+            </div>
+        </div>
+
+        <div class="kpi-value">{{ today_orders }}</div>
+
+        <div class="kpi-trend
+            {% if orders_trend_direction == "up" %}up
+            {% elif orders_trend_direction == "down" %}down
+            {% else %}neutral
+            {% endif %}">
+
+            {% if orders_trend is not None %}
+                {% if orders_trend_direction == "up" %}
+                    ↑ {{ orders_trend }}% vs yesterday
+                {% elif orders_trend_direction == "down" %}
+                    ↓ {{ orders_trend }}% vs yesterday
+                {% else %}
+                    0% vs yesterday
+                {% endif %}
+            {% else %}
+                No previous data
+            {% endif %}
+        </div>
+    </div>
+
+
+    <!-- TODAY REVENUE -->
+    <div class="kpi-card">
+        <div class="kpi-title">
+            Today’s Revenue
+            <div class="kpi-sub">
+                Compared to {{ yesterday_label|date:"M d" }}
+            </div>
+        </div>
+
+        <div class="kpi-value">
+            {{ currency }} {{ today_revenue|floatformat:2 }}
+        </div>
+
+        <div class="kpi-trend
+            {% if revenue_trend_direction == "up" %}up
+            {% elif revenue_trend_direction == "down" %}down
+            {% else %}neutral
+            {% endif %}">
+
+            {% if revenue_trend is not None %}
+                {% if revenue_trend_direction == "up" %}
+                    ↑ {{ revenue_trend }}% vs yesterday
+                {% elif revenue_trend_direction == "down" %}
+                    ↓ {{ revenue_trend }}% vs yesterday
+                {% else %}
+                    0% vs yesterday
+                {% endif %}
+            {% else %}
+                No previous data
+            {% endif %}
+        </div>
+    </div>
+
+
+    <!-- WEEKLY ORDERS -->
+    <div class="kpi-card">
+        <div class="kpi-title">
+            Weekly Orders
+            <div class="kpi-sub">
+                Since {{ week_start|date:"M d" }}
+            </div>
+        </div>
+
+        <div class="kpi-value">{{ this_week_orders }}</div>
+
+        <div class="kpi-trend
+            {% if trend_direction == "up" %}up
+            {% elif trend_direction == "down" %}down
+            {% else %}neutral
+            {% endif %}">
+
+            {% if weekly_trend is not None %}
+                {% if trend_direction == "up" %}
+                    ↑ {{ weekly_trend }}% vs last week
+                {% elif trend_direction == "down" %}
+                    ↓ {{ weekly_trend }}% vs last week
+                {% else %}
+                    0% vs last week
+                {% endif %}
+            {% else %}
+                No previous data
+            {% endif %}
+        </div>
+    </div>
+
+
+    <!-- MONTHLY REVENUE -->
+    <div class="kpi-card">
+        <div class="kpi-title">
+            Monthly Revenue
+            <div class="kpi-sub">
+                Since {{ month_start|date:"M 1" }}
+            </div>
+        </div>
+
+        <div class="kpi-value">
+            {{ currency }}{{ monthly_revenue|floatformat:2 }}
+        </div>
+
+        <div class="kpi-trend neutral">
+            This month total
+        </div>
+    </div>
+
 </div>
 
-<div class="bg-white rounded-lg shadow p-6 mb-6">
-  <h3 class="text-lg font-semibold mb-2">Revenue This Week</h3>
-  <canvas id="salesChart"></canvas>
+<!-- ================= CHART ================= -->
+<div class="card section-card">
+    <div class="card-header">Revenue Overview</div>
+    <canvas id="salesChart"></canvas>
 </div>
 
-<div class="bg-white rounded-lg shadow p-6">
-  <h3 class="text-lg font-semibold mb-3">Top 5 Selling Items</h3>
-  <ul class="divide-y divide-gray-200">
-    {% for item in top_items %}
-      <li class="py-2 flex justify-between">
-        <span>{{ item.menu_item__name }}</span>
-        <span class="text-gray-700">{{ item.total_qty }} sold</span>
-      </li>
-    {% empty %}
-      <li class="py-2 text-gray-500">No items sold this week.</li>
-    {% endfor %}
-  </ul>
-</div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-const ctx = document.getElementById("salesChart").getContext("2d");
-new Chart(ctx, {
-  type: "line",
-  data: {
-    labels: {{ chart_labels|safe }},
-    datasets: [{
-      label: "Weekly Revenue ($)",
-      data: {{ chart_data|safe }},
-      borderColor: "rgba(79,70,229,1)",
-      backgroundColor: "rgba(79,70,229,0.1)",
-      borderWidth: 2,
-      tension: 0.35,
-      fill: true
-    }]
-  },
-  options: { responsive: true, scales: { y: { beginAtZero: true } } }
-});
-</script>
 {% endblock %}

@@ -50,10 +50,17 @@ class InventoryItemSerializer(serializers.ModelSerializer):
 # ==============================================================================
 
 class TableSerializer(serializers.ModelSerializer):
+    has_active_session = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = Table
-        fields = ["id", "restaurant", "table_number", "capacity", "status"]
-
+        fields = [
+            "id",
+            "table_number",
+            "capacity",
+            "qr_code",
+            "has_active_session",
+        ]
 
 # ==============================================================================
 # Menu System Serializers
@@ -272,3 +279,5 @@ class ProductVariantSerializer(serializers.ModelSerializer):
             "price",
             "is_default",
         ]
+
+

@@ -1,0 +1,263 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>
+        {% if page_title %}
+            {{ page_title }}
+        {% else %}
+            Dashboard
+        {% endif %}
+        — BestPOS Pro
+    </title>
+
+    <!-- Google Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    
+</head>
+
+<body class="bg-gray-100 font-[Poppins] text-gray-800 min-h-screen">
+
+<div class="flex min-h-screen">
+
+    <!-- ============================================================
+        SIDEBAR
+    ============================================================ -->
+    <aside id="sidebar" class="w-64 bg-blue-950 text-blue-100 flex flex-col transition-all duration-300">
+
+        <!-- Brand -->
+        <div class="p-6 border-b border-blue-900 flex justify-between items-center">
+            <div>
+                <a href="{% url 'core:pos_dashboard' %}"
+                class="text-xl font-bold text-white">
+                    BestPOS <span class="text-orange-500">Pro</span>
+                </a>
+                <p class="text-xs text-blue-300 mt-1">
+                    Smart Restaurant System
+                </p>
+            </div>
+            <button id="sidebarToggle" class="text-blue-300 hover:text-white">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+        </div>
+
+        <!-- Navigation -->
+        <nav class="flex-1 p-4 overflow-y-auto">
+
+        <!-- ================= OPERATIONS ================= -->
+            <p class="text-xs uppercase text-blue-400 mb-3 tracking-wider">
+                Operations
+            </p>
+      
+            <div class="grid grid-cols-2 gap-3 mb-6">
+      
+              <!-- POS -->
+              <a href="{% url 'core:pos_dashboard' %}"
+                 class="relative group bg-blue-900/40 hover:bg-orange-500 transition rounded-xl p-4 flex flex-col items-center text-center">
+      
+                  <i class="bi bi-display text-2xl mb-2 group-hover:text-white"></i>
+                  <span class="text-xs font-medium group-hover:text-white">POS</span>
+      
+                  <span hx-get="{% url 'core:orders_badge_count' %}"
+                        hx-trigger="load, every 10s"
+                        hx-swap="outerHTML"
+                        class="absolute top-2 right-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                      0
+                  </span>
+              </a>
+              
+              {% comment %}
+              <!-- Takeout -->
+              <!-- <a href="{% url 'core:pos_screen' %}"
+                 class="group bg-blue-900/40 hover:bg-orange-500 transition rounded-xl p-4 flex flex-col items-center text-center">
+                  <i class="bi bi-bag text-2xl mb-2 group-hover:text-white"></i>
+                  <span class="text-xs font-medium group-hover:text-white">Takeout</span>
+              </a> -->
+              {% endcomment %}
+
+              <!-- Tables -->
+              <a href="{% url 'core:table_overview' %}"
+                 class="group bg-blue-900/40 hover:bg-orange-500 transition rounded-xl p-4 flex flex-col items-center text-center">
+                  <i class="bi bi-grid text-2xl mb-2 group-hover:text-white"></i>
+                  <span class="text-xs font-medium group-hover:text-white">Tables</span>
+              </a>
+      
+              <!-- Orders -->
+              <a href="{% url 'core:orders' %}"
+                 class="relative group bg-blue-900/40 hover:bg-orange-500 transition rounded-xl p-4 flex flex-col items-center text-center">
+                  <i class="bi bi-receipt text-2xl mb-2 group-hover:text-white"></i>
+                  <span class="text-xs font-medium group-hover:text-white">Orders</span>
+      
+                  <span hx-get="{% url 'core:kitchen_queue_count' %}"
+                        hx-trigger="load, every 10s"
+                        hx-swap="outerHTML"
+                        class="absolute top-2 right-2 bg-yellow-500 text-black text-xs px-2 py-0.5 rounded-full">
+                      0
+                  </span>
+              </a>
+              
+              <!-- Kitchen -->
+              <a href="{% url 'core:kitchen_display' %}"
+                 class="group bg-blue-900/40 hover:bg-orange-500 transition rounded-xl p-4 flex flex-col items-center text-center">
+                  <i class="bi bi-fire text-2xl mb-2 group-hover:text-white"></i>
+                  <span class="text-xs font-medium group-hover:text-white">Kitchen</span>
+              </a>
+      
+              <!-- Customer -->
+              <a href="{% url 'core:customer_display_shortcut' %}"
+                 class="group bg-blue-900/40 hover:bg-orange-500 transition rounded-xl p-4 flex flex-col items-center text-center">
+                  <i class="bi bi-tv text-2xl mb-2 group-hover:text-white"></i>
+                  <span class="text-xs font-medium group-hover:text-white">Customer</span>
+              </a>
+      
+          </div>
+      
+          {% for section in dashboard_sections %}
+          <p class="text-xs uppercase text-blue-400 mb-3 tracking-wider">
+          {{ section.title }}
+          </p>
+
+          <div class="grid grid-cols-2 gap-3 mb-6">
+          {% for item in section.items %}
+              <a href="{% url item.url %}"
+                class="{{ item.color }} transition rounded-xl p-4 text-center text-white">
+                  <i class="bi {{ item.icon }} text-2xl mb-2"></i>
+                <span class="text-xs font-medium">{{ item.name }}</span>
+              </a>
+          {% endfor %}
+          </div>
+{% endfor %}
+          
+          
+      </nav>
+
+        <div class="p-4 border-t border-blue-900 text-xs text-blue-400">
+            © {% now "Y" %} BestPOS Pro
+        </div>
+    </aside>
+
+    <!-- ============================================================
+         MAIN
+    ============================================================ -->
+    <div class="flex-1 flex flex-col">
+
+        <!-- Top Bar -->
+        <header class="bg-white shadow-sm px-8 py-4 flex justify-between items-center">
+
+            <div class="flex items-center gap-4">
+                <button id="mobileSidebarToggle" class="md:hidden text-xl">
+                    <i class="bi bi-list"></i>
+                </button>
+
+                <div>
+                    <h1 class="text-xl font-semibold">
+                        {% if page_title %}{{ page_title }}{% else %}Dashboard{% endif %}
+                    </h1>
+                    {% if subtitle %}
+                        <p class="text-sm text-gray-500">{{ subtitle }}</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Right Section -->
+            <div class="flex items-center gap-6">
+
+                <!-- Notifications -->
+                <div class="relative">
+                    <button class="text-xl">
+                        <i class="bi bi-bell"></i>
+                    </button>
+                    <span class="absolute -top-1 -right-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                        3
+                    </span>
+                </div>
+
+                <!-- Restaurant Selector -->
+                <select class="border rounded-lg px-3 py-1 text-sm">
+                    <option>Main Branch</option>
+                    <option>Branch 2</option>
+                </select>
+
+                <!-- User Info -->
+                <div class="text-right">
+                    <p class="text-sm font-medium">
+                        {{ request.user.get_full_name|default:request.user.username }}
+                    </p>
+                    <p class="text-xs text-gray-500">
+                        {{ request.user.email }}
+                    </p>
+                </div>
+
+                <form method="post" action="{% url 'core:logout' %}">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition">
+                        Logout
+                    </button>
+                </form>
+
+            </div>
+
+        </header>
+
+        <main class="flex-1 p-8">
+            {% block dashboard_content %}{% endblock %}
+        </main>
+
+    </div>
+</div>
+
+<!-- Scripts -->
+<script>
+const sidebarToggle = document.getElementById("sidebarToggle");
+const sidebar = document.getElementById("sidebar");
+
+if (sidebarToggle && sidebar) {
+    sidebarToggle.addEventListener("click", function() {
+        sidebar.classList.toggle("w-64");
+        sidebar.classList.toggle("w-20");
+    });
+}
+</script>
+
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<script>
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    document.body.addEventListener('htmx:configRequest', function (event) {
+        event.detail.headers['X-CSRFToken'] = getCookie('csrftoken');
+    });
+</script>
+
+<audio id="new-order-sound"
+        src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
+        preload="auto">
+</audio>
+{% block extra_scripts %}{% endblock %}
+
+</body>
+</html>

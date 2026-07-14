@@ -104,7 +104,7 @@ def generate_daily_report(restaurant):
 
     orders = Order.objects.filter(
         restaurant=restaurant,
-        Order.PaymentStatus.PAID,   ✅
+        payment_status=Order.PaymentStatus.PAID,   
         created_at__date=today,
     )
 
@@ -137,7 +137,7 @@ def calculate_period_summary(restaurant, days):
 
     orders = Order.objects.filter(
         restaurant=restaurant,
-        Order.PaymentStatus.PAID,
+        payment_status=Order.PaymentStatus.PAID,
         created_at__date__gte=date_from,
     )
 
@@ -148,3 +148,34 @@ def calculate_period_summary(restaurant, days):
         "total_orders": total_orders,
         "total_revenue": float(total_revenue),
     }
+    
+CURRENCY_SYMBOLS = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "CAD": "$",
+    "AUD": "$",
+    "HKD": "HK$",
+    "TRY": "₺",
+    "NGN": "₦",
+    "GMD": "D",
+    "INR": "₹",
+    "JPY": "¥",
+    "CNY": "¥",
+    "ZAR": "R",
+    "AED": "د.إ",
+    "SAR": "﷼",
+    "SEK": "kr",
+    "NOK": "kr",
+    "DKK": "kr",
+    "CHF": "CHF",
+    "SGD": "S$",
+    "BRL": "R$",
+    "MXN": "$",
+    "KES": "KSh",
+    "RWF": "FRw",
+}
+
+def format_currency(amount, currency_code="USD"):
+    symbol = CURRENCY_SYMBOLS.get(currency_code, "")
+    return f"{symbol}{amount:,.2f}"

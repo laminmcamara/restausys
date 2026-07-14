@@ -1,0 +1,138 @@
+{% extends "core/dashboard_base.html" %}
+{% load static %}
+
+{% block content %}
+
+<div class="card">
+
+    <!-- Header -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div>
+            <div class="card-header">Categories</div>
+            <div class="card-muted">Organize your menu sections</div>
+        </div>
+
+        <a href="{% url 'core:category_add' %}" class="btn btn-primary">
+            + Add Category
+        </a>
+    </div>
+
+    <!-- Table -->
+    <table class="table">
+        <thead>
+            <tr>
+                <th style="width:40px;">☰</th>
+                <th>Name</th>
+                <th>Products</th>
+                <th>Status</th>
+                <th style="text-align:right;">Actions</th>
+            </tr>
+        </thead>
+
+        <tbody id="sortable-categories">
+            {% for category in categories %}
+            <tr data-id="{{ category.id }}">
+                <td style="cursor:grab;">☰</td>
+
+                <td>
+                    <strong>{{ category.name }}</strong>
+                </td>
+
+                <td>
+                    {{ category.product_count }}
+                </td>
+
+                <td>
+                    {% if category.is_active %}
+                        <span class="status-badge status-open">Active</span>
+                    {% else %}
+                        <span class="status-badge status-closed">Inactive</span>
+                    {% endif %}
+                </td>
+
+                <td style="text-align:right;">
+                    <a href="{% url 'core:category_edit' category.id %}" class="btn btn-secondary">
+                        Edit
+                    </a>
+
+                    <a href="{% url 'core:category_delete' category.id %}" class="btn btn-danger">
+                        Delete
+                    </a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" style="text-align:center; padding:40px;">
+                    <div style="opacity:0.6;">
+                        No categories yet.
+                        <a href="{% url 'core:category_add' %}">
+                            Create your first category
+                        </a>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</div>
+
+<!-- SortableJS -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const tableBody = document.getElementById("sortable-categories");
+
+    if (!tableBody) return;
+
+    new Sortable(tableBody, {
+        animation: 150,
+        ghostClass: "sortable-ghost",
+
+        onEnd: function () {
+
+            let order = [];
+
+            document.querySelectorAll("#sortable-categories tr").forEach((row, index) => {
+                order.push({
+                    id: row.dataset.id,
+                    position: index
+                });
+            });
+
+            fetch("{% url 'core:update_category_order' %}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": "{{ csrf_token }}"
+                },
+                body: JSON.stringify(order)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error("Failed to update order");
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log("Order updated successfully");
+            })
+            .catch(error => {
+                console.error("Error:", error);
+                alert("Failed to save order. Please refresh.");
+            });
+        }
+    });
+
+});
+</script>
+
+<style>
+.sortable-ghost {
+    opacity: 0.4;
+}
+</style>
+
+{% endblock %}

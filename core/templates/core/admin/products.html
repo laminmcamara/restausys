@@ -1,247 +1,80 @@
 {% extends "core/dashboard_base.html" %}
-{% block dashboard_content %}
+{% load currency_tags %}
 
-<div class="max-w-7xl mx-auto">
+{% block content %}
+
+<div class="card">
 
     <!-- Header -->
-    <div class="flex justify-between items-center mb-8">
-        <h2 class="text-3xl font-bold text-gray-800">
-            Manage Products
-        </h2>
-        <input type="text"
-               placeholder="Search products..."
-               class="w-64 px-4 py-2 border rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-    </div>
-
-    <!-- Create Product Card -->
-    <div class="bg-white rounded-2xl shadow-md p-6 mb-10">
-        <h3 class="text-lg font-semibold mb-4">Create New Product</h3>
-
-        <form class="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-            <div>
-                <label class="block text-sm font-medium mb-1">Name</label>
-                <input type="text"
-                       class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div>
+            <div class="card-header">Products</div>
+            <div class="card-muted">
+                Manage your restaurant menu items
             </div>
-
-            <div>
-                <label class="block text-sm font-medium mb-1">Category</label>
-                <select class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    <option>Select category</option>
-                </select>
-            </div>
-
-            <div class="md:col-span-2">
-                <label class="block text-sm font-medium mb-1">Description</label>
-                <textarea rows="3"
-                          class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
-            </div>
-
-            <div>
-                <label class="block text-sm font-medium mb-1">Base Price</label>
-                <input type="number"
-                       class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
-            </div>
-
-            <div class="flex items-center mt-6">
-                <input type="checkbox" class="mr-2">
-                <span class="text-sm">Available for sale</span>
-            </div>
-
-            <div class="md:col-span-2">
-                <button type="submit"
-                        class="bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700 transition shadow">
-                    Create Product
-                </button>
-            </div>
-
-        </form>
-    </div>
-
-    <!-- Product List -->
-    <div>
-        <h3 class="text-lg font-semibold mb-4">Product List</h3>
-
-        <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-
-            <!-- Example Product Card -->
-            <div class="bg-white rounded-2xl shadow-md p-6 hover:shadow-lg transition">
-
-                <div class="flex justify-between items-start mb-3">
-                    <h4 class="text-lg font-semibold">Test Pizza</h4>
-                    <span class="text-sm bg-green-100 text-green-700 px-3 py-1 rounded-full">
-                        Available
-                    </span>
-                </div>
-
-                <p class="text-gray-500 text-sm mb-4">
-                    Delicious oven baked pizza
-                </p>
-
-                <div class="text-xl font-bold text-blue-600 mb-4">
-                    $12.49
-                </div>
-
-                <div class="flex gap-3">
-                    <button class="flex-1 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg text-sm">
-                        Edit
-                    </button>
-                    <button class="flex-1 bg-red-100 hover:bg-red-200 text-red-600 px-3 py-2 rounded-lg text-sm">
-                        Delete
-                    </button>
-                </div>
-
-            </div>
-
         </div>
+
+        <a href="{% url 'core:product_add' %}" class="btn btn-primary">
+            + Add Product
+        </a>
     </div>
+
+    <!-- Product Table -->
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Category</th>
+                <th>Price</th>
+                <th>Status</th>
+                <th style="text-align:right;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for product in products %}
+            <tr>
+                <td>
+                    <strong>{{ product.name }}</strong>
+                </td>
+
+                <td>
+                    {{ product.category.name }}
+                </td>
+
+                <td>
+                    {{ product.price|currency:request.restaurant.currency }}
+                </td>
+
+                <td>
+                    {% if product.is_available %}
+                        <span class="status-badge status-open">Available</span>
+                    {% else %}
+                        <span class="status-badge status-closed">Unavailable</span>
+                    {% endif %}
+                </td>
+
+                <td style="text-align:right;">
+                    <a href="{% url 'edit_product' product.id %}" class="btn btn-secondary">
+                        Edit
+                    </a>
+
+                    <a href="{% url 'delete_product' product.id %}" class="btn btn-danger">
+                        Delete
+                    </a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" style="text-align:center; padding:30px;">
+                    <div class="card-muted">
+                        No products added yet.
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 
 </div>
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-const apiUrl = "/api/v1/manager/products/";
-const productList = document.getElementById("productList");
-const form = document.getElementById("productForm");
-const searchInput = document.getElementById("searchInput");
-
-// ✅ CSRF
-function getCSRFToken() {
-    return document.querySelector('[name=csrfmiddlewaretoken]').value;
-}
-
-// ✅ Load products
-async function loadProducts(search="") {
-    let url = apiUrl;
-
-    if (search) {
-        url += `?search=${search}`;
-    }
-
-    const response = await fetch(url);
-    const products = await response.json();
-
-    productList.innerHTML = "";
-
-    products.forEach(product => {
-        const item = document.createElement("div");
-        item.style.border = "1px solid #ddd";
-        item.style.padding = "10px";
-        item.style.marginBottom = "10px";
-
-        item.innerHTML = `
-            <input type="text" value="${product.name}" id="name-${product.id}">
-            <input type="number" step="0.01" value="${product.base_price}" id="price-${product.id}">
-            
-            <button onclick="updateProduct('${product.id}')">💾 Save</button>
-            <button onclick="toggleAvailability('${product.id}', ${product.is_available})">
-                ${product.is_available ? "🟢 Available" : "🔴 Unavailable"}
-            </button>
-            <button onclick="deleteProduct('${product.id}')">🗑 Delete</button>
-        `;
-
-        productList.appendChild(item);
-    });
-}
-
-// ✅ Create product
-form.addEventListener("submit", async function(e) {
-    e.preventDefault();
-
-    const formData = new FormData(form);
-
-    if (!formData.get("is_available")) {
-        formData.set("is_available", false);
-    }
-
-    const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-            "X-CSRFToken": getCSRFToken()
-        },
-        body: formData
-    });
-
-    if (response.ok) {
-        form.reset();
-        loadProducts();
-    } else {
-        const error = await response.json();
-        alert("Error: " + JSON.stringify(error));
-    }
-});
-
-// ✅ Update product (inline edit)
-async function updateProduct(id) {
-    const name = document.getElementById(`name-${id}`).value;
-    const price = document.getElementById(`price-${id}`).value;
-
-    const response = await fetch(apiUrl + id + "/", {
-        method: "PATCH",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCSRFToken()
-        },
-        body: JSON.stringify({
-            name: name,
-            base_price: price
-        })
-    });
-
-    if (response.ok) {
-        loadProducts();
-    } else {
-        alert("Update failed");
-    }
-}
-
-// ✅ Toggle availability
-async function toggleAvailability(id, currentStatus) {
-    const response = await fetch(apiUrl + id + "/", {
-        method: "PATCH",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCSRFToken()
-        },
-        body: JSON.stringify({
-            is_available: !currentStatus
-        })
-    });
-
-    if (response.ok) {
-        loadProducts();
-    } else {
-        alert("Toggle failed");
-    }
-}
-
-// ✅ Delete product
-async function deleteProduct(id) {
-    if (!confirm("Are you sure?")) return;
-
-    const response = await fetch(apiUrl + id + "/", {
-        method: "DELETE",
-        headers: {
-            "X-CSRFToken": getCSRFToken()
-        }
-    });
-
-    if (response.ok) {
-        loadProducts();
-    } else {
-        alert("Delete failed");
-    }
-}
-
-// ✅ Search
-searchInput.addEventListener("input", function() {
-    loadProducts(this.value);
-});
-
-// ✅ Initial load
-loadProducts();
-</script>
 
 {% endblock %}

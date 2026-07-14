@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
-from .models import CustomUser, Shift, Order, OrderItem, InventoryItem, Product
+from .models import CustomUser, Shift, Order, OrderItem, InventoryItem, Product, Category
 from django.contrib.auth import get_user_model
 
 

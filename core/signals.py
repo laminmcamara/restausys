@@ -214,8 +214,8 @@ def auto_clock_out(sender, request, user, **kwargs):
 @receiver(post_save, sender=Restaurant)
 def create_default_menu_structure(sender, instance, created, **kwargs):
     """
-    Automatically create default Menu and Category
-    when a new Restaurant is created.
+    Automatically create default Menu and professional
+    Category structure when a new Restaurant is created.
     """
 
     if not created:
@@ -225,14 +225,26 @@ def create_default_menu_structure(sender, instance, created, **kwargs):
     if Menu.objects.filter(restaurant=instance).exists():
         return
 
-    # Create default Menu
+    # ✅ Create default Menu
     menu = Menu.objects.create(
         restaurant=instance,
         name="Main Menu"
     )
 
-    # Create default Category
-    Category.objects.create(
-        menu=menu,
-        name="General"
-    )
+    # ✅ Professional default categories
+    default_categories = [
+        "General",
+        "Drinks",
+        "Starters",
+        "Mains",
+        "Desserts",
+        "Specials",
+    ]
+
+    for index, name in enumerate(default_categories):
+        Category.objects.create(
+            menu=menu,
+            name=name,
+            display_order=index,
+            is_active=True
+        )

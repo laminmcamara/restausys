@@ -12,7 +12,10 @@
   </p>
 {% endblock %}
 
-{% block dashboard_content %}
+{% block content %}
+<p class="text-red-600 text-lg">
+  Tables count: {{ tables|length }}
+</p>
 <div class="space-y-6">
   <div id="table-grid" class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-5">
     {% for t in tables %}
@@ -21,18 +24,25 @@
       <!-- Card Header -->
       <div class="p-4 border-b border-slate-200/80">
         <h3 class="font-bold text-lg text-slate-800">Table {{ t.table_number }}</h3>
-        <p class="text-sm text-slate-500">{{ t.seats }} Seats</p>
+        <p class="text-sm text-slate-500">{{ t.capacity }} Seats</p>
       </div>
 
       <!-- Card Body -->
       <div class="p-4 space-y-4 flex-grow">
         <div>
-          <span id="status-badge-{{ t.id }}" class="status-badge text-xs font-semibold px-2.5 py-1 rounded-full inline-block
-            {% if t.status == 'available' %}bg-green-100 text-green-800
-            {% elif t.status == 'occupied' %}bg-amber-100 text-amber-800
-            {% elif t.status == 'reserved' %}bg-blue-100 text-blue-800
-            {% else %}bg-slate-100 text-slate-800{% endif %}">
-            {{ t.status|capfirst }}
+          <span id="status-badge-{{ t.id }}"
+                class="status-badge text-xs font-semibold px-2.5 py-1 rounded-full inline-block
+                {% if t.has_active_session %}
+                    bg-amber-100 text-amber-800
+                {% else %}
+                    bg-green-100 text-green-800
+                {% endif %}">
+                
+                {% if t.has_active_session %}
+                    Occupied
+                {% else %}
+                    Available
+                {% endif %}
           </span>
         </div>
         
@@ -48,23 +58,32 @@
         {% endif %}
       </div>
 
-      <!-- Card Footer with Actions -->
+      <!-- Card Footer -->
       <div class="p-4 bg-slate-50/70 border-t border-slate-200/80 rounded-b-xl">
         <div class="flex items-center justify-start gap-2 flex-wrap">
 
+          {% if t.has_active_session %}
+          <a class="btn bg-rose-600 hover:bg-rose-700 focus:ring-rose-500"
+            href="{% url 'core:dashboard_table_close' t.active_session_id %}">
+            Close Table
+          </a>
+          {% else %}
           <a class="btn bg-indigo-500 hover:bg-indigo-600 focus:ring-indigo-400"
               href="{% url 'core:dashboard_table_open' t.id %}">
-              Open POS
+               Open POS
           </a>
+          {% endif %}
 
+          {% if t.qr_code %}
           <a class="btn bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500"
              href="{{ t.qr_code.url }}"
              download="table_{{ t.table_number }}_qr.png">
              Download
           </a>
+          {% endif %}
 
           <a class="btn bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500"
-             href="{% url 'core:print-qr' t.id %}"
+             href="{% url 'core:print_qr' t.id %}"
              target="_blank">
              Print
           </a>
@@ -72,7 +91,7 @@
           <button
               class="btn bg-red-600 hover:bg-red-700 focus:ring-red-500 regenerate-btn"
               data-id="{{ t.id }}"
-              data-regenerate-url="{% url 'core:regenerate-qr' t.id %}">
+              data-regenerate-url="{% url 'core:regenerate_qr' t.id %}">
               Regenerate
           </button>
         </div>
@@ -92,9 +111,9 @@
 </div>
 {% endblock %}
 
+
 {% block extra_head %}
 <style>
-  /* Base styles for action buttons in the card footer */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -116,15 +135,17 @@
 </style>
 {% endblock %}
 
+
 {% block extra_scripts %}
 <script>
 document.addEventListener("DOMContentLoaded", function () {
 
-  // --- MODAL LOGIC ---
+  // ==========================
+  // QR MODAL
+  // ==========================
   const previewModal = document.getElementById('previewModal');
   const previewImage = document.getElementById('previewImage');
 
-  // Open modal when clicking QR image
   document.addEventListener("click", function (e) {
     const img = e.target.closest(".preview-btn");
     if (!img) return;
@@ -136,28 +157,20 @@ document.addEventListener("DOMContentLoaded", function () {
     previewModal.classList.remove("hidden");
   });
 
-  // Close modal when clicking outside image
   previewModal.addEventListener("click", function () {
     previewModal.classList.add("hidden");
     previewImage.src = "";
   });
 
-  // Prevent modal closing when clicking image
   previewImage.addEventListener("click", function (e) {
     e.stopPropagation();
   });
 
-  // --- STATUS AUTO REFRESH ---
+  // ==========================
+  // STATUS AUTO REFRESH
+  // ==========================
   async function refreshStatuses() {
     const statusUrl = "{% url 'core:table-list' %}";
-
-    const statusClasses = {
-      available: ['bg-green-100', 'text-green-800'],
-      occupied: ['bg-amber-100', 'text-amber-800'],
-      reserved: ['bg-blue-100', 'text-blue-800'],
-    };
-
-    const defaultClasses = ['bg-slate-100', 'text-slate-800'];
 
     try {
       const response = await fetch(statusUrl);
@@ -171,11 +184,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
         badge.className = "status-badge text-xs font-semibold px-2.5 py-1 rounded-full inline-block";
 
-        badge.textContent =
-          table.status.charAt(0).toUpperCase() + table.status.slice(1);
-
-        const colors = statusClasses[table.status] || defaultClasses;
-        badge.classList.add(...colors);
+        if (table.has_active_session) {
+          badge.textContent = "Occupied";
+          badge.classList.add("bg-amber-100", "text-amber-800");
+        } else {
+          badge.textContent = "Available";
+          badge.classList.add("bg-green-100", "text-green-800");
+        }
       });
 
     } catch (error) {
@@ -185,7 +200,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
   setInterval(refreshStatuses, 5000);
   refreshStatuses();
-
 });
 </script>
 {% endblock %}

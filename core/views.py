@@ -28,8 +28,12 @@ from django.views.generic import (
     
 )
 
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Prefetch, Exists, OuterRef, Subquery 
+from django.db.models.functions import TruncDate, TruncHour
+
 from decimal import Decimal
+from django.conf import settings
+import random
 
 from openpyxl import Workbook
 
@@ -61,7 +65,7 @@ from functools import wraps
 # CORE IMPORTS
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu
 
 )
 from .serializers import (
@@ -208,46 +212,99 @@ class DashboardRouterView(LoginRequiredMixin, View):
 
 class PosDashboardView(LoginRequiredMixin, TemplateView):
     template_name = "core/pos/dashboard.html"
-    
-    # ==========================================================
-    # ✅ CONTEXT DATA
-    # ==========================================================
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
         user = self.request.user
         restaurant = user.restaurant
-        
+
+        # ✅ DEMO MODE (ONLY IN DEVELOPMENT)
+        use_demo_data = settings.DEBUG
+
+        # ------------------------------------------------------
+        # ✅ BASIC INFO
+        # ------------------------------------------------------
         context["profile_incomplete"] = not restaurant.profile_complete
-    
+        context["currency"] = restaurant.currency
+        context["current_year"] = timezone.now().year
+
+        # ------------------------------------------------------
+        # ✅ ACTIVE CATEGORIES
+        # ------------------------------------------------------
         context["categories"] = Category.objects.filter(
             menu__restaurant=restaurant,
             is_active=True
         ).order_by("name")
 
-        # ======================================================
+        # ------------------------------------------------------
+        # ✅ DATE CALCULATIONS (SaaS-safe)
+        # ------------------------------------------------------
+        today = timezone.localdate()
+
+        start_of_this_week = today - timedelta(days=today.weekday())
+        start_of_last_week = start_of_this_week - timedelta(days=7)
+        end_of_last_week = start_of_this_week - timedelta(days=1)
+
+        # ------------------------------------------------------
         # ✅ SALES DATA
-        # ======================================================
+        # ------------------------------------------------------
         payments = Payment.objects.filter(
             order__restaurant=restaurant,
             status=Payment.Status.PAID
         )
 
+        total_sales = payments.aggregate(total=Sum("amount"))["total"] or 0
+
+        # Weekly order comparison
+        this_week_orders = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date__gte=start_of_this_week
+        ).count()
+
+        last_week_orders = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date__gte=start_of_last_week,
+            created_at__date__lte=end_of_last_week
+        ).count()
+
+        # ✅ Clean Comparison Logic
+        if last_week_orders == 0:
+            weekly_trend = None
+            trend_direction = None
+        else:
+            difference = this_week_orders - last_week_orders
+            weekly_trend = round(
+                (difference / last_week_orders) * 100,
+                1
+            )
+
+            if difference > 0:
+                trend_direction = "up"
+            elif difference < 0:
+                trend_direction = "down"
+            else:
+                trend_direction = "neutral"
+
+        # ------------------------------------------------------
+        # ✅ UPDATE CONTEXT
+        # ------------------------------------------------------
         context.update({
-            "total_sales": payments.aggregate(total=Sum("amount"))["total"] or 0,
+            "total_sales": total_sales,
             "payment_count": payments.count(),
             "recent_payments": payments.order_by("-created_at")[:5],
-            "current_year": timezone.now().year,
+            "this_week_orders": this_week_orders,
+            "last_week_orders": last_week_orders,
+            "weekly_trend": weekly_trend,
+            "trend_direction": trend_direction,
+            "demo_mode": use_demo_data,
         })
-  
-        return context
 
-        # ======================================================
+        # ------------------------------------------------------
         # ✅ ROLE-DRIVEN DASHBOARD SECTIONS
-        # ======================================================
-
+        # ------------------------------------------------------
         sections = []
 
-        # ---- CASHIER SECTION ----
         if user.is_cashier:
             sections.append({
                 "title": "Cashier",
@@ -267,19 +324,18 @@ class PosDashboardView(LoginRequiredMixin, TemplateView):
                 ],
             })
 
-        # ---- MANAGEMENT SECTION ----
         if user.is_manager or user.is_superuser:
             sections.append({
                 "title": "Management",
                 "items": [
                     {
-                        "name": "Manager",
+                        "name": "Manager Dashboard",
                         "url": "core:manager_dashboard",
                         "icon": "bi-briefcase",
                         "color": "bg-blue-900/40 hover:bg-orange-500",
                     },
                     {
-                        "name": "Restaurant",
+                        "name": "Restaurant Dashboard",
                         "url": "core:restaurant_dashboard",
                         "icon": "bi-building",
                         "color": "bg-blue-900/40 hover:bg-orange-500",
@@ -291,22 +347,22 @@ class PosDashboardView(LoginRequiredMixin, TemplateView):
                         "color": "bg-blue-900/40 hover:bg-orange-500",
                     },
                     {
-                        "name": "Admin",
+                        "name": "Admin Panel",
                         "url": "admin:index",
                         "icon": "bi-shield-lock",
                         "color": "bg-blue-900/40 hover:bg-orange-500",
                     },
                     {
-                    "name": "Daily Reports",
-                    "url": "core:daily_reports",
-                    "icon": "bi-calendar",
-                    "color": "bg-indigo-600 hover:bg-indigo-700"
+                        "name": "Daily Reports",
+                        "url": "core:daily_reports",
+                        "icon": "bi-calendar",
+                        "color": "bg-indigo-600 hover:bg-indigo-700",
                     },
                     {
-                    "name": "Analytics",
-                    "url": "core:analytics",
-                    "icon": "bi-graph-up",
-                    "color": "bg-emerald-600 hover:bg-emerald-700"
+                        "name": "Analytics",
+                        "url": "core:analytics",
+                        "icon": "bi-graph-up",
+                        "color": "bg-emerald-600 hover:bg-emerald-700",
                     },
                 ],
             })
@@ -314,7 +370,6 @@ class PosDashboardView(LoginRequiredMixin, TemplateView):
         context["dashboard_sections"] = sections
 
         return context
-    
     
 class ProcessPosOrderView(LoginRequiredMixin, View):
 
@@ -1094,9 +1149,29 @@ def table_order_status(request, order_id):
 # ======================== API VIEWSETS ================================
 # ======================================================================
 class TableViewSet(TenantModelViewSet):
-    queryset = Table.objects.all()
     serializer_class = TableSerializer
     permission_classes = [IsAuthenticated, IsStaffOfRestaurant]
+
+    def get_queryset(self):
+        restaurant = self.request.user.restaurant
+
+        active_session_subquery = TableSession.objects.filter(
+            table=OuterRef("pk"),
+            is_active=True
+        )
+
+        return (
+            Table.objects
+            .filter(restaurant=restaurant)
+            .annotate(
+                has_active_session=Exists(active_session_subquery),
+                active_session_id=Subquery(
+                    active_session_subquery.values("id")[:1]
+                )
+            )
+            .order_by("table_number")
+        )
+
 
 class OrderViewSet(TenantModelViewSet):
     queryset = Order.objects.all()
@@ -1143,6 +1218,20 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
             is_available=True
         ).select_related("category").prefetch_related("modifier_groups__options")
         
+        
+class ProductCreateView(LoginRequiredMixin, CreateView):
+    model = Product
+    form_class = ProductForm
+    template_name = "core/admin/product_form.html"
+    success_url = reverse_lazy("core:manage_products")
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+
+        # ✅ Pass restaurant into form
+        kwargs["restaurant"] = self.request.user.restaurant
+
+        return kwargs
 
 class ManagerProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -1518,32 +1607,224 @@ class ManagerDashboardView(LoginRequiredMixin, TemplateView):
 
         return context
     
+
 class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
     template_name = "core/restaurant_dashboard.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        active_orders = Order.objects.filter(
-            restaurant=self.request.user.restaurant,
-            status=Order.Status.PLACED
-        )
+        restaurant = self.request.user.restaurant
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
 
+        # ================= ACTIVE ORDERS =================
+        active_orders_count = Order.objects.filter(
+            restaurant=restaurant,
+            status=Order.Status.PLACED
+        ).count()
+
+        # ================= TABLES IN USE =================
         tables_in_use = Table.objects.filter(
-            restaurant=self.request.user.restaurant,
+            restaurant=restaurant,
             status__in=[
                 Table.Status.OCCUPIED,
                 Table.Status.RESERVED,
             ]
         ).count()
 
+        # ================= TODAY =================
+        today_qs = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date=today
+        )
+
+        today_orders = today_qs.count()
+        today_revenue = today_qs.aggregate(
+            total=Sum("total_amount")
+        )["total"] or 0
+
+        # ================= YESTERDAY =================
+        yesterday_qs = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date=yesterday
+        )
+
+        yesterday_orders = yesterday_qs.count()
+        yesterday_revenue = yesterday_qs.aggregate(
+            total=Sum("total_amount")
+        )["total"] or 0
+         
+         
+        
+        # ================= WEEK =================
+        week_start = today - timedelta(days=today.weekday())
+        last_week_start = week_start - timedelta(days=7)
+        last_week_end = week_start - timedelta(days=1)
+
+        # This Week
+        this_week_qs = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date__gte=week_start
+        )
+
+        this_week_orders = this_week_qs.count()
+        this_week_revenue = this_week_qs.aggregate(
+            total=Sum("total_amount")
+        )["total"] or 0
+
+
+        # Last Week
+        last_week_qs = Order.objects.filter(
+            restaurant=restaurant,
+        created_at__date__range=(last_week_start, last_week_end)
+        )
+
+        last_week_orders = last_week_qs.count()
+        last_week_revenue = last_week_qs.aggregate(
+            total=Sum("total_amount")
+        )["total"] or 0
+
+        # ================= MONTH =================
+        month_start = today.replace(day=1)
+
+        monthly_revenue = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date__gte=month_start
+        ).aggregate(
+            total=Sum("total_amount")
+        )["total"] or 0
+
+        # ================= TREND CALCULATION =================
+        def calculate_trend(current, previous):
+            if previous == 0:
+                return None, None
+
+            raw_percentage = round(((current - previous) / previous) * 100, 1)
+
+            if raw_percentage > 0:
+                direction = "up"
+            elif raw_percentage < 0:
+                direction = "down"
+            else:
+                direction = "neutral"
+
+            return abs(raw_percentage), direction
+
+        orders_trend, orders_trend_direction = calculate_trend(
+            today_orders, yesterday_orders
+        )
+
+        revenue_trend, revenue_trend_direction = calculate_trend(
+            today_revenue, yesterday_revenue
+        )
+
+        weekly_trend, trend_direction = calculate_trend(
+            this_week_orders, last_week_orders
+        )
+        
+        weekly_trend, trend_direction = calculate_trend(
+            this_week_orders,
+            last_week_orders
+        )
+
+        weekly_revenue_trend, weekly_revenue_trend_direction = calculate_trend(
+            this_week_revenue,
+            last_week_revenue
+        )
+
+        # ================= DAILY REVENUE (LAST 7 DAYS) =================
+        seven_days_ago = today - timedelta(days=6)
+
+        daily_qs = (
+            Order.objects
+            .filter(
+                restaurant=restaurant,
+                created_at__date__gte=seven_days_ago
+            )
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(total=Sum("total_amount"))
+            .order_by("day")
+        )
+
+        daily_data_map = {
+            item["day"]: float(item["total"] or 0)
+            for item in daily_qs
+        }
+
+        daily_labels = []
+        daily_revenue_data = []
+
+        for i in range(7):
+            day = seven_days_ago + timedelta(days=i)
+            daily_labels.append(day.strftime("%b %d"))
+            daily_revenue_data.append(daily_data_map.get(day, 0))
+
+        # ================= HOURLY REVENUE (TODAY) =================
+        hourly_qs = (
+            Order.objects
+            .filter(
+                restaurant=restaurant,
+                created_at__date=today
+            )
+            .annotate(hour=TruncHour("created_at"))
+            .values("hour")
+            .annotate(total=Sum("total_amount"))
+            .order_by("hour")
+        )
+
+        hourly_data_map = {
+            item["hour"].hour: float(item["total"] or 0)
+            for item in hourly_qs
+        }
+
+        hourly_labels = []
+        hourly_revenue_data = []
+
+        for hour in range(24):
+            hourly_labels.append(f"{hour:02d}:00")
+            hourly_revenue_data.append(hourly_data_map.get(hour, 0))
+
+        # ================= CONTEXT =================
         context.update({
-            "active_orders_count": active_orders.count(),
+            "active_orders_count": active_orders_count,
             "tables_in_use": tables_in_use,
+
+            "today_orders": today_orders,
+            "today_revenue": today_revenue,
+            "today_label": today,
+            "yesterday_label": yesterday,
+
+            "orders_trend": orders_trend,
+            "orders_trend_direction": orders_trend_direction,
+            "revenue_trend": revenue_trend,
+            "revenue_trend_direction": revenue_trend_direction,
+
+            "this_week_orders": this_week_orders,
+            "weekly_trend": weekly_trend,
+            "trend_direction": trend_direction,
+            "week_start": week_start,
+            
+            "this_week_revenue": this_week_revenue,
+            "weekly_revenue_trend": weekly_revenue_trend,
+            "weekly_revenue_trend_direction": weekly_revenue_trend_direction,
+
+            "monthly_revenue": monthly_revenue,
+            "month_start": month_start,
+
+            "currency": restaurant.currency,
+
+            "daily_labels": json.dumps(daily_labels),
+            "daily_revenue_data": json.dumps(daily_revenue_data),
+            "hourly_labels": json.dumps(hourly_labels),
+            "hourly_revenue_data": json.dumps(hourly_revenue_data),
         })
 
         return context
     
+
+
 class TableOverviewView(LoginRequiredMixin, TemplateView):
     template_name = "core/tables.html"
 
@@ -1552,21 +1833,49 @@ class TableOverviewView(LoginRequiredMixin, TemplateView):
 
         restaurant = self.request.user.restaurant
 
-        tables = Table.objects.filter(
-            restaurant=restaurant
-        ).order_by("table_number")
+        # --------------------------------------------------
+        # ✅ Subquery for active session
+        # --------------------------------------------------
+        active_session_subquery = TableSession.objects.filter(
+            table=OuterRef("pk"),
+            is_active=True
+        )
 
-        active_orders = Order.objects.filter(
-            restaurant=restaurant,
-            table__isnull=False,
-        ).exclude(
-            status__in=[
-                Order.Status.COMPLETED,
-                Order.Status.CANCELED,
-            ],
-            payment_status=Order.PaymentStatus.PAID
-        ).select_related("table")
+        # --------------------------------------------------
+        # ✅ Tables with session annotations
+        # --------------------------------------------------
+        tables = (
+            Table.objects
+            .filter(restaurant=restaurant)
+            .annotate(
+                has_active_session=Exists(active_session_subquery),
+                active_session_id=Subquery(
+                    active_session_subquery.values("id")[:1]
+                )
+            )
+            .order_by("table_number")
+        )
 
+        # --------------------------------------------------
+        # ✅ Active Orders (for dashboard use)
+        # --------------------------------------------------
+        active_orders = (
+            Order.objects
+            .filter(
+                restaurant=restaurant,
+                table__isnull=False,
+                status__in=[
+                    Order.Status.PLACED,
+                    Order.Status.IN_PROGRESS,
+                    Order.Status.READY,
+                ]
+            )
+            .select_related("table")
+        )
+
+        # --------------------------------------------------
+        # ✅ Context
+        # --------------------------------------------------
         context.update({
             "tables": tables,
             "active_orders": active_orders,
@@ -1574,9 +1883,64 @@ class TableOverviewView(LoginRequiredMixin, TemplateView):
 
         return context
     
+@login_required
+def dashboard_table_open(request, table_id):
+    restaurant = request.user.restaurant
 
+    table = get_object_or_404(
+        Table,
+        id=table_id,
+        restaurant=restaurant
+    )
 
+    # ✅ Check for existing active session
+    active_session = table.sessions.filter(is_active=True).first()
 
+    if active_session:
+        # Already open → redirect to POS
+        return redirect("core:dashboard_session_detail", active_session.id)
+
+    # ✅ Create new session
+    session = TableSession.objects.create(
+        table=table,
+        opened_at=timezone.now(),
+        opened_by=request.user,
+        is_active=True
+    )
+
+    messages.success(request, f"Table {table.table_number} opened successfully.")
+
+    return redirect("core:dashboard_session_detail", session.id)
+
+@login_required
+def dashboard_table_close(request, session_id):
+    restaurant = request.user.restaurant
+
+    session = get_object_or_404(
+        TableSession,
+        id=session_id,
+        table__restaurant=restaurant,
+        is_active=True
+    )
+
+    # ✅ Prevent closing if unpaid orders exist
+    unpaid_orders = session.orders.exclude(
+        status=Order.Status.PAID
+    ).exists()
+
+    if unpaid_orders:
+        messages.error(request, "Cannot close table. There are unpaid orders.")
+        return redirect("core:dashboard_session_detail", session.id)
+
+    # ✅ Close session
+    session.is_active = False
+    session.closed_at = timezone.now()
+    session.save()
+
+    messages.success(request, f"Table {session.table.table_number} closed successfully.")
+
+    return redirect("core:dashboard_tables")
+    
 # ======================================================================
 # AUTHENTICATION
 # ======================================================================
@@ -1951,39 +2315,67 @@ def public_display(request, restaurant_id):
         {"restaurant": restaurant}
     )
 
-class CategoryListView(LoginRequiredMixin, TemplateView):
-    template_name = "core/category_list.html"
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context["categories"] = Category.objects.filter(
-            menu__restaurant=self.request.user.restaurant
-        ).order_by("display_order", "name")
-        return context
-        
-class CategoryCreateView(LoginRequiredMixin, View):
+class CategoryCreateView(LoginRequiredMixin, CreateView):
+    model = Category
+    fields = ["name", "description", "display_order"]
+    template_name = "core/partials/category_form.html"
 
-    def get(self, request):
-        return render(request, "core/partials/category_form.html")
+    def form_valid(self, form):
+        menu = Menu.objects.filter(
+            restaurant=self.request.user.restaurant
+        ).first()
 
-    def post(self, request):
-        Category.objects.create(
-            name=request.POST.get("name"),
-            menu=request.user.restaurant.menu
+        if not menu:
+            return HttpResponseBadRequest("No menu found.")
+
+        form.instance.menu = menu
+        form.save()
+
+        # ✅ Return updated table instead of redirect
+        categories = (
+            Category.objects
+            .filter(menu__restaurant=self.request.user.restaurant)
+            .annotate(product_count=Count("products"))
+            .order_by("display_order", "name")
         )
 
-        categories = Category.objects.filter(
-            menu__restaurant=request.user.restaurant
+        response = render(
+            self.request,
+            "core/partials/category_table.html",
+            {"categories": categories}
         )
 
-        return render(request, "core/partials/category_table.html", {
-            "categories": categories
-        })
+        # ✅ Tell HTMX to replace the table
+        response["HX-Target"] = "#category-table"
+        response["HX-Swap"] = "innerHTML"
+
+        return response
+
+    def form_invalid(self, form):
+        return render(
+            self.request,
+            "core/partials/category_form.html",
+            {"form": form}
+        )
+    
+class CategoryListView(LoginRequiredMixin, ListView):
+    model = Category
+    template_name = "dashboard/categories.html"
+    context_object_name = "categories"
+
+    def get_queryset(self):
+        return (
+            Category.objects
+            .filter(menu__restaurant=self.request.user.restaurant)
+            .annotate(product_count=Count("products"))
+            .order_by("display_order", "name")
+        )
     
 class CategoryUpdateView(LoginRequiredMixin, UpdateView):
     model = Category
-    fields = ["name", "description", "display_order"]
-    template_name = "core/dashboard/category_form.html"
+    fields = ["name", "description", "display_order", "is_active"]
+    template_name = "core/partials/category_form.html"
     success_url = reverse_lazy("core:category_list")
 
     def get_queryset(self):
@@ -2000,8 +2392,34 @@ class CategoryDeleteView(LoginRequiredMixin, DeleteView):
         return Category.objects.filter(
             menu__restaurant=self.request.user.restaurant
         )
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+
+        if self.object.product_set.exists():
+            return HttpResponseBadRequest(
+                "Cannot delete category with products."
+            )
+
+        return super().delete(request, *args, **kwargs)
+    
         
-        
+class UpdateCategoryOrderView(LoginRequiredMixin, View):
+
+    def post(self, request):
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return HttpResponseBadRequest("Invalid JSON")
+
+        with transaction.atomic():
+            for item in data:
+                Category.objects.filter(
+                    id=item.get("id"),
+                    menu__restaurant=request.user.restaurant
+                ).update(display_order=item.get("position", 0))
+
+        return JsonResponse({"status": "ok"})
         
 
 

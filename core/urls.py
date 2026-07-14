@@ -18,6 +18,8 @@ from .views import (
     pos_view,
     ProcessPosOrderView,
     PosDataView,
+    ProductCreateView,
+    ProductCreateView,
     DashboardRouterView,
 
     # Tables
@@ -31,6 +33,7 @@ from .views import (
     CategoryCreateView,
     CategoryUpdateView,
     CategoryDeleteView,
+    UpdateCategoryOrderView,
 
     # Products
     ProductViewSet,
@@ -97,6 +100,9 @@ from .views import (
     # Subscription
     register_restaurant,
     subscription_expired,
+    
+    dashboard_table_open,
+    dashboard_table_close,
 )
 
 app_name = "core"
@@ -271,25 +277,39 @@ urlpatterns = [
     path("analytics/", AnalyticsView.as_view(), name="analytics"),
     path("api/analytics/", AnalyticsAPIView.as_view(), name="analytics_api"),
 
-    # ========================================================
-    # CATEGORY MANAGEMENT (Class-Based Only ✅)
-    # ========================================================
+# ==============================
+    # ✅ CATEGORY MANAGEMENT
+    # ==============================
 
-    path("dashboard/categories/",
-         CategoryListView.as_view(),
-         name="category_list"),
+    path(
+        "dashboard/categories/",
+        CategoryListView.as_view(),
+        name="category_list"
+    ),
 
-    path("dashboard/categories/add/",
-         CategoryCreateView.as_view(),
-         name="category_add"),
+    path(
+        "dashboard/categories/add/",
+        CategoryCreateView.as_view(),
+        name="category_add"
+    ),
 
-    path("dashboard/categories/<uuid:pk>/edit/",
-         CategoryUpdateView.as_view(),
-         name="category_edit"),
+    path(
+        "dashboard/categories/<uuid:pk>/edit/",
+        CategoryUpdateView.as_view(),
+        name="category_edit"
+    ),
 
-    path("dashboard/categories/<uuid:pk>/delete/",
-         CategoryDeleteView.as_view(),
-         name="category_delete"),
+    path(
+        "dashboard/categories/<uuid:pk>/delete/",
+        CategoryDeleteView.as_view(),
+        name="category_delete"
+    ),
+
+    path(
+        "dashboard/categories/reorder/",
+        UpdateCategoryOrderView.as_view(),
+        name="update_category_order"
+    ),
 
     # ========================================================
     # PRODUCTS
@@ -364,4 +384,21 @@ urlpatterns = [
     path("api/v1/", include(router.urls)),
     
     path("dashboard/", DashboardRouterView.as_view(), name="dashboard"),
+    
+    path("dashboard/products/add/",
+     ProductCreateView.as_view(),
+     name="product_add"),
+    
+    path(
+        "dashboard/tables/<int:table_id>/open/",
+        dashboard_table_open,
+        name="dashboard_table_open"
+    ),
+
+    path(
+        "dashboard/sessions/<int:session_id>/close/",
+        dashboard_table_close,
+        name="dashboard_table_close"
+    ),
+
 ]

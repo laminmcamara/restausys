@@ -1,15 +1,35 @@
-<h2>Categories</h2>
+{% extends "core/dashboard_base.html" %}
+{% load static %}
 
-<button 
-    hx-get="{% url 'core:category_create' %}"
-    hx-target="#modal"
-    hx-swap="innerHTML"
-    class="btn btn-primary">
-    + Add Category
-</button>
+{% block content %}
 
-<div id="category-table">
-    {% include "core/partials/category_table.html" %}
+<div class="card">
+
+    <!-- Header -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">Categories</h2>
+            <div class="card-muted">Organize your menu sections</div>
+        </div>
+
+        <!-- ✅ Correct URL name -->
+        <button 
+            hx-get="{% url 'core:category_add' %}"
+            hx-target="#modal"
+            hx-swap="innerHTML"
+            class="btn btn-primary">
+            + Add Category
+        </button>
+    </div>
+
+    <!-- ✅ Category Table Container -->
+    <div id="category-table">
+        {% include "core/partials/category_table.html" %}
+    </div>
+
 </div>
 
+<!-- ✅ Modal Container -->
 <div id="modal"></div>
+
+{% endblock %}

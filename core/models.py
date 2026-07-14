@@ -328,7 +328,35 @@ class Restaurant(TimeStampedModel):
         OPEN = 'OPEN', 'Open'
         CLOSED = 'CLOSED', 'Closed'
         HOLIDAY = 'HOLIDAY', 'Holiday Hours'
+    
+    CURRENCY_CHOICES = [
+        ("USD", "US Dollar ($)"),
+        ("EUR", "Euro (€)"),
+        ("GBP", "British Pound (£)"),
+        ("CAD", "Canadian Dollar ($)"),
+        ("AUD", "Australian Dollar ($)"),
+        ("HKD", "Hong Kong Dollar (HK$)"),
+        ("TRY", "Turkish Lira (₺)"),
+        ("NGN", "Nigerian Naira (₦)"),
+        ("GMD", "Gambian Dalasi (D)"),
+        ("INR", "Indian Rupee (₹)"),
+        ("JPY", "Japanese Yen (¥)"),
+        ("CNY", "Chinese Yuan (¥)"),
+        ("ZAR", "South African Rand (R)"),
+        ("AED", "UAE Dirham (د.إ)"),
+        ("SAR", "Saudi Riyal (﷼)"),
+        ("SEK", "Swedish Krona (kr)"),
+        ("NOK", "Norwegian Krone (kr)"),
+        ("DKK", "Danish Krone (kr)"),
+        ("CHF", "Swiss Franc (CHF)"),
+        ("SGD", "Singapore Dollar (S$)"),
+        ("BRL", "Brazilian Real (R$)"),
+        ("MXN", "Mexican Peso ($)"),
+        ("KES", "Kenyan Shilling (KSh)"),
+        ("RWF", "Rwandan Franc (FRw)"),
+    ]
 
+    
     company = models.ForeignKey("core.Company", on_delete=models.CASCADE, related_name='restaurants')
     name = models.CharField(max_length=100)
     address_line_1 = models.CharField(max_length=255, blank=True)
@@ -454,6 +482,16 @@ class Table(models.Model):
         filename = f"qr_table_{safe_label}_{self.id}.png"
         self.qr_code.save(filename, File(buffer), save=False)
         buffer.close()
+        
+    @property
+    def current_status(self):
+        active_session = self.sessions.filter(is_active=True).exists()
+
+        if active_session:
+            return self.Status.OCCUPIED
+
+        return self.Status.AVAILABLE    
+    
 
 class TableSection(models.Model):
     table = models.ForeignKey(

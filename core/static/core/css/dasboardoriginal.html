@@ -1,0 +1,346 @@
+/* ============================================================
+   GLOBAL
+============================================================ */
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #f4f6f9;
+}
+
+/* Profile Warning Banner */
+.profile-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border-bottom: 1px solid #ffeeba;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.profile-warning a {
+    background-color: #856404;
+    color: white;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    text-decoration: none;
+}
+
+.profile-warning a:hover {
+    opacity: 0.85;
+}
+
+/* ============================================================
+   LAYOUT
+============================================================ */
+
+.pos-container {
+    padding: 20px;
+}
+
+.pos-header {
+    margin-bottom: 20px;
+}
+
+.pos-main {
+    display: flex;
+    gap: 20px;
+}
+
+/* ============================================================
+   ORDER PANEL (LEFT)
+============================================================ */
+
+.order-panel {
+    width: 40%;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+.order-items-container {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.order-items-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.order-items-table th,
+.order-items-table td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+    font-size: 14px;
+}
+
+.order-summary {
+    margin-top: 15px;
+    font-size: 15px;
+}
+
+.order-summary div {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+}
+
+/* ============================================================
+   MENU PANEL (RIGHT)
+============================================================ */
+
+.menu-panel {
+    width: 60%;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+.category-filters {
+    margin-bottom: 15px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.category-btn {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid #ccc;
+    background: #f8f9fa;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.category-btn:hover {
+    background: #e2e6ea;
+}
+
+.menu-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+}
+
+.menu-item {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #eee;
+}
+
+.menu-item:hover {
+    background: #d4edda;
+    transform: translateY(-2px);
+}
+
+/* ============================================================
+   BUTTONS
+============================================================ */
+
+.btn {
+    padding: 10px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background: #218838;
+}
+
+
+
+
+
+
+
+body {
+    margin: 0;
+    font-family: "Inter", system-ui, sans-serif;
+    background-color: #f5f7fa;
+    color: #1f2937;
+}
+
+.app-container {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 240px;
+    background: #ffffff;
+    border-right: 1px solid #e5e7eb;
+    padding: 20px;
+}
+
+.sidebar-header h2 {
+    margin: 0 0 30px 0;
+    font-size: 18px;
+}
+
+.sidebar-nav a {
+    display: block;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: #374151;
+    font-weight: 500;
+}
+
+.sidebar-nav a:hover {
+    background: #f3f4f6;
+}
+
+/* Main */
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Topbar */
+.topbar {
+    background: #ffffff;
+    padding: 15px 25px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Badges */
+.status-badge,
+.currency-badge {
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 10px;
+}
+
+.status-open {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.status-closed {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.status-holiday {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.currency-badge {
+    background: #e0f2fe;
+    color: #0369a1;
+}
+
+/* Content */
+.content {
+    padding: 30px;
+}
+
+
+/* Cards */
+.card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.card-header {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 15px;
+}
+
+.card-muted {
+    color: #6b7280;
+    font-size: 14px;
+}
+
+/* Buttons */
+.btn {
+    display: inline-block;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+}
+
+.btn-primary {
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.btn-primary:hover {
+    background: #1d4ed8;
+}
+
+.btn-secondary {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.btn-danger {
+    background: #dc2626;
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #b91c1c;
+}
+
+/* Tables */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th {
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    padding: 10px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.table td {
+    padding: 12px 10px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.table tr:hover {
+    background: #f9fafb;
+}
