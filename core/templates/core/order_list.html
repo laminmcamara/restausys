@@ -4,94 +4,130 @@
 {% block title %}Orders{% endblock %}
 
 {% block content %}
-<div class="min-h-screen bg-gray-50 px-6 py-10 lg:px-16 lg:py-12">    
-  <div class="max-w-7xl mx-auto">
+<div class="min-h-screen bg-slate-50 px-4 sm:px-6 lg:px-10 py-8">
 
-    <!-- HEADER -->
-    <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-8">
+  <div class="max-w-7xl mx-auto space-y-8">
+
+    <!-- ================= HEADER ================= -->
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+
+      <!-- Title -->
       <div>
-        <h1 class="text-3xl font-bold text-gray-800">Orders</h1>
-        <p class="text-gray-500 mt-1 text-sm">
-          Total Orders: {{ page_obj.paginator.count }}
+        <h1 class="text-2xl sm:text-3xl font-bold text-slate-800">
+          Orders
+        </h1>
+        <p class="text-sm text-slate-500 mt-1">
+          {{ page_obj.paginator.count }} total orders
         </p>
       </div>
 
-      <a href="{% url 'core:create_order' %}"
-         class="inline-flex items-center mt-4 sm:mt-0 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow hover:bg-indigo-700 transition">
-        + New Order
-      </a>
+      <!-- Primary Actions -->
+      <div class="flex flex-col sm:flex-row gap-3">
+
+        <a href="{% url 'core:table_overview' %}"
+           class="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition">
+          🍽 Open Table
+        </a>
+
+        <a href="{% url 'core:create_takeaway_order' %}"
+           class="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold shadow-sm hover:bg-indigo-700 transition">
+          🥡 Takeaway
+        </a>
+
+      </div>
+
     </div>
 
-    <!-- METRICS -->
-    <div class="grid sm:grid-cols-3 gap-8 mb-12">
+    <!-- ================= METRICS ================= -->
+    <div class="grid sm:grid-cols-3 gap-6">
 
-      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
-        <p class="text-sm text-gray-500">Today's Sales</p>
-        <h2 class="text-2xl font-bold text-green-600 mt-2">
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+        <p class="text-xs uppercase tracking-wide text-slate-400">
+          Today's Sales
+        </p>
+        <p class="text-2xl font-bold text-emerald-600 mt-2">
           {{ request.user.restaurant.currency }}
           {{ today_sales|floatformat:2 }}
-        </h2>
+        </p>
       </div>
 
-      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
-        <p class="text-sm text-gray-500">Orders Today</p>
-        <h2 class="text-2xl font-bold text-indigo-600 mt-2">
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+        <p class="text-xs uppercase tracking-wide text-slate-400">
+          Orders Today
+        </p>
+        <p class="text-2xl font-bold text-indigo-600 mt-2">
           {{ today_orders_count }}
-        </h2>
+        </p>
       </div>
 
-      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
-        <p class="text-sm text-gray-500">Paid Orders</p>
-        <h2 class="text-2xl font-bold text-purple-600 mt-2">
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+        <p class="text-xs uppercase tracking-wide text-slate-400">
+          Paid Orders
+        </p>
+        <p class="text-2xl font-bold text-purple-600 mt-2">
           {{ paid_orders_count }}
-        </h2>
+        </p>
       </div>
 
     </div>
 
-    <!-- FILTER BAR -->
+    <!-- ================= FILTER BAR ================= -->
     <form method="get"
           hx-get="{% url 'core:orders' %}"
           hx-target="#orders-container"
           hx-swap="outerHTML"
-          class="bg-white p-6 rounded-lg shadow-sm border border-gray-100 mb-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          class="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
 
-      <div>
-        <label class="block text-sm font-semibold text-gray-700 mb-1">Search</label>
-        <input type="text"
-               name="q"
-               value="{{ request.GET.q }}"
-               placeholder="Order ID"
-               class="w-full rounded-md border-gray-300 focus:ring focus:ring-indigo-100 text-sm">
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+        <!-- Search -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+            Search
+          </label>
+          <input type="text"
+                 name="q"
+                 value="{{ request.GET.q }}"
+                 placeholder="Order ID"
+                 class="w-full rounded-lg border-slate-300 focus:ring-indigo-200 focus:border-indigo-400 text-sm">
+        </div>
+
+        <!-- Status -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+            Status
+          </label>
+          <select name="status"
+                  class="w-full rounded-lg border-slate-300 focus:ring-indigo-200 focus:border-indigo-400 text-sm">
+            <option value="">All</option>
+            <option value="DRAFT" {% if request.GET.status == "DRAFT" %}selected{% endif %}>Draft</option>
+            <option value="PLACED" {% if request.GET.status == "PLACED" %}selected{% endif %}>Placed</option>
+            <option value="IN_PROGRESS" {% if request.GET.status == "IN_PROGRESS" %}selected{% endif %}>In Progress</option>
+            <option value="READY" {% if request.GET.status == "READY" %}selected{% endif %}>Ready</option>
+            <option value="SERVED" {% if request.GET.status == "SERVED" %}selected{% endif %}>Served</option>
+            <option value="COMPLETED" {% if request.GET.status == "COMPLETED" %}selected{% endif %}>Completed</option>
+            <option value="PAID" {% if request.GET.status == "PAID" %}selected{% endif %}>Paid</option>
+            <option value="CANCELED" {% if request.GET.status == "CANCELED" %}selected{% endif %}>Canceled</option>
+          </select>
+        </div>
+
+        <!-- Submit -->
+        <div class="flex items-end">
+          <button type="submit"
+                  class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">
+            Apply Filters
+          </button>
+        </div>
+
       </div>
-
-      <div>
-        <label class="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-        <select name="status"
-                class="w-full rounded-md border-gray-300 focus:ring focus:ring-indigo-100 text-sm">
-          <option value="">All</option>
-          <option value="DRAFT" {% if request.GET.status == "DRAFT" %}selected{% endif %}>Draft</option>
-          <option value="PLACED" {% if request.GET.status == "PLACED" %}selected{% endif %}>Placed</option>
-          <option value="IN_PROGRESS" {% if request.GET.status == "IN_PROGRESS" %}selected{% endif %}>In Progress</option>
-          <option value="READY" {% if request.GET.status == "READY" %}selected{% endif %}>Ready</option>
-          <option value="SERVED" {% if request.GET.status == "SERVED" %}selected{% endif %}>Served</option>
-          <option value="COMPLETED" {% if request.GET.status == "COMPLETED" %}selected{% endif %}>Completed</option>
-          <option value="PAID" {% if request.GET.status == "PAID" %}selected{% endif %}>Paid</option>
-          <option value="CANCELED" {% if request.GET.status == "CANCELED" %}selected{% endif %}>Canceled</option>
-        </select>
-      </div>
-
-      <div class="flex items-end">
-        <button type="submit"
-                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-md text-sm transition">
-          Apply Filters
-        </button>
-      </div>
-
     </form>
 
-    {% include "core/partials/orders_container.html" %}
+    <!-- ================= ORDERS TABLE ================= -->
+    <div id="orders-container">
+      {% include "core/partials/orders_container.html" %}
+    </div>
 
   </div>
+
 </div>
 {% endblock %}

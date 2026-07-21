@@ -1,0 +1,25 @@
+<div class="ticket status-{{ ticket.status }}"
+     id="ticket-{{ ticket.id }}"
+     data-created-at="{{ ticket.created_at|date:'c' }}">
+
+    <div class="ticket-header">
+        <div class="ticket-info">
+            <h2>
+                #{{ ticket.order.order_number }}
+                <small>({{ ticket.order.table.table_number|default:"Takeout" }})</small>
+            </h2>
+        </div>
+        <div class="ticket-timer">00:00</div>
+    </div>
+
+    <div class="ticket-body">
+        <ul>
+            {% for item in ticket.order.items.all %}
+            <li>
+                <span class="item-quantity">{{ item.quantity }}x</span>
+                <span>{{ item.product.name }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>

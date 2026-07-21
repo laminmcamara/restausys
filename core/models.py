@@ -9,7 +9,7 @@ from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 from django.db import transaction
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db.models import Sum, F, DecimalField
+from django.db.models import Sum, F, DecimalField, Q
 from django.contrib.auth.models import AbstractUser
 from django.conf import settings
 from django.core.files.base import File
@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.utils.text import slugify
 
+from django.db.models.functions import Coalesce
 
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
@@ -511,9 +512,32 @@ class TableSection(models.Model):
         return f"{self.table.table_number}{self.label}"
     
 
+from decimal import Decimal
+from django.db import models
+from django.db.models import Q, Sum
+from django.utils import timezone
+
+
 class TableSession(models.Model):
+
+    class SessionType(models.TextChoices):
+        TABLE = "TABLE", "Table"
+        TAKEAWAY = "TAKEAWAY", "Takeaway"
+
+    # -------------------------------------------------
+    # CORE RELATIONS
+    # -------------------------------------------------
+
+    restaurant = models.ForeignKey(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="sessions"
+    )
+
     table = models.ForeignKey(
         "core.Table",
+        null=True,
+        blank=True,
         on_delete=models.CASCADE,
         related_name="sessions"
     )
@@ -526,45 +550,163 @@ class TableSession(models.Model):
         related_name="sessions"
     )
 
-    restaurant = models.ForeignKey(
-        "core.Restaurant",
-        on_delete=models.CASCADE
+    session_type = models.CharField(
+        max_length=20,
+        choices=SessionType.choices,
+        default=SessionType.TABLE,
+        db_index=True,
     )
+
+    # -------------------------------------------------
+    # TIMESTAMPS
+    # -------------------------------------------------
 
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
 
     is_active = models.BooleanField(default=True, db_index=True)
 
+    # -------------------------------------------------
+    # ✅ FINAL SNAPSHOT (NEW)
+    # -------------------------------------------------
+
+    final_subtotal = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    final_tax = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    final_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    # -------------------------------------------------
+    # META
+    # -------------------------------------------------
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["table", "section"],
-                condition=models.Q(is_active=True),
+                condition=Q(is_active=True, session_type="TABLE"),
                 name="unique_active_table_section_session"
-            )
+            ),
         ]
+
         indexes = [
-            models.Index(fields=["table", "is_active"]),
             models.Index(fields=["restaurant", "is_active"]),
+            models.Index(fields=["session_type", "is_active"]),
         ]
+
+    # -------------------------------------------------
+    # LIVE FINANCIAL PROPERTIES
+    # (Used while session is active)
+    # -------------------------------------------------
+
+    @property
+    def total_amount(self):
+        return self.orders.aggregate(
+            total=Coalesce(
+                Sum("total"),
+                Decimal("0.00"),
+                output_field=DecimalField()
+            )
+        )["total"]
+        
+    @property
+    def total_paid(self):
+        return (
+            self.orders.aggregate(
+                total=Sum("payments__amount")
+            )["total"]
+            or Decimal("0.00")
+        )
+
+    @property
+    def remaining_balance(self):
+        return self.total_amount - self.total_paid
+
+    @property
+    def is_fully_paid(self):
+        return self.remaining_balance <= 0
 
     # -------------------------------------------------
     # HELPERS
     # -------------------------------------------------
 
     def is_full_table(self):
-        return self.section is None
+        return (
+            self.session_type == self.SessionType.TABLE
+            and self.section is None
+        )
+
+    def is_takeaway(self):
+        return self.session_type == self.SessionType.TAKEAWAY
+
+    # -------------------------------------------------
+    # ✅ IMPROVED CLOSE LOGIC
+    # -------------------------------------------------
 
     def close(self):
+        """
+        Safely close session.
+        Prevent closing if unpaid balance exists.
+        Snapshot financial totals for audit safety.
+        """
+
+        if self.remaining_balance > 0:
+            raise ValueError("Cannot close session with unpaid balance.")
+
+        # ✅ Calculate subtotal from orders
+        subtotal = self.total_amount
+
+        # ✅ Get tax rate from restaurant (fallback 10%)
+        tax_rate = getattr(
+            self.restaurant,
+            "tax_rate",
+            Decimal("10.00")
+        )
+
+        tax_rate_decimal = Decimal(tax_rate) / Decimal("100")
+
+        tax = subtotal * tax_rate_decimal
+        grand_total = subtotal + tax
+
+        # ✅ Snapshot values
+        self.final_subtotal = subtotal
+        self.final_tax = tax
+        self.final_total = grand_total
+
         self.is_active = False
         self.closed_at = timezone.now()
-        self.save(update_fields=["is_active", "closed_at"])
+
+        self.save(update_fields=[
+            "final_subtotal",
+            "final_tax",
+            "final_total",
+            "is_active",
+            "closed_at",
+        ])
+
+    # -------------------------------------------------
 
     def __str__(self):
+        if self.session_type == self.SessionType.TAKEAWAY:
+            return f"Takeaway Session #{self.id}"
+
         if self.section:
             return f"{self.table.table_number}{self.section.label} Session"
+
         return f"Full Table {self.table.table_number} Session"
+    
 # =============================================================================
 # === INVENTORY & RECIPES =====================================================
 # =============================================================================
@@ -896,8 +1038,6 @@ class Order(TimeStampedModel):
 
     session = models.ForeignKey(
         "core.TableSession",
-        null=True,
-        blank=True,
         on_delete=models.PROTECT,
         related_name="orders"
     )
@@ -1025,7 +1165,21 @@ class Order(TimeStampedModel):
             )
 
             return cls._create_for_session(session, section, **extra_fields)
+    @property
+    def total_paid(self):
+        return self.payments.aggregate(
+        total=Sum("amount")
+        )["total"] or Decimal("0.00")
 
+
+    @property
+    def remaining_balance(self):
+        return self.total_price - self.total_paid
+
+
+    @property
+    def is_fully_paid(self):
+        return self.remaining_balance <= 0
 
     @classmethod
     def _create_for_session(cls, session, section, **extra_fields):
@@ -1514,6 +1668,38 @@ def assign_tier(customer):
         customer.save(update_fields=["current_tier"])
 
 
+class Refund(models.Model):
+    order = models.OneToOneField(
+        "Order",
+        on_delete=models.CASCADE,
+        related_name="refund_record"
+    )
+
+    shift = models.ForeignKey(
+        "CashierShift",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Refund #{self.id} - Order {self.order.id}"
+
 class Rider(models.Model):
     restaurant = models.ForeignKey(
         "core.Restaurant", on_delete=models.CASCADE, related_name="riders"
@@ -1532,24 +1718,6 @@ class Rider(models.Model):
     def __str__(self):
         return f"{self.name} ({'Active' if self.active else 'Offline'})"
 
-class Refund(models.Model):
-    order = models.OneToOneField(
-        "core.Order",
-        on_delete=models.CASCADE,
-        related_name="refund_record"
-    )
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    reason = models.CharField(max_length=255, blank=True)
-    processed_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Refund for Order {str(self.order.id)[:8]}"
 
 class PaymentMethod(models.Model):
     name = models.CharField(max_length=50, unique=True)
@@ -1570,6 +1738,15 @@ class Payment(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="payments"
     )
+    
+    shift = models.ForeignKey(
+        "core.CashierShift",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="payments"
+    )
+    
     method = models.CharField(
         max_length=50,
         default="unknown",
@@ -1707,12 +1884,33 @@ class CashierShift(models.Model):
         on_delete=models.CASCADE,
         related_name="cashier_shifts"
     )
-    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE)
+
+    restaurant = models.ForeignKey(
+        Restaurant,
+        on_delete=models.CASCADE,
+        related_name="cashier_shifts"
+    )
+
     start_time = models.DateTimeField(auto_now_add=True)
     end_time = models.DateTimeField(null=True, blank=True)
+
     starting_cash = models.DecimalField(max_digits=10, decimal_places=2)
     closing_cash = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    # ✅ NEW FIELDS
+    total_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_cash_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_card_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cash_difference = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
     is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-start_time"]
+
+    def __str__(self):
+        return f"Cashier Shift {self.id} - {self.user.username}"
+    
     
 
 class AuditLog(models.Model):
@@ -1756,22 +1954,22 @@ class AuditLog(models.Model):
         return f"{self.timestamp} | {self.user} | {self.action} | {self.model_name}"
     
     
-class Shift(models.Model):
+class StaffShift(models.Model):
 
     restaurant = models.ForeignKey(
         'Restaurant',
         on_delete=models.CASCADE,
-        related_name='shifts'
+        related_name='staff_shifts'
     )
 
     staff = models.ForeignKey(
         'CustomUser',
         on_delete=models.CASCADE,
-        related_name='shifts'
+        related_name='staff_shifts'
     )
 
     start_time = models.DateTimeField()
-    end_time = models.DateTimeField()
+    end_time = models.DateTimeField(null=True, blank=True)
 
     is_active = models.BooleanField(default=True)
 
@@ -1779,14 +1977,16 @@ class Shift(models.Model):
 
     class Meta:
         ordering = ['-start_time']
-    
+
     def clean(self):
         if self.staff.restaurant != self.restaurant:
             raise ValidationError("Staff must belong to the same restaurant.")
-    
+
     def __str__(self):
         return f"{self.staff.username} | {self.start_time} - {self.end_time}"
-    
+
+
+
 class WaiterCall(TimeStampedModel):
     restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE)
     table = models.ForeignKey("core.Table", on_delete=models.CASCADE)

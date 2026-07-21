@@ -1,5 +1,8 @@
 from django.urls import re_path, path
 from . import consumers
+from django.urls import re_path
+from .consumers import KitchenDisplayConsumer
+
 
 websocket_urlpatterns = [
 
@@ -12,8 +15,17 @@ websocket_urlpatterns = [
 
     # ✅ Public Customer Display
     path(
-    "ws/customer/<int:restaurant_id>/",
-    consumers.CustomerDisplayConsumer.as_asgi()
-),
+    "ws/display/<int:restaurant_id>/",
+    consumers.DisplayConsumer.as_asgi(),
+    ),
+    
+    
+
+
+    re_path(
+        r"ws/kitchen/(?P<restaurant_id>\d+)/$",
+        KitchenDisplayConsumer.as_asgi(),
+    ),
+
     
 ]

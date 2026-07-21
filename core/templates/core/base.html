@@ -47,7 +47,17 @@
                     Kitchen
                 </a>
             {% endif %}
-
+            {% if user.is_authenticated and user.is_cashier %}
+                {% if active_shift %}
+                    <span class="px-3 py-1 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
+                    🟢 Shift Active
+                    </span>
+                {% else %}
+                    <span class="px-3 py-1 text-xs font-semibold bg-red-100 text-red-700 rounded-full">
+                    🔴 No Shift
+                    </span>
+                {% endif %}
+            {% endif %}
             <!-- Theme Toggle -->
             <button id="theme-toggle" type="button" class="text-gray-600 hover:text-orange-500">
                 <i class="bi bi-circle-half text-lg"></i>

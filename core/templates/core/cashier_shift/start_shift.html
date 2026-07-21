@@ -1,0 +1,26 @@
+{% extends "core/dashboard_base.html" %}
+
+{% block title %}Open Register Shift{% endblock %}
+
+{% block dashboard_content %}
+<div class="container">
+    <h2>Open Cashier Shift</h2>
+
+    <form method="post">
+        {% csrf_token %}
+
+        <div class="mb-3">
+            <label class="form-label">Starting Cash in Drawer</label>
+            <input type="number" step="0.01" name="starting_cash" class="form-control" required>
+        </div>
+
+        <button type="submit" class="btn btn-success">
+            Open Shift
+        </button>
+
+        <a href="{% url 'core:dashboard_home' %}" class="btn btn-secondary">
+            Cancel
+        </a>
+    </form>
+</div>
+{% endblock %}

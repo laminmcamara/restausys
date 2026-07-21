@@ -1,0 +1,178 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 space-y-8">
+
+    <!-- ========================= -->
+    <!-- SESSION HEADER -->
+    <!-- ========================= -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+
+        <div>
+            <h2 class="text-3xl font-bold text-slate-800">
+                Table {{ session.table.table_number }}
+            </h2>
+
+            <p class="text-sm text-slate-500 mt-1">
+                Opened {{ session.opened_at|date:"M d, Y H:i" }}
+            </p>
+
+            <div class="mt-2">
+                {% if session.is_active %}
+                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
+                        Active Session
+                    </span>
+                {% else %}
+                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">
+                        Closed Session
+                    </span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="flex gap-3">
+            {% if session.is_active %}
+            <a href="{% url 'core:dashboard_create_order' session.id %}"
+               class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition">
+                + New Order
+            </a>
+
+            <a href="{% url 'core:dashboard_table_close' session.id %}"
+               class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition">
+                Close Table
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ========================= -->
+    <!-- SESSION SUMMARY CARDS -->
+    <!-- ========================= -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+
+        <!-- Total Orders -->
+        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <p class="text-sm text-slate-500">Total Orders</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1">
+                {{ orders|length }}
+            </p>
+        </div>
+
+        <!-- Total Revenue -->
+        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <p class="text-sm text-slate-500">Session Revenue</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1">
+                ${{ session.total_amount|default:0|floatformat:2|intcomma }}
+            </p>
+        </div>
+
+        <!-- Paid Amount -->
+        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <p class="text-sm text-slate-500">Paid</p>
+            <p class="text-2xl font-bold text-emerald-600 mt-1">
+                ${{ session.paid_amount|default:0|floatformat:2|intcomma }}
+            </p>
+        </div>
+
+    </div>
+
+    <!-- ========================= -->
+    <!-- ORDERS TABLE -->
+    <!-- ========================= -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200">
+
+        <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+            <h4 class="text-lg font-semibold text-slate-800">
+                Orders
+            </h4>
+        </div>
+
+        {% if orders %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm text-left">
+
+                <thead class="bg-slate-50 text-slate-600 uppercase text-xs tracking-wider">
+                    <tr>
+                        <th class="px-6 py-3">Order</th>
+                        <th class="px-6 py-3">Status</th>
+                        <th class="px-6 py-3">Payment</th>
+                        <th class="px-6 py-3">Total</th>
+                        <th class="px-6 py-3">Created</th>
+                        <th class="px-6 py-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+
+                <tbody class="divide-y divide-slate-200">
+
+                {% for order in orders %}
+                    <tr class="hover:bg-slate-50 transition">
+
+                        <td class="px-6 py-4 font-medium text-slate-800">
+                            #{{ order.order_number }}
+                        </td>
+
+                        <td class="px-6 py-4">
+                            <span class="px-2.5 py-1 text-xs rounded-full bg-slate-100 text-slate-700">
+                                {{ order.get_status_display }}
+                            </span>
+                        </td>
+
+                        <td class="px-6 py-4">
+                            {% if order.payment_status == "PAID" %}
+                                <span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
+                                    Paid
+                                </span>
+                            {% elif order.payment_status == "PARTIALLY_PAID" %}
+                                <span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">
+                                    Partial
+                                </span>
+                            {% else %}
+                                <span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">
+                                    Unpaid
+                                </span>
+                            {% endif %}
+                        </td>
+
+                        <td class="px-6 py-4 font-semibold text-slate-800">
+                            ${{ order.total|floatformat:2|intcomma }}
+                        </td>
+
+                        <td class="px-6 py-4 text-slate-500">
+                            {{ order.created_at|date:"M d, H:i" }}
+                        </td>
+
+                        <!-- ✅ Quick Actions -->
+                        <td class="px-6 py-4 text-right space-x-2">
+
+                            <a href="{% url 'core:order_detail' order.pk %}"
+                                class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                                View
+                            </a>
+
+                            {% if order.payment_status != "PAID" and session.is_active %}
+                            <a href="{% url 'core:dashboard_order_pay' order.pk %}"
+                                class="text-emerald-600 hover:text-emerald-800 text-sm font-medium">
+                                Pay
+                            </a>
+                            {% endif %}
+
+                        </td>
+
+                    </tr>
+                {% endfor %}
+
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-6">
+            <div class="bg-blue-50 border border-blue-100 text-blue-700 text-sm px-4 py-3 rounded-lg">
+                No orders yet for this session.
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

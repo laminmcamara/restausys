@@ -1,90 +1,57 @@
-
 {% extends "core/dashboard_base.html" %}
 {% load static %}
 
-{% block dashboard_content %}
+{% block content %}
 <style>
     :root {
-        --bg-color: #2b2b2b; /* Darker background for less eye strain in kitchens */
+        --bg-color: #2b2b2b;
         --ticket-bg: #ffffff;
         --header-bg: #1a1a1a;
         --header-text: #ffffff;
         --border-color: #444444;
         --shadow-color: rgba(0, 0, 0, 0.2);
-        --font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-        
-        --status-preparing: #337ab7; /* Blue */
-        --status-ready: #5cb85c;     /* Green */
-        --status-completed: #777777; /* Gray */
+
+        --status-preparing: #337ab7;
+        --status-ready: #5cb85c;
+        --status-completed: #777777;
 
         --timer-normal: #333;
-        --timer-warn: #f0ad4e;     /* Orange */
-        --timer-urgent: #d9534f;    /* Red */
+        --timer-warn: #f0ad4e;
+        --timer-urgent: #d9534f;
     }
 
-    /* Remove default browser margin and set body styles */
     body {
         background-color: var(--bg-color);
-        font-family: var(--font-family);
         margin: 0;
+        font-family: 'Segoe UI', Arial, sans-serif;
     }
 
     .kds-header {
-        background-color: var(--header-bg);
+        background: var(--header-bg);
         color: var(--header-text);
         padding: 1rem 2rem;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        position: sticky;
-        top: 0;
-        z-index: 1000;
         border-bottom: 2px solid var(--border-color);
-    }
-
-    .kds-header h1 {
-        margin: 0;
-        font-size: 2.5rem; /* Larger title */
-        font-weight: 600;
-    }
-
-    .filters a {
-        color: var(--header-text);
-        text-decoration: none;
-        padding: 0.75rem 1.5rem;
-        border-radius: 8px;
-        margin-left: 1rem;
-        font-size: 1.2rem; /* Larger filter buttons */
-        font-weight: 500;
-        transition: background-color 0.2s;
-    }
-
-    .filters a:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-    }
-
-    .filters a.active {
-        background-color: var(--status-preparing);
-        color: white;
-        font-weight: 700;
     }
 
     .ticket-grid {
         display: grid;
-        /* Increase minmax for wider tickets */
-        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); 
-        gap: 2rem; /* More space between tickets */
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        gap: 2rem;
         padding: 2rem;
     }
 
     .ticket {
-        background-color: var(--ticket-bg);
+        background: var(--ticket-bg);
         border-radius: 12px;
         box-shadow: 0 8px 16px var(--shadow-color);
         display: flex;
         flex-direction: column;
-        border-top: 10px solid var(--status-preparing); /* Status color bar */
+        border-top: 10px solid var(--status-preparing);
     }
+
     .ticket.status-READY { border-top-color: var(--status-ready); }
     .ticket.status-COMPLETED { border-top-color: var(--status-completed); }
 
@@ -98,21 +65,13 @@
 
     .ticket-info h2 {
         margin: 0;
-        font-size: 2.5rem; /* Big order number */
+        font-size: 2.3rem;
         font-weight: 700;
-        color: #000;
     }
-    .ticket-info h2 small {
-        font-size: 1.8rem; /* Big table name */
-        font-weight: 500;
-        color: #333;
-    }
-    
+
     .ticket-timer {
-        font-size: 2.2rem; /* Prominent timer */
+        font-size: 2rem;
         font-weight: 700;
-        min-width: 100px;
-        text-align: right;
     }
 
     .ticket-body {
@@ -120,242 +79,133 @@
         flex-grow: 1;
     }
 
-    .ticket-body ul {
-        list-style-type: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    /* Style for each food item line */
     .ticket-body li {
-        font-size: 2rem; /* HUGE item font size */
+        font-size: 1.8rem;
         font-weight: 600;
-        margin-bottom: 1.25rem;
+        margin-bottom: 1rem;
         display: flex;
-        align-items: baseline;
-        line-height: 1.2;
         border-bottom: 1px dashed #ccc;
-        padding-bottom: 1.25rem;
-    }
-    .ticket-body li:last-child {
-        border-bottom: none;
-        margin-bottom: 0;
-        padding-bottom: 0;
+        padding-bottom: 1rem;
     }
 
     .item-quantity {
-        font-weight: 800; /* Extra-bold quantity */
-        font-size: 2.5rem; /* Larger than item name */
-        margin-right: 1.5rem;
-        min-width: 60px; /* Ensure alignment */
-        color: #000;
-    }
-
-    .item-details {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .item-modifiers {
-        list-style-type: none; /* No bullets for modifiers */
-        padding-left: 0;
-        margin-top: 0.5rem;
-        font-size: 1.4rem; /* Large but smaller than item */
-        font-weight: 500;
-        color: #555;
-    }
-    .item-modifiers li::before {
-        content: "↳ "; /* Arrow to indicate sub-item */
-        color: #888;
+        font-weight: 800;
+        font-size: 2rem;
+        margin-right: 1rem;
     }
 
     .ticket-footer {
         padding: 1rem;
-        border-top: 2px solid #eee;
-        background-color: #f9f9f9;
         text-align: center;
-        border-bottom-left-radius: 12px;
-        border-bottom-right-radius: 12px;
+        background: #f9f9f9;
     }
 
     .action-button {
         border: none;
-        padding: 1rem 2rem; /* Much larger button padding */
+        padding: 1rem;
+        font-size: 1.3rem;
+        font-weight: bold;
         border-radius: 8px;
-        cursor: pointer;
-        font-weight: 700;
-        font-size: 1.5rem; /* Large button text */
-        width: calc(100% - 2rem); /* Make button wide */
-        margin: 0.5rem 1rem;
+        width: 90%;
         color: white;
-        transition: transform 0.1s ease;
-    }
-    .action-button:active {
-        transform: scale(0.98);
+        cursor: pointer;
     }
 
-    .btn-ready { background-color: var(--status-ready); }
-    .btn-complete { background-color: var(--status-completed); }
+    .btn-ready { background: var(--status-ready); }
+    .btn-complete { background: var(--status-completed); }
 
     .no-tickets {
         text-align: center;
         font-size: 2.5rem;
         color: #999;
-        padding: 5rem;
-        grid-column: 1 / -1; /* Span full width */
+        grid-column: 1 / -1;
+    }
+
+    /* ✅ Flash animation for new ticket */
+    @keyframes flashNew {
+        0% { transform: scale(1.05); box-shadow: 0 0 30px #5cb85c; }
+        100% { transform: scale(1); }
+    }
+
+    .new-ticket {
+        animation: flashNew 0.6s ease;
     }
 </style>
 
 <header class="kds-header">
     <h1>Kitchen Orders</h1>
-    <nav class="filters">
-        <a href="{% url 'core:kitchen_display' %}" class="{% if not status_filter %}active{% endif %}">Active</a>
-        {% for status_value, status_name in status_choices %}
-            <a href="?status={{ status_value }}" class="{% if status_filter == status_value %}active{% endif %}">{{ status_name }}</a>
-        {% endfor %}
-    </nav>
 </header>
 
-<main class="ticket-grid">
+<main class="ticket-grid" id="ticket-grid">
     {% for ticket in tickets %}
-        <!-- Pass the ticket creation time to the data attribute in ISO format for easy JS parsing -->
-        <div class="ticket status-{{ ticket.status }}" data-created-at="{{ ticket.created_at|date:"c" }}">
-            <div class="ticket-header">
-                <div class="ticket-info">
-                    <h2>#{{ ticket.order.order_number }} <small>({{ ticket.order.table.table_number|default:"Takeout" }})</small></h2>                
-                </div>
-                <!-- This div will be populated by JavaScript -->
-                <div class="ticket-timer">00:00</div>
-            </div>
-            <div class="ticket-body">
-                <ul>
-                    {% for item in ticket.order.items.all %}
-                        <li>
-                            <span class="item-quantity">{{ item.quantity }}x</span>
-                            <div class="item-details">
-                                <span class="item-name">{{ item.product.name }}</span>
-                                {% if item.modifiers.all %}
-                                    <ul class="item-modifiers">
-                                    {% for modifier in item.modifiers.all %}
-                                        <li>{{ modifier.name }}</li>
-                                    {% endfor %}
-                                    </ul>
-                                {% endif %}
-                            </div>
-                        </li>
-                    {% endfor %}
-                </ul>
-            </div>
-            {% if ticket.status != all_statuses.COMPLETED %}
-            <div class="ticket-footer">
-                <form method="POST" action="{% url 'core:kitchen_display' %}" style="display: inline;">
-                    {% csrf_token %}
-                    <input type="hidden" name="ticket_id" value="{{ ticket.id }}">
-                    <input type="hidden" name="current_filter" value="{{ status_filter|default:'' }}">
-                    
-                    {% if ticket.status == all_statuses.PREPARING %}
-                        <input type="hidden" name="new_status" value="{{ all_statuses.READY }}">
-                        <button type="submit" class="action-button btn-ready">Mark as Ready</button>
-                    {% elif ticket.status == all_statuses.READY %}
-                        <input type="hidden" name="new_status" value="{{ all_statuses.COMPLETED }}">
-                        <button type="submit" class="action-button btn-complete">Complete &amp; Clear</button>
-                    {% endif %}
-                </form>
-            </div>
-            {% endif %}
-        </div>
+        {% include "core/partials/kds_ticket.html" %}
     {% empty %}
-        <div class="no-tickets">
-            <p>🎉 All Caught Up! 🎉</p>
-        </div>
+        <div class="no-tickets">🎉 All Caught Up! 🎉</div>
     {% endfor %}
 </main>
 
 <script>
-    // This script calculates and updates the running timer for each ticket.
-    document.addEventListener('DOMContentLoaded', function() {
-        const tickets = document.querySelectorAll('.ticket');
-        const WARN_THRESHOLD_SECONDS = 300; // 5 minutes
-        const URGENT_THRESHOLD_SECONDS = 600; // 10 minutes
+document.addEventListener('DOMContentLoaded', function () {
 
-        function updateTimers() {
-            const now = new Date();
-            
-            tickets.forEach(ticket => {
-                const timerElement = ticket.querySelector('.ticket-timer');
-                // Skip if ticket is completed or has no timer element
-                if (!timerElement || ticket.classList.contains('status-COMPLETED')) {
-                    if(timerElement) timerElement.style.display = 'none';
-                    return;
-                }
-
-                const createdAtString = ticket.dataset.createdAt;
-                const createdAt = new Date(createdAtString);
-                
-                const elapsedSeconds = Math.floor((now - createdAt) / 1000);
-                
-                const minutes = Math.floor(elapsedSeconds / 60);
-                const seconds = elapsedSeconds % 60;
-                
-                // Format as MM:SS
-                timerElement.textContent = 
-                    `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-
-                // Apply color coding based on age
-                if (elapsedSeconds >= URGENT_THRESHOLD_SECONDS) {
-                    timerElement.style.color = 'var(--timer-urgent)';
-                } else if (elapsedSeconds >= WARN_THRESHOLD_SECONDS) {
-                    timerElement.style.color = 'var(--timer-warn)';
-                } else {
-                    timerElement.style.color = 'var(--timer-normal)';
-                }
-            });
-        }
-
-        // Update timers every second
-        setInterval(updateTimers, 1000);
-        
-        // Run once immediately on load
-        updateTimers();
-
-        // Optional: Auto-refresh the whole page every 5 minutes to catch any missed updates
-        // This is a fallback and can be adjusted or removed.
-        const pageRefreshInterval = 300000; // 5 minutes
-        setTimeout(() => {
-            window.location.reload();
-        }, pageRefreshInterval);
-    });
-</script>
-<script>
     const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-    const socket = new WebSocket(
-        protocol + window.location.host + "/ws/kds/"
-    );
+    const restaurantId = "{{ request.user.restaurant_id }}";
 
-    socket.onopen = function () {
-        console.log("✅ Kitchen WebSocket connected");
-    };
+    const socket = new WebSocket(
+        protocol + window.location.host + `/ws/kitchen/${restaurantId}/`
+    );
+    const grid = document.getElementById("ticket-grid");
+
+    socket.onopen = () => console.log("✅ KDS connected");
 
     socket.onmessage = function (event) {
         const data = JSON.parse(event.data);
-        console.log("📩 Kitchen update received:", data);
+        console.log("📩 Update:", data);
 
-        if (data.type === "new_order") {
-            // 🔔 Optional sound
-            // const audio = new Audio("{% static 'core/sounds/notification.mp3' %}");
-            // audio.play();
+        if (data.type === "new_ticket") {
+            addTicket(data.ticket_html);
+        }
 
-            // ✅ Reload page to show new ticket
-            window.location.reload();
+        if (data.type === "status_update") {
+            updateTicketStatus(data.ticket_id, data.new_status);
+        }
+
+        if (data.type === "remove_ticket") {
+            removeTicket(data.ticket_id);
         }
     };
 
-    socket.onerror = function (error) {
-        console.error("❌ Kitchen WebSocket error:", error);
-    };
+    socket.onerror = error => console.error("❌ WebSocket error:", error);
+    socket.onclose = () => console.warn("⚠️ WebSocket closed");
 
-    socket.onclose = function () {
-        console.warn("⚠️ Kitchen WebSocket disconnected");
-    };
+    function addTicket(ticketHTML) {
+        const emptyMessage = document.querySelector(".no-tickets");
+        if (emptyMessage) emptyMessage.remove();
+
+        grid.insertAdjacentHTML("afterbegin", ticketHTML);
+
+        const newTicket = grid.firstElementChild;
+        newTicket.classList.add("new-ticket");
+    }
+
+    function updateTicketStatus(ticketId, newStatus) {
+        const ticket = document.getElementById(`ticket-${ticketId}`);
+        if (!ticket) return;
+
+        ticket.classList.remove("status-PREPARING", "status-READY");
+        ticket.classList.add(`status-${newStatus}`);
+    }
+
+    function removeTicket(ticketId) {
+        const ticket = document.getElementById(`ticket-${ticketId}`);
+        if (!ticket) return;
+
+        ticket.remove();
+
+        if (!document.querySelector(".ticket")) {
+            grid.innerHTML = `<div class="no-tickets">🎉 All Caught Up! 🎉</div>`;
+        }
+    }
+});
 </script>
+
 {% endblock %}

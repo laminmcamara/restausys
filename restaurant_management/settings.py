@@ -93,6 +93,8 @@ INSTALLED_APPS = [
     # "qr_screen",
     # "notifications",
     # "analytics",
+    
+    'django.contrib.humanize',
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
@@ -141,6 +143,8 @@ TEMPLATES = [
                 "django.template.context_processors.static",
                 "django.template.context_processors.i18n",  # 🌍 language context
                 'core.context_processors.restaurant_context',
+                "core.context_processors.restaurant_context",
+
                 
             ],
         },

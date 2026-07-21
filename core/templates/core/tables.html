@@ -13,104 +13,96 @@
 {% endblock %}
 
 {% block content %}
-<p class="text-red-600 text-lg">
-  Tables count: {{ tables|length }}
-</p>
-<div class="space-y-6">
-  <div id="table-grid" class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-5">
-    {% for t in tables %}
-    <div id="table-card-{{ t.id }}" class="bg-white rounded-xl shadow-sm border border-slate-200/80 flex flex-col transition-all hover:shadow-md">
-      
-      <!-- Card Header -->
-      <div class="p-4 border-b border-slate-200/80">
-        <h3 class="font-bold text-lg text-slate-800">Table {{ t.table_number }}</h3>
-        <p class="text-sm text-slate-500">{{ t.capacity }} Seats</p>
+
+<div class="mb-6">
+  <p class="text-sm text-slate-500">
+    Total Tables: <span class="font-semibold text-slate-800">{{ tables|length }}</span>
+  </p>
+</div>
+
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+
+{% for t in tables %}
+<div class="group bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-200 flex flex-col justify-between">
+
+  <!-- MAIN CLICKABLE TABLE AREA -->
+  <a href="{% if t.has_active_session %}
+              {% url 'core:dashboard_session_detail' t.active_session_id %}
+           {% else %}
+              {% url 'core:dashboard_table_open' t.id %}
+           {% endif %}"
+     class="p-6 text-center flex flex-col items-center justify-center">
+
+      <div class="text-4xl font-extrabold tracking-tight text-slate-800 group-hover:text-indigo-600 transition">
+        {{ t.table_number }}
       </div>
 
-      <!-- Card Body -->
-      <div class="p-4 space-y-4 flex-grow">
-        <div>
+      <div class="text-sm text-slate-500 mt-1">
+        {{ t.capacity }} Seats
+      </div>
+
+      <!-- STATUS -->
+      <div class="mt-3">
+        {% if t.has_active_session %}
           <span id="status-badge-{{ t.id }}"
-                class="status-badge text-xs font-semibold px-2.5 py-1 rounded-full inline-block
-                {% if t.has_active_session %}
-                    bg-amber-100 text-amber-800
-                {% else %}
-                    bg-green-100 text-green-800
-                {% endif %}">
-                
-                {% if t.has_active_session %}
-                    Occupied
-                {% else %}
-                    Available
-                {% endif %}
+                class="px-3 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">
+            Occupied
           </span>
-        </div>
-        
-        {% if t.qr_code %}
-          <img src="{{ t.qr_code.url }}" 
-              alt="QR Code for Table {{ t.table_number }}" 
-              class="qr-img preview-btn w-full rounded-lg cursor-pointer aspect-square object-cover"
-              data-url="{{ t.qr_code.url }}" />
         {% else %}
-          <div class="flex items-center justify-center w-full h-full aspect-square bg-slate-50 rounded-lg border-2 border-dashed">
-            <p class="text-sm text-slate-500">No QR Code Generated</p>
-          </div>
+          <span id="status-badge-{{ t.id }}"
+                class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
+            Available
+          </span>
         {% endif %}
       </div>
+  </a>
 
-      <!-- Card Footer -->
-      <div class="p-4 bg-slate-50/70 border-t border-slate-200/80 rounded-b-xl">
-        <div class="flex items-center justify-start gap-2 flex-wrap">
+  <!-- QR + ACTIONS -->
+  <div class="px-4 pb-4">
+
+      <!-- Small QR -->
+      {% if t.qr_code %}
+      <div class="flex justify-center mb-3">
+          <img src="{{ t.qr_code.url }}"
+               class="w-20 h-20 object-cover rounded-lg border cursor-pointer preview-btn"
+               data-url="{{ t.qr_code.url }}">
+      </div>
+      {% endif %}
+
+      <!-- Actions -->
+      <div class="flex justify-between text-xs font-medium">
 
           {% if t.has_active_session %}
-          <a class="btn bg-rose-600 hover:bg-rose-700 focus:ring-rose-500"
-            href="{% url 'core:dashboard_table_close' t.active_session_id %}">
-            Close Table
+          <a class="text-rose-600 hover:text-rose-800"
+             href="{% url 'core:dashboard_table_close' t.active_session_id %}">
+             Close
           </a>
           {% else %}
-          <a class="btn bg-indigo-500 hover:bg-indigo-600 focus:ring-indigo-400"
-              href="{% url 'core:dashboard_table_open' t.id %}">
-               Open POS
+          <a class="text-indigo-600 hover:text-indigo-800"
+             href="{% url 'core:dashboard_table_open' t.id %}">
+             Open POS
           </a>
           {% endif %}
 
-          {% if t.qr_code %}
-          <a class="btn bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500"
-             href="{{ t.qr_code.url }}"
-             download="table_{{ t.table_number }}_qr.png">
-             Download
-          </a>
-          {% endif %}
-
-          <a class="btn bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500"
+          <a class="text-emerald-600 hover:text-emerald-800"
              href="{% url 'core:print_qr' t.id %}"
              target="_blank">
              Print
           </a>
 
-          <button
-              class="btn bg-red-600 hover:bg-red-700 focus:ring-red-500 regenerate-btn"
-              data-id="{{ t.id }}"
-              data-regenerate-url="{% url 'core:regenerate_qr' t.id %}">
-              Regenerate
-          </button>
-        </div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-</div>
+          <a class="text-slate-600 hover:text-slate-800"
+             href="{% url 'core:regenerate_qr' t.id %}">
+             Regenerate
+          </a>
 
-<!-- ===========================
-     QR PREVIEW MODAL
-=========================== -->
-<div id="previewModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 hidden">
-  <div class="bg-white p-2 rounded-lg shadow-xl">
-      <img id="previewImage" class="max-w-md max-h-[80vh] rounded-md" alt="QR Code Preview">
+      </div>
   </div>
+
+</div>
+{% endfor %}
+
 </div>
 {% endblock %}
-
 
 {% block extra_head %}
 <style>

@@ -16,7 +16,6 @@ from .views import (
     # POS
     PosDashboardView,
     pos_view,
-    ProcessPosOrderView,
     PosDataView,
     ProductCreateView,
     ProductCreateView,
@@ -25,7 +24,6 @@ from .views import (
     # Tables
     TableViewSet,
     TableOverviewView,
-    open_table_order,
 
     # Categories
     CategoryViewSet,
@@ -46,7 +44,6 @@ from .views import (
     OrderListView,
     OrderDetailView,
     OrderSuccessView,
-    create_order,
     add_to_order,
     update_quantity,
     remove_item,
@@ -69,7 +66,7 @@ from .views import (
     AnalyticsView,
 
     # Displays
-    KitchenDisplayView,
+    kitchen_display,
     CustomerDisplayView,
     customer_display_refresh,
     customer_display_shortcut,
@@ -90,7 +87,9 @@ from .views import (
     end_shift,
     create_staff,
     staff_list,
-
+    shift_z_report_print,
+    
+    session_receipt_pdf,
     # Settings
     SettingsView,
 
@@ -101,8 +100,12 @@ from .views import (
     register_restaurant,
     subscription_expired,
     
+    
     dashboard_table_open,
+    create_takeaway_order,
     dashboard_table_close,
+    dashboard_session_detail,
+    dashboard_create_order,
 )
 
 app_name = "core"
@@ -199,19 +202,14 @@ urlpatterns = [
          remove_item, name="remove_item"),
 
     path("api/v1/pos-data/", PosDataView.as_view(), name="pos_data"),
-    path("api/pos/process-order/",
-         ProcessPosOrderView.as_view(),
-         name="process_pos_order"),
 
     # ========================================================
     # TABLES
     # ========================================================
 
     path("pos/tables/", TableOverviewView.as_view(), name="table_overview"),
-    path("dashboard/tables/<int:table_id>/open/",
-         open_table_order,
-         name="dashboard_table_open"),
-
+    
+    
     path("tables/<int:pk>/print/",
          PrintQRView.as_view(),
          name="print_qr"),
@@ -231,8 +229,12 @@ urlpatterns = [
     path("orders/<uuid:pk>/",
          OrderDetailView.as_view(),
          name="order_detail"),
-
-    path("orders/new/", create_order, name="create_order"),
+    path(
+    "dashboard/sessions/<int:session_id>/orders/create/",
+    dashboard_create_order,
+    name="dashboard_create_order"
+    ),
+    
     path("order-success/<int:order_id>/",
          OrderSuccessView.as_view(),
          name="order_success"),
@@ -323,17 +325,16 @@ urlpatterns = [
     # STAFF
     # ========================================================
 
-    path("start-shift/", start_shift, name="start_shift"),
-    path("end-shift/", end_shift, name="end_shift"),
+    
     path("staff/create/", create_staff, name="create_staff"),
     path("staff/", staff_list, name="staff_list"),
-
+    path("shift/start/", start_shift, name="start_shift"),
+    path("shift/end/", end_shift, name="end_shift"),
     # ========================================================
     # DISPLAYS
     # ========================================================
 
-    path("kitchen/", KitchenDisplayView.as_view(), name="kitchen_display"),
-
+    path("kitchen/", kitchen_display, name="kitchen_display"),
     path("display/<uuid:token>/<int:table_id>/",
          CustomerDisplayView.as_view(),
          name="customer_display"),
@@ -394,11 +395,41 @@ urlpatterns = [
         dashboard_table_open,
         name="dashboard_table_open"
     ),
+    
+    path(
+        "orders/takeaway/new/",
+        create_takeaway_order,
+        name="create_takeaway_order"
+    ),
 
+
+    path(
+    "dashboard/sessions/<int:session_id>/",
+    dashboard_session_detail,
+    name="dashboard_session_detail"
+    ),
+    
+    path(
+    "dashboard/orders/<uuid:order_id>/pay/",
+    pay_order,
+    name="dashboard_order_pay",
+    ),
+    
     path(
         "dashboard/sessions/<int:session_id>/close/",
         dashboard_table_close,
         name="dashboard_table_close"
     ),
-
+    
+    path("shift/open/", start_shift, name="start_shift"),
+    path("shift/close/", end_shift, name="close_shift"),
+    path(
+    "shift/<int:shift_id>/z-report/",
+    shift_z_report_print,
+    name="shift_z_report_print"
+    ),
+    
+    path("sessions/<int:pk>/close/",  dashboard_table_close, name=" dashboard_table_close"),
+    path("sessions/<int:pk>/receipt/", session_receipt_pdf, name="session_receipt_pdf"),
+    
 ]

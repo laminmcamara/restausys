@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
-from .models import CustomUser, Shift, Order, OrderItem, InventoryItem, Product, Category
+from .models import CustomUser, CashierShift, Order, OrderItem, InventoryItem, Product, Category
 from django.contrib.auth import get_user_model
 
 
@@ -70,22 +70,7 @@ class StyledAuthenticationForm(AuthenticationForm):
                 "class": "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             })
 
-# ==============================================================================
-# Shift Management Form
-# ==============================================================================
 
-class ShiftForm(StyledModelForm):
-    """
-    Form for creating and updating employee shifts.
-    """
-
-    class Meta:
-        model = Shift
-        fields = ['staff', 'start_time', 'end_time']
-        widgets = {
-            'start_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
-            'end_time': forms.DateTimeInput(attrs={'type': 'datetime-local'}),
-        }
 
 
 # ==============================================================================

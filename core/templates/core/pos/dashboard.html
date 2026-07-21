@@ -4,14 +4,13 @@
 {% block content %}
 
 <style>
-/* ===== SaaS Dashboard Styling ===== */
-
 .dashboard-container {
     display: flex;
     flex-direction: column;
     gap: 24px;
 }
 
+/* KPI */
 .kpi-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -32,9 +31,9 @@
 }
 
 .kpi-title {
-    font-size: 14px;
+    font-size: 13px;
     color: #6b7280;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -86,6 +85,38 @@
     font-weight: 600;
 }
 
+.badge-unpaid {
+    background: #fee2e2;
+    color: #b91c1c;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.btn {
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: #2563eb;
+    color: white;
+}
+
+.btn-danger {
+    background: #dc2626;
+    color: white;
+}
+
+.btn-success {
+    background: #16a34a;
+    color: white;
+}
+
 .empty-state {
     text-align: center;
     color: #9ca3af;
@@ -93,8 +124,38 @@
 }
 </style>
 
-
 <div class="dashboard-container">
+
+    <!-- ================= SHIFT STATUS ================= -->
+    <div class="section-card">
+        <div class="section-title">Shift Status</div>
+
+        {% if active_shift %}
+            <p>
+                ✅ Shift opened at 
+                {{ active_shift.opened_at|date:"M d, Y H:i" }}
+            </p>
+
+            <p>
+                Sales this shift:
+                <strong>{{ active_shift.total_sales|currency:currency }}</strong>
+            </p>
+
+            <a href="{% url 'core:close_shift' %}" class="btn btn-danger">
+                Close Shift
+            </a>
+        {% else %}
+            <p>No active shift.</p>
+            <a href="{% url 'core:open_shift' %}" class="btn btn-success">
+                Open Shift
+            </a>
+        {% endif %}
+
+        <a href="{% url 'core:generate_z_report' %}" class="btn btn-primary" style="margin-left:10px;">
+            Generate Z-Report
+        </a>
+    </div>
+
 
     <!-- ================= KPI SECTION ================= -->
     <div class="kpi-grid">
@@ -114,9 +175,9 @@
         </div>
 
         <div class="kpi-card">
-            <div class="kpi-title">Active Categories</div>
+            <div class="kpi-title">Active Sessions</div>
             <div class="kpi-value">
-                {{ categories.count }}
+                {{ active_sessions.count }}
             </div>
         </div>
 
@@ -127,6 +188,71 @@
             </div>
         </div>
 
+    </div>
+
+
+    <!-- ================= ACTIVE SESSIONS ================= -->
+    <div class="section-card">
+        <div class="section-title">Active Sessions</div>
+
+        {% if active_sessions %}
+        <table class="table-modern">
+            <thead>
+                <tr>
+                    <th>Session</th>
+                    <th>Total</th>
+                    <th>Paid</th>
+                    <th>Remaining</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for session in active_sessions %}
+                <tr>
+                    <td>
+                        {% if session.is_takeaway %}
+                            🥡 Takeaway #{{ session.id }}
+                        {% else %}
+                            🍽 Table {{ session.table.table_number }}
+                            {% if session.section %}
+                                ({{ session.section.label }})
+                            {% endif %}
+                        {% endif %}
+                    </td>
+
+                    <td>{{ session.total_amount|currency:currency }}</td>
+                    <td>{{ session.total_paid|currency:currency }}</td>
+                    <td>{{ session.remaining_balance|currency:currency }}</td>
+
+                    <td>
+                        {% if session.is_fully_paid %}
+                            <span class="badge-paid">Paid</span>
+                        {% else %}
+                            <span class="badge-unpaid">Unpaid</span>
+                        {% endif %}
+                    </td>
+
+                    <td>
+                        {% if session.is_fully_paid %}
+                            <a href="{% url 'core:close_session' session.id %}" class="btn btn-success">
+                                Close
+                            </a>
+                        {% endif %}
+
+                        <a href="{% url 'core:session_receipt_pdf' session.id %}" target="_blank" class="btn btn-primary">
+                            Receipt
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+            <div class="empty-state">
+                No active sessions.
+            </div>
+        {% endif %}
     </div>
 
 

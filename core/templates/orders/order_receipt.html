@@ -2,60 +2,149 @@
 <html>
 <head>
     <title>Receipt #{{ order.id }}</title>
+
     <style>
         body {
             font-family: monospace;
             width: 300px;
             margin: auto;
+            font-size: 13px;
         }
 
-        .center { text-align: center; }
-        .line { border-top: 1px dashed #000; margin: 8px 0; }
+        .center {
+            text-align: center;
+        }
+
+        .right {
+            text-align: right;
+        }
+
+        .line {
+            border-top: 1px dashed #000;
+            margin: 8px 0;
+        }
+
+        .item-row {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        button {
+            margin-top: 10px;
+            width: 100%;
+            padding: 6px;
+            font-size: 14px;
+        }
 
         @media print {
-            button { display: none; }
+            button {
+                display: none;
+            }
         }
     </style>
 </head>
 <body>
 
+<!-- ✅ Restaurant Info -->
 <div class="center">
-    <h3>Restaurant Name</h3>
-    <p>Receipt #{{ order.id }}</p>
-    <p>{{ order.created_at|date:"M d, Y H:i" }}</p>
+    <h3>{{ order.restaurant.name }}</h3>
+
+    {% if order.restaurant.address %}
+        <div>{{ order.restaurant.address }}</div>
+    {% endif %}
+
+    {% if order.restaurant.phone %}
+        <div>{{ order.restaurant.phone }}</div>
+    {% endif %}
+
+    <br>
+    <strong>Receipt #{{ order.id }}</strong><br>
+    {{ order.created_at|date:"M d, Y H:i" }}
 </div>
 
 <div class="line"></div>
 
+<!-- ✅ Order Items -->
 {% for item in order.items.all %}
-<div>
-    {{ item.product.name }} x{{ item.quantity }}
-    <br>
-    ${{ item.final_price|floatformat:2 }}
-</div>
+    <div>
+        {{ item.product.name }} x{{ item.quantity }}
+    </div>
+    <div class="item-row">
+        <span></span>
+        <span>
+            ${{ item.final_price|floatformat:2 }}
+        </span>
+    </div>
 {% endfor %}
 
 <div class="line"></div>
 
-<p><strong>Total:</strong> ${{ order.total|floatformat:2 }}</p>
-<p>Status: {{ order.status }}</p>
+<!-- ✅ Totals -->
+<div class="item-row">
+    <span>Subtotal:</span>
+    <span>${{ order.subtotal|floatformat:2 }}</span>
+</div>
+
+{% if order.tax %}
+<div class="item-row">
+    <span>Tax:</span>
+    <span>${{ order.tax|floatformat:2 }}</span>
+</div>
+{% endif %}
+
+<div class="item-row">
+    <strong>Total:</strong>
+    <strong>${{ order.total_price|floatformat:2 }}</strong>
+</div>
+
+<div class="line"></div>
+
+<!-- ✅ Payments -->
+{% if order.payments.exists %}
+    <strong>Payments:</strong>
+    {% for payment in order.payments.all %}
+        <div class="item-row">
+            <span>{{ payment.get_method_display }}:</span>
+            <span>${{ payment.amount|floatformat:2 }}</span>
+        </div>
+    {% endfor %}
+
+    <div class="line"></div>
+
+    <div class="item-row">
+        <span>Paid:</span>
+        <span>${{ order.payments.aggregate.total|default:order.total_price }}</span>
+    </div>
+{% endif %}
+
+<!-- ✅ Status -->
+<div class="center">
+    Status: {{ order.get_status_display }}
+</div>
 
 <div class="line"></div>
 
 <div class="center">
-    <p>Thank you!</p>
+    Thank you for your visit!
 </div>
 
-<button onclick="window.print()">Print</button>
+<!-- ✅ Print Button -->
+<button onclick="window.print()">Print Receipt</button>
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+
+    // Auto print
     window.print();
 
+    // Close window only if opened by script
     window.onafterprint = function () {
-        window.close();
+        if (window.opener) {
+            window.close();
+        }
     };
 });
 </script>
+
 </body>
 </html>

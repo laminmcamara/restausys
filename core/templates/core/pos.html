@@ -2,7 +2,31 @@
 {% load static %}
 
 {% block content %}
+{% if user.is_cashier %}
+<div class="mb-4 flex justify-between items-center bg-white p-4 rounded-xl shadow">
 
+    <div class="text-lg font-semibold">
+        {% if active_shift %}
+            <span class="text-green-600">🟢 Shift Active</span>
+        {% else %}
+            <span class="text-red-600">🔴 No Active Shift</span>
+        {% endif %}
+    </div>
+
+    {% if active_shift %}
+        <a href="{% url 'core:close_shift' %}"
+           class="bg-red-600 text-white px-5 py-2 rounded-xl hover:bg-red-700 transition">
+            End Shift
+        </a>
+    {% else %}
+        <a href="{% url 'core:start_shift' %}"
+           class="bg-green-600 text-white px-5 py-2 rounded-xl hover:bg-green-700 transition">
+            Start Shift
+        </a>
+    {% endif %}
+
+</div>
+{% endif %}
 <div class="h-[calc(100vh-100px)] flex gap-4 p-4">
 
     <!-- LEFT: Products -->

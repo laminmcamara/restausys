@@ -2,95 +2,138 @@
      hx-get="{% url 'core:orders' %}?{{ request.GET.urlencode }}"
      hx-trigger="every 15s"
      hx-target="#orders-container"
-     hx-swap="innerHTML">
+     hx-swap="innerHTML"
+     class="space-y-4 mt-4">
 
   {% for order in orders %}
-  <div class="order-card">
+  <div class="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition p-5">
 
-    <!-- LEFT SIDE -->
-    <div class="order-left">
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
 
-      <!-- Number + ID -->
-      <div class="order-header">
+      <!-- LEFT SIDE -->
+      <div class="flex flex-col space-y-1">
 
-        <span class="order-index">
-          {% if page_obj %}
-            {{ page_obj.start_index|add:forloop.counter0 }}.
+        <div class="flex items-center gap-3">
+
+          <span class="text-sm font-semibold text-slate-700">
+            {% if page_obj %}
+              {{ page_obj.start_index|add:forloop.counter0 }}.
+            {% else %}
+              {{ forloop.counter }}.
+            {% endif %}
+          </span>
+
+          <span class="text-indigo-600 font-bold text-sm">
+            #{{ order.pk }}
+          </span>
+
+        </div>
+
+        <div class="text-xs text-slate-500">
+          {% if order.table %}
+            Table {{ order.table.table_number }}
           {% else %}
-            {{ forloop.counter }}.
+            Takeaway
           {% endif %}
-        </span>
-
-        <span class="order-id">
-          #{{ order.pk }}
-        </span>
+          • {{ order.created_at|date:"M d • H:i" }}
+        </div>
 
       </div>
 
-      <!-- Meta Info -->
-      <div class="order-meta">
-        {% if order.table %}
-          Table {{ order.table.table_number }}
+      <!-- STATUS -->
+      <div>
+        {% if order.status == "PLACED" %}
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700">
+            {{ order.get_status_display }}
+          </span>
+        {% elif order.status == "IN_PROGRESS" %}
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-700">
+            {{ order.get_status_display }}
+          </span>
+        {% elif order.status == "READY" %}
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-700">
+            {{ order.get_status_display }}
+          </span>
+        {% elif order.status == "SERVED" %}
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
+            {{ order.get_status_display }}
+          </span>
+        {% elif order.status == "PAID" %}
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">
+            {{ order.get_status_display }}
+          </span>
+        {% elif order.status == "CANCELED" %}
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-600">
+            {{ order.get_status_display }}
+          </span>
         {% else %}
-          Takeaway
+          <span class="px-3 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-600">
+            {{ order.get_status_display }}
+          </span>
         {% endif %}
-        •
-        {{ order.created_at|date:"M d • H:i" }}
       </div>
 
-    </div>
+      <!-- TOTAL -->
+      <div class="text-right">
+        <div class="text-xs text-slate-400 uppercase tracking-wide">
+          Total
+        </div>
+        <div class="text-lg font-bold text-slate-800">
+          {{ request.user.restaurant.currency }}
+          {{ order.total_amount|floatformat:2 }}
+        </div>
+      </div>
 
-    <!-- STATUS -->
-    <div class="order-status">
-      {{ order.get_status_display }}
-    </div>
+      <!-- ACTIONS -->
+      <div class="flex gap-3 lg:justify-end">
 
-    <!-- TOTAL -->
-    <div class="order-total">
-      {{ request.user.restaurant.currency }}
-      {{ order.total_amount|floatformat:2 }}
-    </div>
+        <a href="{% url 'core:pos' order.pk %}"
+           hx-boost="false"
+           class="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition">
+          Open
+        </a>
 
-    <!-- ACTIONS -->
-    <div class="order-actions">
-      <a href="{% url 'core:pos' order.pk %}" hx-boost="false">
-        Open
-      </a>
-      <a href="{% url 'core:order_detail' order.pk %}" hx-boost="false">
-        View
-      </a>
+        <a href="{% url 'core:order_detail' order.pk %}"
+           hx-boost="false"
+           class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+          View
+        </a>
+
+      </div>
+
     </div>
 
   </div>
 
   {% empty %}
-  <div class="empty-state">
-    <div class="empty-icon">📦</div>
-    <p>No orders yet</p>
+  <div class="bg-white border border-slate-200 rounded-xl p-10 text-center">
+    <div class="text-4xl mb-3">📦</div>
+    <p class="text-slate-500 text-sm">No orders yet</p>
   </div>
   {% endfor %}
 
-
   <!-- Pagination -->
   {% if is_paginated %}
-  <div class="pagination">
+  <div class="flex items-center justify-center gap-6 pt-6 text-sm">
 
     {% if page_obj.has_previous %}
       <a hx-get="?page={{ page_obj.previous_page_number }}&{{ request.GET.urlencode }}"
          hx-target="#orders-container"
-         hx-swap="innerHTML">
+         hx-swap="innerHTML"
+         class="px-4 py-2 bg-slate-100 rounded-lg hover:bg-slate-200 transition">
         ← Previous
       </a>
     {% endif %}
 
-    <span>
+    <span class="text-slate-500">
       Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
     </span>
 
     {% if page_obj.has_next %}
       <a hx-get="?page={{ page_obj.next_page_number }}&{{ request.GET.urlencode }}"
          hx-target="#orders-container"
-         hx-swap="innerHTML">
+         hx-swap="innerHTML"
+         class="px-4 py-2 bg-slate-100 rounded-lg hover:bg-slate-200 transition">
         Next →
       </a>
     {% endif %}
@@ -99,138 +142,3 @@
   {% endif %}
 
 </div>
-
-
-<style>
-#orders-container {
-  display: flex;
-  flex-direction: column;
-  gap: 36px;
-  margin-top: 8px;
-}
-
-.order-card {
-  display: grid;
-  grid-template-columns: 1.6fr 140px 160px 220px;
-  align-items: center;
-  padding: 32px 40px;
-  background: #ffffff;
-  border-radius: 18px;
-  border: 1px solid #f1f5f9;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-  transition: all 0.2s ease;
-}
-
-.order-card:hover {
-  box-shadow: 0 10px 28px rgba(0,0,0,0.06);
-  transform: translateY(-2px);
-}
-
-.order-left {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.order-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.order-index {
-  font-size: 18px;
-  font-weight: 700;
-  color: #111827;
-}
-
-.order-id {
-  font-size: 15px;
-  font-weight: 600;
-  color: #4f46e5;
-}
-
-.order-meta {
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.order-status {
-  font-size: 14px;
-  font-weight: 600;
-  color: #374151;
-}
-
-.order-total {
-  font-size: 20px;
-  font-weight: 700;
-  text-align: right;
-  color: #111827;
-}
-
-.order-actions {
-  display: flex;
-  gap: 14px;
-  justify-content: flex-end;
-}
-
-.order-actions a {
-  padding: 10px 18px;
-  border-radius: 12px;
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none;
-  transition: 0.2s ease;
-}
-
-.order-actions a:first-child {
-  background: #4f46e5;
-  color: white;
-}
-
-.order-actions a:first-child:hover {
-  background: #4338ca;
-}
-
-.order-actions a:last-child {
-  background: #f3f4f6;
-  color: #374151;
-}
-
-.order-actions a:last-child:hover {
-  background: #e5e7eb;
-}
-
-.empty-state {
-  padding: 80px 0;
-  text-align: center;
-  color: #6b7280;
-}
-
-.empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
-}
-
-.pagination {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 24px;
-  margin-top: 40px;
-}
-
-.pagination a {
-  padding: 8px 16px;
-  background: #f3f4f6;
-  border-radius: 8px;
-  text-decoration: none;
-  font-size: 14px;
-  color: #374151;
-}
-
-.pagination span {
-  font-size: 14px;
-  color: #6b7280;
-}
-</style>

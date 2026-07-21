@@ -3,41 +3,71 @@
 
 {% block title %}Pickup Display{% endblock %}
 
-{% block dashboard_content %}
-<div class="min-h-screen bg-slate-900 text-white p-6">
+{% block content %}
 
-    <div class="text-center mb-10">
-        <h1 class="text-5xl font-bold tracking-wide">
+<style>
+@keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+@keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 0px rgba(34,197,94,0); }
+    50% { box-shadow: 0 0 40px rgba(34,197,94,0.9); }
+}
+.order-card {
+    animation: fadeIn 0.4s ease-out;
+}
+.ready-glow {
+    animation: pulseGlow 2s infinite;
+}
+</style>
+
+<div class="min-h-screen bg-black text-white flex flex-col">
+
+    <!-- HEADER -->
+    <div class="text-center py-8 border-b border-slate-800">
+
+        <h1 class="text-6xl font-extrabold tracking-wide">
             {{ restaurant.name }}
         </h1>
-        <p class="text-slate-400 mt-2 text-lg">
+
+        <p class="text-slate-400 text-xl mt-3">
             Order Pickup Status
         </p>
+
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-10">
+    <!-- MAIN GRID -->
+    <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8 p-10">
 
-        <!-- Preparing -->
-        <div class="bg-yellow-500/10 rounded-2xl p-8">
-            <h2 class="text-3xl font-bold text-yellow-400 mb-6 text-center">
+        <!-- PREPARING COLUMN -->
+        <div class="flex flex-col">
+
+            <h2 class="text-4xl font-bold text-yellow-400 text-center mb-8 tracking-wide">
                 Preparing
             </h2>
+
             <div id="preparing-list"
-                 class="grid grid-cols-2 sm:grid-cols-3 gap-6 text-center text-4xl font-bold">
+                 class="flex-1 grid grid-cols-2 lg:grid-cols-3 gap-8 content-start">
             </div>
+
         </div>
 
-        <!-- Ready -->
-        <div class="bg-green-500/10 rounded-2xl p-8">
-            <h2 class="text-3xl font-bold text-green-400 mb-6 text-center">
+        <!-- READY COLUMN -->
+        <div class="flex flex-col">
+
+            <h2 class="text-4xl font-bold text-green-400 text-center mb-8 tracking-wide">
                 Ready for Pickup
             </h2>
+
             <div id="ready-list"
-                 class="grid grid-cols-2 sm:grid-cols-3 gap-6 text-center text-4xl font-bold">
+                 class="flex-1 grid grid-cols-2 lg:grid-cols-3 gap-8 content-start">
             </div>
+
         </div>
 
     </div>
+
 </div>
 
 <script>
@@ -57,29 +87,58 @@ document.addEventListener("DOMContentLoaded", function () {
         const data = JSON.parse(event.data);
 
         if (data.type === "pickup_update") {
-            renderOrders(preparingList, data.now_preparing, "yellow");
-            renderOrders(readyList, data.ready, "green");
+            renderPreparing(data.now_preparing || []);
+            renderReady(data.ready || []);
         }
     };
 
-    function renderOrders(container, orders, color) {
-        container.innerHTML = "";
+    function renderPreparing(orders) {
 
-        if (!orders || orders.length === 0) {
-            container.innerHTML =
-                "<div class='col-span-full text-slate-500 text-xl'>—</div>";
+        preparingList.innerHTML = "";
+
+        if (orders.length === 0) {
+            preparingList.innerHTML =
+                "<div class='col-span-full text-slate-600 text-2xl text-center'>No Orders</div>";
             return;
         }
 
         orders.forEach(number => {
+
             const div = document.createElement("div");
+
             div.className =
-                `bg-${color}-500 text-black rounded-xl py-6 shadow-lg`;
+                "order-card bg-yellow-400 text-black rounded-2xl py-10 text-5xl font-extrabold text-center shadow-2xl";
+
             div.innerText = "#" + number;
-            container.appendChild(div);
+
+            preparingList.appendChild(div);
+        });
+    }
+
+    function renderReady(orders) {
+
+        readyList.innerHTML = "";
+
+        if (orders.length === 0) {
+            readyList.innerHTML =
+                "<div class='col-span-full text-slate-600 text-2xl text-center'>No Orders</div>";
+            return;
+        }
+
+        orders.forEach(number => {
+
+            const div = document.createElement("div");
+
+            div.className =
+                "order-card ready-glow bg-green-500 text-black rounded-2xl py-10 text-5xl font-extrabold text-center shadow-2xl";
+
+            div.innerText = "#" + number;
+
+            readyList.appendChild(div);
         });
     }
 
 });
 </script>
+
 {% endblock %}
