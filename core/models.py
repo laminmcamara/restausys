@@ -367,6 +367,11 @@ class Restaurant(TimeStampedModel):
     country = models.CharField(max_length=60, blank=True)
     timezone = models.CharField(max_length=64, default="UTC")
     currency = models.CharField(max_length=6, default="USD")
+    locale = models.CharField(
+        max_length=10,
+        default="en_US",
+        help_text="Locale for formatting (e.g., en_US, de_DE, fr_FR)"
+    )
     logo = models.ImageField(upload_to="restaurants/logos/", null=True, blank=True)
     phone_number = models.CharField(max_length=20, blank=True)
     status = models.CharField(max_length=10, choices=RestaurantStatus.choices, default=RestaurantStatus.OPEN)
@@ -1174,9 +1179,9 @@ class Order(TimeStampedModel):
 
     @property
     def remaining_balance(self):
-        return self.total_price - self.total_paid
-
-
+        balance = self.total - self.total_paid
+        return balance if balance > Decimal("0.00") else Decimal("0.00")
+    
     @property
     def is_fully_paid(self):
         return self.remaining_balance <= 0
@@ -1274,6 +1279,68 @@ class Order(TimeStampedModel):
             to_status=new_status,
             changed_by=actor
         )
+        
+        
+    def _validate_actor_permission(self, new_status, actor):
+        """
+        Enforces role-based permissions for order state transitions.
+        """
+
+        # Platform owner or superuser override
+        if actor.is_superuser or actor.is_owner:
+            return
+
+        # Manager override
+        if actor.is_manager:
+            return
+
+        # -------------------------------
+        # DRAFT → PLACED
+        # -------------------------------
+        if new_status == self.Status.PLACED:
+            if not actor.is_server:
+                raise PermissionDenied("Only servers can place orders to kitchen.")
+            return
+
+        # -------------------------------
+        # PLACED → IN_PROGRESS
+        # -------------------------------
+        if new_status == self.Status.IN_PROGRESS:
+            if not actor.is_cook:
+                raise PermissionDenied("Only kitchen staff can start preparation.")
+            return
+
+        # -------------------------------
+        # IN_PROGRESS → READY
+        # -------------------------------
+        if new_status == self.Status.READY:
+            if not actor.is_cook:
+                raise PermissionDenied("Only kitchen staff can mark order as ready.")
+            return
+
+        # -------------------------------
+        # READY → SERVED
+        # -------------------------------
+        if new_status == self.Status.SERVED:
+            if not actor.is_server:
+                raise PermissionDenied("Only servers can mark order as served.")
+            return
+
+        # -------------------------------
+        # SERVED → COMPLETED
+        # -------------------------------
+        if new_status == self.Status.COMPLETED:
+            if not actor.is_cashier:
+                raise PermissionDenied("Only cashiers can complete orders.")
+            return
+
+        # -------------------------------
+        # CANCEL
+        # -------------------------------
+        if new_status == self.Status.CANCELED:
+            if not (actor.is_cashier or actor.is_manager):
+                raise PermissionDenied("Only manager or cashier can cancel orders.")
+            return
 
     # =============================================================================
     # COMPLETION LOGIC
@@ -1332,7 +1399,14 @@ class Order(TimeStampedModel):
                 self.session.is_active = False
                 self.session.closed_at = timezone.now()
                 self.session.save()
-
+    def next_action_label(self):
+        mapping = {
+            self.Status.DRAFT: "Send to Kitchen",
+            self.Status.READY: "Serve Order",
+            self.Status.SERVED: "Complete & Pay",
+        }
+        return mapping.get(self.status, "")
+    
     # =============================================================================
     # HELPERS
     # =============================================================================
@@ -1543,30 +1617,42 @@ class KitchenTicket(models.Model):
     # STATUS TRANSITIONS
     # -------------------------------------------------
 
-    def start_preparation(self):
+    def start_preparation(self, actor=None):
         if self.status != self.Status.QUEUED:
             raise ValueError("Ticket is not in queued state")
+
+        if not actor:
+            raise PermissionDenied("Actor is required to start preparation.")
 
         self.status = self.Status.PREPARING
         self.started_at = timezone.now()
         self.save(update_fields=["status", "started_at"])
 
-    def mark_completed(self):
+        # ✅ Transition order as well
+        self.order.transition_to(Order.Status.IN_PROGRESS, actor=actor)
+        
+        
+    def mark_completed(self, actor=None):
+        if not actor:
+            raise PermissionDenied("Actor is required.")
+
         if self.status != self.Status.PREPARING:
-            raise ValueError("Ticket must be preparing before completion")
+            raise ValueError("Ticket must be in PREPARING state.")
+
+        # ✅ Permission check (optional extra layer)
+        if not actor.is_cook and not actor.is_manager:
+            raise PermissionDenied("Only kitchen staff can complete tickets.")
 
         self.status = self.Status.COMPLETED
         self.completed_at = timezone.now()
         self.save(update_fields=["status", "completed_at"])
 
-        self.order.transition_to(Order.Status.READY)
-
-    # -------------------------------------------------
-    # STRING
-    # -------------------------------------------------
-
-    def __str__(self):
-        return f"Kitchen Ticket #{self.pk} for Order #{self.order.order_number}"
+        # ✅ This enforces order permissions + history logging
+        self.order.transition_to(
+        self.order.Status.READY,
+        actor=actor
+        )
+    
     
     
 class AnalyticsSnapshot(models.Model):

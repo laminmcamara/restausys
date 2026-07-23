@@ -1,11 +1,11 @@
 from decimal import Decimal
 
-from django.db.models.signals import post_save, m2m_changed
+from django.db.models.signals import post_save, post_delete, m2m_changed
 from django.contrib.auth.signals import user_logged_in, user_logged_out
 from django.dispatch import receiver
 from django.db.models import Sum
 from django.utils import timezone
-
+from django.template.loader import render_to_string
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
@@ -93,7 +93,7 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
                 {
                     "type": "kitchen_update",
                     "data": {
-                        "type": "new_ticket",
+                        "type": "update_ticket",
                         "ticket_id": ticket.id,
                         "ticket_html": ticket_html,
                     },
@@ -116,7 +116,7 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
     # ✅ ORDER COMPLETED OR CANCELLED
     elif instance.status in [
         Order.Status.COMPLETED,
-        Order.Status.CANCELLED,
+        Order.Status.CANCELED,
     ]:
         try:
             ticket = instance.kitchen_ticket
@@ -136,6 +136,9 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
 
         except KitchenTicket.DoesNotExist:
             pass
+
+
+
 
     # ==============================
     # ✅ POS SCREENS
@@ -167,3 +170,41 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
                 },
             },
         )
+        
+        
+@receiver([post_save, post_delete], sender=OrderItem)
+def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
+
+    order = instance.order
+
+    # Only update active kitchen orders
+    if order.status not in [
+        order.Status.PLACED,
+        order.Status.IN_PROGRESS,
+    ]:
+        return
+
+    try:
+        ticket = order.kitchen_ticket
+    except KitchenTicket.DoesNotExist:
+        return
+
+    channel_layer = get_channel_layer()
+    kitchen_group = f"kitchen_{order.restaurant_id}"
+
+    ticket_html = render_to_string(
+        "core/partials/kds_ticket.html",
+        {"ticket": ticket}
+    )
+
+    async_to_sync(channel_layer.group_send)(
+        kitchen_group,
+        {
+            "type": "kitchen_update",
+            "data": {
+                "type": "new_ticket",
+                "ticket_id": ticket.id,
+                "ticket_html": ticket_html,
+            },
+        },
+    )

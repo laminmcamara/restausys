@@ -1,45 +1,35 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Checkout</title>
+    <title>Checkout | Table {{ table.table_number }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: sans-serif; padding:15px; }
-        .btn { padding:10px 15px; background:#28a745; color:white; border:none; border-radius:6px; }
-        .item { border-bottom:1px solid #eee; padding:10px 0; }
-    </style>
 </head>
-<body>
+<body style="font-family: system-ui; padding:16px; background:#f9fafb;">
 
-<h2>Your Cart</h2>
-<div id="cart"></div>
+<h1>Checkout - Table {{ table.table_number }}</h1>
 
-<button class="btn" id="checkoutBtn">Place Order</button>
+{% if cart_items %}
+    <ul>
+        {% for item in cart_items %}
+            <li>
+                {{ item.product.name }} × {{ item.quantity }}
+                - {{ item.total }}
+            </li>
+        {% endfor %}
+    </ul>
 
-<script>
-const token = "{{ table.access_token }}";
+    <h2>Total: {{ total }}</h2>
 
-async function loadCart() {
-    let r = await fetch(`/api/table/${token}/cart/`);
-    let cart = await r.json();
+    <form method="post" action="{% url 'core:place-table-order' table.access_token %}">
+        {% csrf_token %}
+        <!-- ✅ Idempotency token -->
+        <input type="hidden" name="nonce" value="{{ qr_nonce }}">
+        <button type="submit">Confirm Order</button>
+    </form>
 
-    let html = "";
-    for (let key in cart)
-        html += `<div class="item">${cart[key].name} × ${cart[key].quantity}</div>`;
-    
-    document.getElementById("cart").innerHTML = html || "Cart is empty";
-}
-
-document.getElementById("checkoutBtn").onclick = async () => {
-    let r = await fetch(`/table/${token}/checkout/`, { method: "POST" });
-    let data = await r.json();
-
-    if (data.order_id)
-        window.location = `/table/order/${data.order_id}/`;
-};
-
-loadCart();
-</script>
+{% else %}
+    <p>Your cart is empty.</p>
+{% endif %}
 
 </body>
 </html>

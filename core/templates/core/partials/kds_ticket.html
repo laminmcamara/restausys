@@ -6,7 +6,9 @@
         <div class="ticket-info">
             <h2>
                 #{{ ticket.order.order_number }}
-                <small>({{ ticket.order.table.table_number|default:"Takeout" }})</small>
+                <small>
+                    ({{ ticket.order.table.table_number|default:"Takeout" }})
+                </small>
             </h2>
         </div>
         <div class="ticket-timer">00:00</div>
@@ -15,9 +17,43 @@
     <div class="ticket-body">
         <ul>
             {% for item in ticket.order.items.all %}
-            <li>
-                <span class="item-quantity">{{ item.quantity }}x</span>
-                <span>{{ item.product.name }}</span>
+            <li class="kds-item">
+
+                <!-- Main Line -->
+                <div class="item-main">
+                    <span class="item-quantity">
+                        {{ item.quantity }} ×
+                    </span>
+
+                    <strong class="item-name">
+                        {{ item.product.name }}
+                    </strong>
+
+                    {% if item.variant %}
+                        <span class="item-variant">
+                            ({{ item.variant.name }})
+                        </span>
+                    {% endif %}
+                </div>
+
+                <!-- Modifiers -->
+                {% if item.modifiers.all %}
+                <div class="item-modifiers">
+                    {% for mod in item.modifiers.all %}
+                        <div class="modifier">
+                            • {{ mod.name }}
+                        </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <!-- Notes -->
+                {% if item.notes %}
+                <div class="item-notes">
+                    ⚠ {{ item.notes }}
+                </div>
+                {% endif %}
+
             </li>
             {% endfor %}
         </ul>

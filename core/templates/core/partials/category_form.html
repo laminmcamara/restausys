@@ -1,14 +1,35 @@
 <div class="modal">
-    <form 
-        hx-post="{% url 'core:category_add' %}"
-        hx-target="#category-table"
-        hx-swap="innerHTML"
->
-        {% csrf_token %}
-        {{ form.as_p }}
+    <div class="card" style="max-width:500px; margin:40px auto;">
 
-        <button type="submit" class="btn btn-primary">
-            Save
-        </button>
-    </form>
+        <h3 style="margin-bottom:20px;">Add Category</h3>
+
+        <form
+            method="POST"
+            hx-post="{{ request.path }}"            
+            hx-target="#category-table"
+            hx-swap="innerHTML"
+            hx-on::after-request="if(event.detail.successful) document.getElementById('modal').innerHTML=''"
+        >
+            {% csrf_token %}
+
+            <div style="display:grid; gap:16px;">
+                {{ form.as_p }}
+            </div>
+
+            <div style="margin-top:20px; display:flex; justify-content:flex-end; gap:10px;">
+                <button 
+                    type="button" 
+                    class="btn btn-outline"
+                    onclick="document.getElementById('modal').innerHTML=''">
+                    Cancel
+                </button>
+
+                <button type="submit" class="btn btn-primary">
+                    Save
+                </button>
+            </div>
+
+        </form>
+
+    </div>
 </div>

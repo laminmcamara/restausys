@@ -29,12 +29,7 @@ html {
     font-size: 16px;
 }
 
-body {
-    margin: 0;
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
-    background: var(--bg-main);
-    color: var(--text-primary);
-}
+
 
 
 /* ============================================================
@@ -44,6 +39,9 @@ body {
 .app-container {
     display: flex;
     min-height: 100vh;
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
 /* ================= SIDEBAR ================= */
@@ -213,7 +211,7 @@ h3 { font-size: 18px; font-weight: 600; margin: 0; }
     padding: 28px;
     box-shadow: 0 4px 14px rgba(0,0,0,0.25);
     margin-bottom: 32px;
-    color: #111827;
+    color: var(--text-primary);
 }
 
 .card-header {
@@ -417,15 +415,6 @@ label {
     margin-bottom: 6px;
 }
 
-
-.sidebar-nav a.active {
-    background: #f1f5f9;
-    font-weight: 600;
-    border-radius: 8px;
-}
-
-
-
 /* ==============================
    ✅ KITCHEN TICKET STYLING
 ============================== */
@@ -481,4 +470,92 @@ label {
 .item-quantity {
     font-weight: bold;
     color: #111827;
+}
+
+
+
+.kds-item {
+    margin-bottom: 10px;
+}
+
+.item-main {
+    font-size: 1.05rem;
+}
+
+.item-quantity {
+    font-weight: bold;
+    margin-right: 6px;
+}
+
+.item-variant {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-left: 4px;
+}
+
+.item-modifiers {
+    margin-left: 20px;
+    font-size: 0.9rem;
+    color: #374151;
+}
+
+.modifier {
+    line-height: 1.4;
+}
+
+.item-notes {
+    margin-left: 20px;
+    font-size: 0.9rem;
+    color: #dc2626;
+    font-weight: 600;
+}
+
+
+.bg-white {
+    color: #111827;
+}
+
+
+/* ============================================================
+   ✅ FORM SYSTEM (DARK THEME FIX)
+============================================================ */
+
+form {
+    color: var(--text-primary);
+}
+
+form p {
+    margin-bottom: 18px;
+}
+
+form input,
+form textarea,
+form select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+form input:focus,
+form textarea:focus,
+form select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 1px var(--primary);
+}
+
+form input::placeholder,
+form textarea::placeholder {
+    color: var(--text-muted);
+}
+
+/* Fix checkbox visibility */
+form input[type="checkbox"] {
+    width: auto;
+    margin-right: 6px;
 }

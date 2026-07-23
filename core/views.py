@@ -1024,6 +1024,41 @@ class OrderDetailView(LoginRequiredMixin, DetailView):
             )
         )
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        context["categories"] = Category.objects.filter(
+            menu__restaurant=self.request.user.restaurant
+        )
+
+        context["products"] = Product.objects.filter(
+            category__menu__restaurant=self.request.user.restaurant,
+            is_available=True
+        ).select_related("category")
+
+        return context
+    
+@login_required
+@require_POST
+@transaction.atomic
+def add_order_item(request, order_id, product_id):
+    order = get_object_or_404(Order, id=order_id)
+    product = get_object_or_404(Product, id=product_id)
+
+    item, created = OrderItem.objects.get_or_create(
+        order=order,
+        product=product,
+        defaults={
+            "quantity": 1
+        }
+    )
+
+    if not created:
+        item.quantity += 1
+        item.save()   # ✅ triggers your custom save()
+
+    return redirect("core:order_detail", pk=order.id)
+
 @login_required
 def dashboard_create_order(request, session_id):
     session = get_object_or_404(
@@ -1105,8 +1140,24 @@ def public_table_menu(request, token):
         access_token=token
     )
 
-    # ✅ Store table in session
+    now = timezone.now()
+
+    # ✅ Bind session to this table
     request.session["table_id"] = str(table.id)
+
+    # ✅ Store token for verification (prevents manual session tampering)
+    request.session["table_token"] = token
+
+    # ✅ QR session expiration (3 hours)
+    request.session["qr_expires_at"] = (
+        now + timedelta(hours=3)
+    ).isoformat()
+
+    # ✅ Idempotency token for safe order placement
+    nonce = uuid.uuid4().hex
+    request.session["qr_nonce"] = nonce
+
+    request.session.modified = True
 
     products = (
         Product.objects
@@ -1122,28 +1173,150 @@ def public_table_menu(request, token):
         "table": table,
         "restaurant": table.restaurant,
         "products": products,
+        "qr_nonce": nonce,  # ✅ pass to template
     })
-
+    
 
 # ✅ Order Status Page View  <-- ADD IT HERE
-def table_order_status(request, order_id):
+def table_order_status(request, token, order_id):
+
+    if not validate_qr_session(request, token):
+        return render(request, "customer/session_expired.html")
+
     order = get_object_or_404(
         Order.objects.select_related("table", "restaurant"),
         id=order_id
     )
 
-    # ✅ Must have table
     if not order.table:
         return redirect("home")
 
-    # ✅ Verify order belongs to current session table
     if request.session.get("table_id") != str(order.table.id):
-        return redirect("home")  # or raise PermissionDenied
+        return redirect("home")
 
     return render(request, "core/table_order_status.html", {
         "order": order
     })
     
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+import json
+
+
+@csrf_exempt  # only if you're not sending CSRF
+def table_cart_api(request, token):
+    
+    if not validate_qr_session(request, token):
+        return JsonResponse({"error": "QR session expired."}, status=403)
+
+    
+    if request.method == "POST":
+        data = json.loads(request.body)
+
+        product_id = str(data.get("item_id"))
+        quantity = int(data.get("quantity"))
+
+        cart = request.session.get("cart", {})
+
+        cart[product_id] = cart.get(product_id, 0) + quantity
+
+        request.session["cart"] = cart
+        request.session.modified = True
+
+        return JsonResponse({
+            "cart_count": sum(cart.values())
+        })
+
+    return JsonResponse({"error": "Invalid request"}, status=400)
+    
+def table_checkout(request, token):
+    
+    if not validate_qr_session(request, token):
+        return render(request, "customer/session_expired.html")
+
+    table = get_object_or_404(Table, access_token=token)
+
+    cart = request.session.get("cart", {})
+
+    cart_items = []
+    total = 0
+
+    for product_id, quantity in cart.items():
+        product = Product.objects.get(id=product_id)
+
+        item_total = product.price * quantity
+        total += item_total
+
+        cart_items.append({
+            "product": product,
+            "quantity": quantity,
+            "total": item_total
+        })
+
+    return render(request, "core/table_checkout.html", {
+        "table": table,
+        "cart_items": cart_items,
+        "total": total
+    })
+    
+@require_POST
+@transaction.atomic
+def place_table_order(request, token):
+    """
+    Final production-safe QR order placement view.
+    """
+    if not validate_qr_session(request, token):
+        return render(request, "customer/session_expired.html")
+    
+    # ✅ 1. Validate table via secure token
+    table = get_object_or_404(Table, access_token=token)
+
+    # ✅ 2. Get cart from session
+    cart = request.session.get("cart", {})
+
+    if not cart:
+        return redirect("core:public-table-menu", token=token)
+
+    # ✅ 3. Create or reuse active session order (uses your factory)
+    order = Order.create_for_table(
+        table=table,
+        created_by=None  # QR customer (no staff user)
+    )
+
+    # ✅ 4. Clear existing draft items (safety if re-submitting)
+    order.items.all().delete()
+
+    # ✅ 5. Add items
+    for variant_id, qty in cart.items():
+
+        if int(qty) <= 0:
+            continue
+
+        variant = ProductVariant.objects.select_related("product").get(
+            id=variant_id,
+            product__category__menu__restaurant=table.restaurant
+        )
+
+        OrderItem.objects.create(
+            order=order,
+            product=variant.product,
+            variant=variant,
+            quantity=int(qty)
+            # ✅ final_price auto-calculated in OrderItem.save()
+        )
+
+    # ✅ 6. Use your official state transition
+    order.mark_as_placed()
+
+    # ✅ 7. Clear cart
+    request.session["cart"] = {}
+    request.session.modified = True
+
+    # ✅ 8. Redirect to order tracking page
+    return redirect("core:table-order-status", token=token,
+        order_id=order.id)
+
+
 # ======================================================================
 # ======================== API VIEWSETS ================================
 # ======================================================================
@@ -1271,6 +1444,52 @@ class ProductCreateView(LoginRequiredMixin, CreateView):
         kwargs["restaurant"] = self.request.user.restaurant
 
         return kwargs
+    
+# ==============================================================
+# ================== PRODUCT UPDATE ============================
+# ==============================================================
+
+class ProductUpdateView(LoginRequiredMixin, UpdateView):
+    model = Product
+    template_name = "core/admin/edit_product.html"
+    fields = ["name", "price", "description", "is_available", "category"]
+    
+    def get_queryset(self):
+        """
+        Restrict editing to products belonging to
+        the logged-in user's restaurant.
+        """
+        restaurant = self.request.user.restaurant
+        return Product.objects.filter(restaurant=restaurant)
+
+    def get_success_url(self):
+        return reverse_lazy("core:product_list")
+
+
+# ==============================================================
+# ================== PRODUCT DELETE ============================
+# ==============================================================
+
+class ProductDeleteView(LoginRequiredMixin, DeleteView):
+    model = Product
+    template_name = "core/admin/delete_product.html"
+
+    def get_queryset(self):
+        restaurant = self.request.user.restaurant
+        return Product.objects.filter(restaurant=restaurant)
+
+    def get_success_url(self):
+        return reverse_lazy("core:product_list")
+    
+class ProductListView(LoginRequiredMixin, ListView):
+    model = Product
+    template_name = "core/admin/products.html"
+    context_object_name = "products"
+
+    def get_queryset(self):
+        return Product.objects.filter(
+            category__menu__restaurant=self.request.user.restaurant
+        ).select_related("category")
 
 class ManagerProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -1341,32 +1560,108 @@ def order_receipt(request, pk):
         restaurant=request.user.restaurant
     )
 
-    if order.status == "pending":
-        order.status = "completed"
-        order.save(update_fields=["status"])
-
-        # ✅ Broadcast to Kitchen Display
-        channel_layer = get_channel_layer()
-
-        serialized = OrderSerializer(order).data
-
-        async_to_sync(channel_layer.group_send)(
-            f"kitchen_{order.restaurant_id}",
-            {
-                "type": "order_status_update",
-                "data": {
-                    "type": "new_order",
-                    "order": serialized
-                }
-            }
-        )
-
-    return render(request, "orders/order_receipt.html", {
-        "order": order
-    })
+    return render(
+        request,
+        "orders/order_receipt.html",
+        {"order": order}
+    )
     
-def order_status_api(request, order_id):
+@login_required
+@require_POST
+def complete_order(request, pk):
 
+    if not hasattr(request.user, "restaurant"):
+        raise PermissionDenied("No restaurant assigned.")
+
+    order = get_object_or_404(
+        Order,
+        pk=pk,
+        restaurant=request.user.restaurant
+    )
+
+    # ✅ Prevent double checkout
+    if order.status == Order.Status.COMPLETED:
+        return redirect("core:order-receipt", pk=order.pk)
+
+    # ✅ Update order state
+    order.status = Order.Status.COMPLETED
+    order.payment_status = Order.PaymentStatus.PAID
+    order.completed_at = timezone.now()
+    order.save()
+
+    # ✅ Broadcast to Kitchen (only once)
+    channel_layer = get_channel_layer()
+    serialized = OrderSerializer(order).data
+
+    async_to_sync(channel_layer.group_send)(
+        f"kitchen_{order.restaurant_id}",
+        {
+            "type": "order_status_update",
+            "data": {
+                "type": "new_order",
+                "order": serialized
+            }
+        }
+    )
+
+    return redirect("core:order-receipt", pk=order.pk)
+
+@login_required
+@require_POST
+def send_to_kitchen(request, pk):
+
+    order = get_object_or_404(
+        Order,
+        pk=pk,
+        restaurant=request.user.restaurant
+    )
+
+    if order.status == Order.Status.DRAFT:
+        order.transition_to(Order.Status.PLACED, actor=request.user)
+
+    return redirect("core:pos", order_id=order.pk)
+
+
+# kitchen/views.py
+
+
+
+
+@transaction.atomic
+def complete_ticket(request, ticket_id):
+    ticket = get_object_or_404(
+        KitchenTicket.objects.select_for_update(),
+        pk=ticket_id
+    )
+
+    ticket.mark_completed(actor=request.user)
+
+    return JsonResponse({"detail": "Ticket completed successfully."})
+
+
+@login_required
+@require_POST
+def mark_as_paid(request, pk):
+
+    order = get_object_or_404(
+        Order,
+        pk=pk,
+        restaurant=request.user.restaurant
+    )
+
+    order.payment_status = Order.PaymentStatus.PAID
+    order.save(update_fields=["payment_status"])
+
+    # ✅ Use model completion logic
+    order.complete_order(actor=request.user)
+
+    return redirect("core:order-receipt", pk=order.pk)
+    
+def order_status_api(request,token, order_id):
+    
+    if not validate_qr_session(request, token):
+        return render(request, "customer/session_expired.html")
+    
     table_id = request.session.get("table_id")
 
     if not table_id:
@@ -1384,8 +1679,15 @@ def order_status_api(request, order_id):
 
 
 @require_POST
-def call_waiter_api(request, table_id):
-    table = get_object_or_404(Table, id=table_id)
+def call_waiter_api(request, token):
+
+    if not validate_qr_session(request, token):
+        return JsonResponse({"error": "QR session expired."}, status=403)
+
+    table = get_object_or_404(
+        Table,
+        access_token=token
+    )
 
     WaiterCall.objects.create(
         restaurant=table.restaurant,
@@ -2771,10 +3073,10 @@ class CategoryUpdateView(LoginRequiredMixin, UpdateView):
             menu__restaurant=self.request.user.restaurant
         )
         
+
 class CategoryDeleteView(LoginRequiredMixin, DeleteView):
     model = Category
-    template_name = "core/dashboard/category_confirm_delete.html"
-    success_url = reverse_lazy("core:category_list")
+    http_method_names = ["delete"]
 
     def get_queryset(self):
         return Category.objects.filter(
@@ -2784,13 +3086,14 @@ class CategoryDeleteView(LoginRequiredMixin, DeleteView):
     def delete(self, request, *args, **kwargs):
         self.object = self.get_object()
 
-        if self.object.product_set.exists():
+        if self.object.products.exists():
             return HttpResponseBadRequest(
                 "Cannot delete category with products."
             )
 
-        return super().delete(request, *args, **kwargs)
-    
+        self.object.delete()
+
+        return HttpResponse(status=204)   # ✅ VERY IMPORTANT
         
 class UpdateCategoryOrderView(LoginRequiredMixin, View):
 

@@ -1,217 +1,59 @@
 {% extends "core/dashboard_base.html" %}
-{% load static %}
 
 {% block title %}
 Order #{{ order.short_id }}
 {% endblock %}
 
-{% block dashboard_content %}
+{% block content %}
 
-<div class="min-h-screen bg-gray-50 px-6 py-8">
-    <div class="max-w-5xl mx-auto">
+<div class="min-h-screen bg-gray-50 p-6">
 
-        <!-- ================= HEADER ================= -->
-        <div class="flex justify-between items-center mb-8">
-            <h1 class="text-3xl font-bold text-gray-800">
+    <div class="max-w-4xl mx-auto bg-white rounded-lg shadow p-6">
+
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold">
                 Order #{{ order.short_id }}
-            </h1>
+            </h2>
 
-            <div class="flex items-center gap-3">
+            <span class="px-3 py-1 text-sm rounded-full bg-gray-200">
+                {{ order.get_status_display }}
+            </span>
+        </div>
 
-                <span class="px-3 py-1 text-sm rounded font-semibold
-                    {% if order.status == 'COMPLETED' %}
-                        bg-green-100 text-green-700
-                    {% elif order.status == 'CANCELED' %}
-                        bg-red-100 text-red-700
-                    {% elif order.status == 'IN_PROGRESS' %}
-                        bg-yellow-100 text-yellow-700
-                    {% else %}
-                        bg-gray-100 text-gray-700
-                    {% endif %}
-                ">
-                    {{ order.get_status_display }}
-                </span>
-
-                <a href="{% url 'core:orders' %}"
-                   class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-sm rounded">
-                    ← Back
-                </a>
-
+        <!-- Items -->
+        <div class="space-y-4 mb-6">
+            {% for item in order.items.all %}
+            <div class="flex justify-between border-b pb-2">
+                <div>
+                    <div class="font-medium">
+                        {{ item.product.name }}
+                    </div>
+                    <div class="text-sm text-gray-500">
+                        Qty: {{ item.quantity }}
+                    </div>
+                </div>
+                <div class="font-semibold">
+                    {{ item.subtotal|floatformat:2 }}
+                </div>
             </div>
+            {% empty %}
+            <p class="text-gray-400 italic">
+                No items.
+            </p>
+            {% endfor %}
         </div>
 
-        <!-- ================= ORDER INFO ================= -->
-        <div class="bg-white rounded-lg shadow p-6 mb-8">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm">
-
-                <div>
-                    <p class="text-gray-500">Customer</p>
-                    <p class="font-medium">
-                        {{ order.customer|default:"Walk-in" }}
-                    </p>
-                </div>
-
-                <div>
-                    <p class="text-gray-500">Order Type</p>
-                    <p class="font-medium">
-                        {{ order.get_order_type_display }}
-                    </p>
-                </div>
-
-                {% if order.table %}
-                <div>
-                    <p class="text-gray-500">Table</p>
-                    <p class="font-medium">
-                        Table {{ order.table.number }}
-                    </p>
-                </div>
-                {% endif %}
-
-                <div>
-                    <p class="text-gray-500">Created</p>
-                    <p class="font-medium">
-                        {{ order.created_at|date:"M d, Y H:i" }}
-                    </p>
-                </div>
-
-                <div>
-                    <p class="text-gray-500">Payment Status</p>
-                    <p class="font-medium">
-                        {{ order.get_payment_status_display }}
-                    </p>
-                </div>
-
+        <!-- Totals -->
+        <div class="border-t pt-4 space-y-2 text-right">
+            <div>Subtotal: {{ order.subtotal|floatformat:2 }}</div>
+            <div>Tax: {{ order.tax|floatformat:2 }}</div>
+            <div class="font-bold text-lg">
+                Total: {{ order.total|floatformat:2 }}
             </div>
-        </div>
-
-        <!-- ================= ITEMS ================= -->
-        <div class="bg-white rounded-lg shadow mb-8">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-                <thead class="bg-gray-100">
-                    <tr>
-                        <th class="px-4 py-3 text-left">Item</th>
-                        <th class="px-4 py-3 text-left">Qty</th>
-                        <th class="px-4 py-3 text-left">Unit Price</th>
-                        <th class="px-4 py-3 text-right">Subtotal</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-
-                    {% for item in order.items.all %}
-                    <tr>
-                        <td class="px-4 py-3 font-medium text-gray-800">
-                            {{ item.product.name }}
-                            {% if item.variant %}
-                                <span class="text-gray-500 text-xs">
-                                    ({{ item.variant.name }})
-                                </span>
-                            {% endif %}
-                        </td>
-
-                        <td class="px-4 py-3">
-                            {{ item.quantity }}
-                        </td>
-
-                        <td class="px-4 py-3">
-                            {{ item.final_price|floatformat:2 }}
-                        </td>
-
-                        <td class="px-4 py-3 text-right font-semibold">
-                            {{ item.subtotal|floatformat:2 }}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="4"
-                            class="text-center py-6 text-gray-400 italic">
-                            No items added yet.
-                        </td>
-                    </tr>
-                    {% endfor %}
-
-                </tbody>
-            </table>
-        </div>
-
-        <!-- ================= TOTALS ================= -->
-        <div class="bg-white rounded-lg shadow p-6 mb-8">
-
-            <div class="space-y-2 text-sm">
-
-                <div class="flex justify-between">
-                    <span>Subtotal</span>
-                    <span>{{ order.subtotal|floatformat:2 }}</span>
-                </div>
-
-                <div class="flex justify-between">
-                    <span>Tax</span>
-                    <span>{{ order.tax|floatformat:2 }}</span>
-                </div>
-
-                <div class="flex justify-between">
-                    <span>Service Charge</span>
-                    <span>{{ order.service_charge|floatformat:2 }}</span>
-                </div>
-
-                <div class="flex justify-between">
-                    <span>Discount</span>
-                    <span>-{{ order.discount|floatformat:2 }}</span>
-                </div>
-
-                <div class="flex justify-between">
-                    <span>Tip</span>
-                    <span>{{ order.tip|floatformat:2 }}</span>
-                </div>
-
-                <hr>
-
-                <div class="flex justify-between text-lg font-bold">
-                    <span>Total</span>
-                    <span>
-                        {{ order.total|floatformat:2 }}
-                    </span>
-                </div>
-
-                <div class="flex justify-between text-sm text-gray-600 mt-2">
-                    <span>Paid</span>
-                    <span>{{ order.total_paid|floatformat:2 }}</span>
-                </div>
-
-                <div class="flex justify-between text-sm text-gray-600">
-                    <span>Remaining</span>
-                    <span>{{ order.remaining_balance|floatformat:2 }}</span>
-                </div>
-
-            </div>
-
-        </div>
-
-        <!-- ================= ACTIONS ================= -->
-        <div class="flex justify-end gap-3">
-
-            {% if order.is_editable %}
-            <form method="post"
-                  action="{% url 'core:order-complete' order.id %}">
-                {% csrf_token %}
-                <button type="submit"
-                        class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded">
-                    Mark as Completed
-                </button>
-            </form>
-            {% endif %}
-
-            <form method="post"
-                  action="{% url 'core:order-delete' order.id %}">
-                {% csrf_token %}
-                <button type="submit"
-                        class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded">
-                    Delete
-                </button>
-            </form>
-
         </div>
 
     </div>
+
 </div>
 
 {% endblock %}

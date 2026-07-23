@@ -42,7 +42,7 @@
                 </td>
 
                 <td>
-                    {{ product.price|currency:request.restaurant.currency }}
+                    {{ product.price|currency:request.user.restaurant }}
                 </td>
 
                 <td>
@@ -54,11 +54,11 @@
                 </td>
 
                 <td style="text-align:right;">
-                    <a href="{% url 'edit_product' product.id %}" class="btn btn-secondary">
+                    <a href="{% url 'core:edit_product' product.id %}" class="btn btn-secondary">
                         Edit
                     </a>
 
-                    <a href="{% url 'delete_product' product.id %}" class="btn btn-danger">
+                    <a href="{% url 'core:delete_product' product.id %}" class="btn btn-danger">
                         Delete
                     </a>
                 </td>

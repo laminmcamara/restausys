@@ -4,7 +4,8 @@ from django.utils import timezone
 from django.db.models import Sum, F
 from datetime import timedelta
 import logging
-
+from babel.numbers import format_currency as babel_format
+from decimal import Decimal, InvalidOperation
 from .models import Order, DailyReport
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,27 @@ CURRENCY_SYMBOLS = {
     "RWF": "FRw",
 }
 
-def format_currency(amount, currency_code="USD"):
-    symbol = CURRENCY_SYMBOLS.get(currency_code, "")
-    return f"{symbol}{amount:,.2f}"
+def format_currency(amount, restaurant=None):
+    """
+    Locale-aware currency formatter.
+    Defaults to HKD + en_HK if restaurant or fields are missing.
+    """
+
+    try:
+        amount = Decimal(amount)
+    except (InvalidOperation, TypeError):
+        return amount
+
+    # ✅ Default fallback values
+    currency_code = "HKD"
+    locale = "en_HK"
+
+    if restaurant:
+        currency_code = getattr(restaurant, "currency", None) or "HKD"
+        locale = getattr(restaurant, "locale", None) or "en_HK"
+
+    return babel_format(
+        amount,
+        currency_code,
+        locale=locale
+    )

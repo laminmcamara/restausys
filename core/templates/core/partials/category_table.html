@@ -36,9 +36,10 @@
 
                 <!-- ✅ Delete -->
                 <button
-                    hx-get="{% url 'core:category_delete' category.id %}"
-                    hx-target="#modal"
+                    hx-delete="{% url 'core:category_delete' category.id %}"
+                    hx-target="#category-table"
                     hx-swap="innerHTML"
+                    hx-confirm="Are you sure you want to delete this category?"
                     class="btn btn-danger">
                     Delete
                 </button>

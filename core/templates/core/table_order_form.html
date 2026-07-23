@@ -3,178 +3,93 @@
 <head>
     <title>Order | Table {{ table.table_number }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <style>
-        body {
-            font-family: system-ui, sans-serif;
-            margin: 0;
-            padding: 16px;
-            background: #f9fafb;
-        }
-
-        h1 {
-            margin-bottom: 5px;
-        }
-
-        .category {
-            margin-top: 30px;
-            font-size: 20px;
-            font-weight: bold;
-        }
-
-        .item {
-            background: white;
-            margin-top: 12px;
-            padding: 14px;
-            border-radius: 10px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-        }
-
-        .item-name {
-            font-weight: bold;
-            font-size: 16px;
-        }
-
-        .qty-controls {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 8px;
-        }
-
-        .btn {
-            padding: 6px 12px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-
-        .add-btn {
-            background: #111827;
-            color: white;
-        }
-
-        .qty-btn {
-            background: #e5e7eb;
-        }
-
-        #cartBtn {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #16a34a;
-            color: white;
-            padding: 12px 18px;
-            border-radius: 30px;
-            font-weight: bold;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-        }
-
-        #cartCount {
-            background: white;
-            color: #16a34a;
-            border-radius: 50%;
-            padding: 2px 8px;
-            margin-left: 6px;
-        }
-    </style>
 </head>
-<body>
+<body style="font-family: system-ui; padding:16px; background:#f9fafb;">
 
 <h1>Table {{ table.table_number }}</h1>
 <p>Select your items</p>
 
+{% csrf_token %}
+
 {% for category, items in categorized_menu.items %}
-    <div class="category">{{ category }}</div>
+    <h2 style="margin-top:30px;">{{ category }}</h2>
 
     {% for item in items %}
-        <div class="item">
-            <div class="item-name">{{ item.name }}</div>
-            <div>{{ item.description }}</div>
+        <div style="background:white; padding:12px; margin-top:10px; border-radius:8px;">
+            <strong>{{ item.name }}</strong>
+            <p>{{ item.description }}</p>
 
-            <div class="qty-controls">
-                <button class="btn qty-btn minus"
-                        data-id="{{ item.id }}">−</button>
+            <button onclick="changeQty({{ item.id }}, -1)">−</button>
+            <span id="qty-{{ item.id }}">0</span>
+            <button onclick="changeQty({{ item.id }}, 1)">+</button>
 
-                <span id="qty-{{ item.id }}">0</span>
-
-                <button class="btn qty-btn plus"
-                        data-id="{{ item.id }}">+</button>
-
-                <button class="btn add-btn addBtn"
-                        data-id="{{ item.id }}">
-                    Add
-                </button>
-            </div>
+            <button onclick="addToCart({{ item.id }})">
+                Add
+            </button>
         </div>
     {% endfor %}
 {% endfor %}
 
-<button id="cartBtn">
-    Cart <span id="cartCount">0</span>
+<button onclick="goToCheckout()" 
+        style="position:fixed; bottom:20px; right:20px; padding:12px 20px;">
+    Checkout (<span id="cartCount">0</span>)
 </button>
 
 <script>
 const token = "{{ table.access_token }}";
-let cartCount = 0;
 
-async function updateCart(itemId, qty) {
-    try {
-        const response = await fetch(`/api/table/${token}/cart/`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                item_id: itemId,
-                quantity: qty
-            })
-        });
-
-        if (response.ok) {
-            cartCount += qty;
-            document.getElementById("cartCount").innerText = cartCount;
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== "") {
+        const cookies = document.cookie.split(";");
+        for (let cookie of cookies) {
+            cookie = cookie.trim();
+            if (cookie.startsWith(name + "=")) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
         }
+    }
+    return cookieValue;
+}
 
-    } catch (error) {
-        console.error("Error:", error);
+function changeQty(id, amount) {
+    const el = document.getElementById("qty-" + id);
+    let value = parseInt(el.innerText);
+    value = Math.max(0, value + amount);
+    el.innerText = value;
+}
+
+async function addToCart(id) {
+    const qtyEl = document.getElementById("qty-" + id);
+    const quantity = parseInt(qtyEl.innerText);
+
+    if (quantity <= 0) return;
+
+    const response = await fetch(`/api/table/${token}/cart/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCookie("csrftoken")
+        },
+        body: JSON.stringify({
+            item_id: id,
+            quantity: quantity
+        })
+    });
+
+    if (response.ok) {
+        const data = await response.json();
+        document.getElementById("cartCount").innerText = data.cart_count;
+        qtyEl.innerText = 0;
+    } else {
+        alert("Failed to add item.");
     }
 }
 
-// Quantity buttons
-document.querySelectorAll(".plus").forEach(btn => {
-    btn.onclick = () => {
-        const id = btn.dataset.id;
-        const qtySpan = document.getElementById(`qty-${id}`);
-        qtySpan.innerText = parseInt(qtySpan.innerText) + 1;
-    };
-});
-
-document.querySelectorAll(".minus").forEach(btn => {
-    btn.onclick = () => {
-        const id = btn.dataset.id;
-        const qtySpan = document.getElementById(`qty-${id}`);
-        let current = parseInt(qtySpan.innerText);
-        if (current > 0) qtySpan.innerText = current - 1;
-    };
-});
-
-// Add button
-document.querySelectorAll(".addBtn").forEach(btn => {
-    btn.onclick = () => {
-        const id = btn.dataset.id;
-        const qty = parseInt(document.getElementById(`qty-${id}`).innerText);
-
-        if (qty > 0) {
-            updateCart(id, qty);
-            document.getElementById(`qty-${id}`).innerText = 0;
-        }
-    };
-});
-
-// Cart button
-document.getElementById("cartBtn").onclick = () =>
+function goToCheckout() {
     window.location = `/table/${token}/checkout/`;
+}
 </script>
 
 </body>
