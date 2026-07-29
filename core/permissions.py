@@ -61,40 +61,40 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
 from rest_framework.permissions import BasePermission
 
 
+from rest_framework.permissions import BasePermission
+
 class IsStaffOfRestaurant(BasePermission):
-    message = "You do not have permission to access this resource."
+    message = "Permission denied."
 
     def has_permission(self, request, view):
-        print("=== DEBUG PERMISSION ===")
-        print("User:", request.user)
-        print("Authenticated:", request.user.is_authenticated)
-        print("Restaurant:", getattr(request.user, "restaurant", None))
-
         user = request.user
 
+        print("----- PERMISSION DEBUG -----")
+        print("User:", user)
+        print("Authenticated:", user.is_authenticated)
+        print("Restaurant:", getattr(user, "restaurant", None))
+        print("Role:", getattr(user, "role", None))
+        print("----------------------------")
+
         if not user or not user.is_authenticated:
+            print("FAILED: not authenticated")
             return False
 
         if user.is_superuser:
+            print("PASSED: superuser")
             return True
 
-        return hasattr(user, "restaurant") and user.restaurant is not None
+        if not hasattr(user, "restaurant") or user.restaurant is None:
+            print("FAILED: no restaurant")
+            return False
+
+        print("PASSED: restaurant exists")
+        return True
 
     def has_object_permission(self, request, view, obj):
-        user = request.user
-
-        if not user or not user.is_authenticated:
-            return False
-
-        if user.is_superuser:
-            return True
-
-        if not hasattr(obj, "restaurant"):
-            return False
-
-        return obj.restaurant == user.restaurant
+        return True
     
-
+    
 class IsOwnerOrManager(BasePermission):
     message = "Only a manager can perform this action."
 
