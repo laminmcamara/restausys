@@ -1,35 +1,40 @@
 /* ============================================================
-   MODERN DARK SAAS DESIGN SYSTEM
+   MODERN LIGHT BLUE SAAS DESIGN SYSTEM
 ============================================================ */
 
 :root {
-    /* Background Layers */
-    --bg-main: #111827;       /* Page background (deep base) */
-    --bg-sidebar: #0f172a;     /* Sidebar */
-    --bg-card: #1e293b;        /* Cards */
-    --bg-elevated: #243247;    /* Hover state */
+    /* Backgrounds */
+    --bg-main: #dbeafe;
+    --bg-main-gradient: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%);
+    --bg-sidebar: #0f172a;
+    --bg-card-dark: #0f172a;
+    --bg-card-light: #ffffff;
 
-    /* Borders */
-    --border-light: #2c3a4f;
+    --border-light: #e5e7eb;
 
     /* Text */
-    --text-primary: #f8fafc;
-    --text-muted: #94a3b8;
+    --text-primary: #0f172a;
+    --text-muted: #6b7280;
+    --text-on-dark: #e2e8f0;
 
-    /* Brand Colors */
-    --primary: #3b82f6;
-    --primary-hover: #2563eb;
+    /* Brand */
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
 
     --success: #22c55e;
     --danger: #ef4444;
-    --warning: #f59e0b;
+    --warning: #facc15;
 }
 
 html {
     font-size: 16px;
 }
 
-
+body {
+    background: var(--bg-main-gradient);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
 
 
 /* ============================================================
@@ -39,56 +44,7 @@ html {
 .app-container {
     display: flex;
     min-height: 100vh;
-    background: var(--bg-main);
-    color: var(--text-primary);
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
-
-/* ================= SIDEBAR ================= */
-
-.sidebar {
-    width: 260px;
-    background: var(--bg-sidebar);
-    padding: 28px 20px;
-    border-right: 1px solid var(--border-light);
-}
-
-.sidebar-header h2 {
-    margin: 0 0 30px 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: white;
-}
-
-/* Sidebar Grid Layout */
-.sidebar-nav {
-    display: grid;
-    gap: 14px;
-}
-
-.sidebar-nav a {
-    display: block;
-    padding: 16px;
-    border-radius: 14px;
-    text-decoration: none;
-    color: white;
-    font-weight: 600;
-    transition: all 0.2s ease;
-}
-
-/* Unique sidebar colors */
-.sidebar-nav a.dashboard { background: #2563eb; }
-.sidebar-nav a.orders { background: #16a34a; }
-.sidebar-nav a.menu { background: #7c3aed; }
-.sidebar-nav a.tables { background: #ea580c; }
-
-.sidebar-nav a:hover {
-    opacity: 0.9;
-    transform: translateY(-2px);
-}
-
-
-/* ================= MAIN CONTENT ================= */
 
 .main-content {
     flex: 1;
@@ -96,18 +52,58 @@ html {
     flex-direction: column;
 }
 
-.topbar {
-    background: var(--bg-card);
-    padding: 16px 28px;
-    border-bottom: 1px solid var(--border-light);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+.content {
+    padding: 48px 56px;
 }
 
-.content {
-    padding: 56px;
-    background: var(--bg-main);
+
+/* ============================================================
+   SIDEBAR (DARK CONTRAST)
+============================================================ */
+
+.sidebar {
+    width: 280px;
+    background: var(--bg-sidebar);
+    display: flex;
+    flex-direction: column;
+    padding: 28px 20px;
+    color: var(--text-on-dark);
+}
+
+.brand-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: white;
+}
+
+.brand-sub {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.sidebar-link {
+    color: #cbd5e1;
+}
+
+.sidebar-link:hover {
+    background: rgba(255,255,255,0.06);
+    color: white;
+}
+
+.sidebar-link.active {
+    background: var(--primary);
+    color: white;
+}
+
+
+/* ============================================================
+   TOPBAR
+============================================================ */
+
+.topbar {
+    background: white;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border-light);
 }
 
 
@@ -124,146 +120,91 @@ h3 { font-size: 18px; font-weight: 600; margin: 0; }
     font-size: 14px;
 }
 
+.page-heading {
+    font-size: 26px;
+    margin-bottom: 6px;
+}
+
+.page-subheading {
+    font-size: 14px;
+    opacity: 0.7;
+}
+
 
 /* ============================================================
-   KPI GRID
+   CARDS (WHITE SURFACE)
+============================================================ */
+
+.card {
+    background: var(--bg-card-light);
+    border: 1px solid var(--border-light);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+    margin-bottom: 28px;
+}
+
+
+/* ============================================================
+   KPI SYSTEM (DARK CONTRAST CARDS)
 ============================================================ */
 
 .kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 18px;
-    margin-bottom: 32px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 24px;
+    margin-bottom: 40px;
 }
 
-/* ============================================================
-   KPI CARDS
-============================================================ */
-
-.kpi-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-light);
+.kpi-card,
+.metric-card {
+    background: var(--bg-card-dark);
+    color: var(--text-on-dark);
     border-radius: 14px;
-    padding: 16px 18px;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
-    transition: all 0.25s ease;
+    padding: 24px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+    transition: 0.25s ease;
 }
 
-.kpi-card:hover {
-    transform: translateY(-3px);
+.kpi-card:hover,
+.metric-card:hover {
+    transform: translateY(-4px);
 }
+
+/* Highlight primary revenue */
+.metric-primary {
+    background: var(--warning);
+    color: #111827;
+}
+
 
 /* KPI Typography */
 
+.metric-label,
 .kpi-title {
     font-size: 13px;
+    opacity: 0.75;
+    margin-bottom: 6px;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 600;
-    color: #cbd5e1;
-    margin-bottom: 18px;
+    letter-spacing: 0.5px;
 }
 
-.kpi-sub {
-    font-size: 12px;
-    color: #94a3b8;
-    margin-top: 6px;
-}
-
+.metric-value,
 .kpi-value {
-    font-size: 26px;
+    font-size: 30px;
     font-weight: 600;
-    line-height: 1.1;
-    margin-bottom: 14px;
-    color: var(--primary);
+    margin-bottom: 6px;
 }
 
-.section-card canvas {
-    max-height: 280px;
+.metric-meta,
+.kpi-meta {
+    font-size: 13px;
+    opacity: 0.75;
 }
 
-.kpi-trend {
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.kpi-trend.up {
-    color: var(--success);
-}
-
-.kpi-trend.down {
-    color: var(--danger);
-}
-
-.kpi-trend.neutral {
-    color: #cbd5e1;
-}
-
-
-/* ============================================================
-   SECTION CARDS
-============================================================ */
-
-.card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-light);
-    border-radius: 18px;
-    padding: 28px;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
-    margin-bottom: 32px;
-    color: var(--text-primary);
-}
-
-.card-header {
-    font-size: 16px;
-    font-weight: 600;
-    margin-bottom: 20px;
-}
-
-
-/* ============================================================
-   BUTTON SYSTEM
-============================================================ */
-
-.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 9px 16px;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 600;
-    text-decoration: none;
-    cursor: pointer;
-    border: none;
-    transition: all 0.2s ease;
-}
-
-.btn-primary {
-    background: var(--primary);
-    color: white;
-    box-shadow: 0 4px 12px rgba(59,130,246,0.4);
-}
-
-.btn-primary:hover {
-    background: var(--primary-hover);
-}
-
-.btn-success {
-    background: var(--success);
-    color: white;
-}
-
-.btn-danger {
-    background: var(--danger);
-    color: white;
-}
-
-.btn-outline {
-    background: transparent;
-    border: 1px solid var(--border-light);
-    color: var(--text-primary);
-}
+.kpi-trend.up { color: var(--success); }
+.kpi-trend.down { color: var(--danger); }
+.kpi-trend.neutral { opacity: 0.6; }
 
 
 /* ============================================================
@@ -290,7 +231,7 @@ h3 { font-size: 18px; font-weight: 600; margin: 0; }
 }
 
 .table tr:hover {
-    background: #162033;
+    background: #f3f4f6;
 }
 
 
@@ -316,217 +257,48 @@ h3 { font-size: 18px; font-weight: 600; margin: 0; }
 }
 
 .badge-warning {
-    background: rgba(245,158,11,0.15);
-    color: var(--warning);
+    background: rgba(250,204,21,0.2);
+    color: #92400e;
 }
 
 
 /* ============================================================
-   EMPTY STATE
+   BUTTON SYSTEM
 ============================================================ */
 
-.empty-state {
-    text-align: center;
-    padding: 60px 0;
-    color: var(--text-muted);
-    font-size: 15px;
+.btn {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
 }
 
-
-
-/* ============================================================
-   BRANDING
-============================================================ */
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 32px;
-}
-
-.brand-logo {
-    width: 42px;
-    height: 42px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 16px;
+.btn-primary {
+    background: var(--primary);
     color: white;
 }
 
-.brand-name {
-    font-weight: 700;
-    font-size: 16px;
+.btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.btn-danger {
+    background: var(--danger);
     color: white;
 }
 
-.brand-sub {
-    font-size: 12px;
-    color: var(--text-muted);
-}
-
-/* Sidebar Icons */
-
-.sidebar-nav a {
+.btn-outline {
     background: transparent;
-    border: 1px solid transparent;
-}
-
-.sidebar-nav a:hover {
-    background: rgba(255,255,255,0.04);
     border: 1px solid var(--border-light);
-}
-
-.sidebar-nav a.active {
-    background: rgba(59,130,246,0.15);
-    border: 1px solid rgba(59,130,246,0.4);
-}
-
-.sidebar-nav .icon {
-    font-size: 20px;
-    opacity: 0.9;
-}
-
-/* Additional sidebar colors */
-
-.sidebar-nav a.kitchen { background: #dc2626; }
-.sidebar-nav a.reports { background: #0ea5e9; }
-.sidebar-nav a.settings { background: #64748b; }
-
-.sidebar-nav a.public-display {
-    background: linear-gradient(135deg, #0ea5e9, #0284c7);
-}
-
-.sidebar-nav a.public-display:hover {
-    transform: translateY(-2px);
-}
-
-
-/* ===== Form Labels Fix ===== */
-
-label {
-    color: #111827;   /* ✅ Dark readable text */
-    font-weight: 500;
-    display: block;
-    margin-bottom: 6px;
-}
-
-/* ==============================
-   ✅ KITCHEN TICKET STYLING
-============================== */
-
-.ticket {
-    background-color: #ffffff;
-    color: #111827; /* dark gray text */
-    border-radius: 12px;
-    padding: 16px;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06);
-    margin-bottom: 16px;
-}
-
-.ticket h2 {
-    margin: 0;
-    font-size: 1.2rem;
-    font-weight: 600;
-    color: #111827;
-}
-
-.ticket small {
-    font-size: 0.85rem;
-    color: #6b7280;
-}
-
-.ticket-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-}
-
-.ticket-timer {
-    font-weight: bold;
-    font-size: 1rem;
-    color: #dc2626; /* red timer */
-}
-
-.ticket-body ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.ticket-body li {
-    display: flex;
-    gap: 8px;
-    padding: 4px 0;
-    font-size: 0.95rem;
-}
-
-.item-quantity {
-    font-weight: bold;
-    color: #111827;
-}
-
-
-
-.kds-item {
-    margin-bottom: 10px;
-}
-
-.item-main {
-    font-size: 1.05rem;
-}
-
-.item-quantity {
-    font-weight: bold;
-    margin-right: 6px;
-}
-
-.item-variant {
-    font-size: 0.85rem;
-    color: #6b7280;
-    margin-left: 4px;
-}
-
-.item-modifiers {
-    margin-left: 20px;
-    font-size: 0.9rem;
-    color: #374151;
-}
-
-.modifier {
-    line-height: 1.4;
-}
-
-.item-notes {
-    margin-left: 20px;
-    font-size: 0.9rem;
-    color: #dc2626;
-    font-weight: 600;
-}
-
-
-.bg-white {
-    color: #111827;
-}
-
-
-/* ============================================================
-   ✅ FORM SYSTEM (DARK THEME FIX)
-============================================================ */
-
-form {
     color: var(--text-primary);
 }
 
-form p {
-    margin-bottom: 18px;
-}
+
+/* ============================================================
+   FORMS
+============================================================ */
 
 form input,
 form textarea,
@@ -535,10 +307,8 @@ form select {
     padding: 10px 12px;
     border-radius: 8px;
     border: 1px solid var(--border-light);
-    background: var(--bg-card);
-    color: var(--text-primary);
+    background: white;
     font-size: 14px;
-    transition: all 0.2s ease;
 }
 
 form input:focus,
@@ -546,16 +316,26 @@ form textarea:focus,
 form select:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 1px var(--primary);
+    box-shadow: 0 0 0 2px rgba(37,99,235,0.2);
 }
 
-form input::placeholder,
-form textarea::placeholder {
-    color: var(--text-muted);
+
+/* ============================================================
+   ANIMATIONS
+============================================================ */
+
+.metric-card,
+.card {
+    animation: fadeInUp 0.4s ease both;
 }
 
-/* Fix checkbox visibility */
-form input[type="checkbox"] {
-    width: auto;
-    margin-right: 6px;
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }

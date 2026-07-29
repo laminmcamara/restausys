@@ -1,84 +1,201 @@
 {% extends "core/base.html" %}
 {% load static %}
 
+{% block title %}{{ SYSTEM_NAME }} — Smart Restaurant POS{% endblock %}
+
 {% block content %}
 
-<!-- HERO SECTION -->
-<section class="pt-24 pb-20 bg-gradient-to-r from-blue-900 to-blue-700 text-white">
-    <div class="max-w-6xl mx-auto px-6 text-center">
-        <h1 class="text-4xl md:text-5xl font-bold mb-6">
-            BestPOS Pro
-        </h1>
-        <p class="text-xl mb-4 text-orange-400">
-            The Smart Restaurant Management System
-        </p>
-        <p class="max-w-2xl mx-auto mb-8 text-gray-200">
-            Streamline operations, improve efficiency, and grow your restaurant 
-            with an intelligent all-in-one management platform.
-        </p>
+<!-- ================= HERO ================= -->
+<section class="pt-32 pb-24 bg-gradient-to-br from-yellow-400 to-yellow-500 text-black">
 
-        <div class="space-x-4">
-            {% if user.is_authenticated %}
-                <a href="{% url 'core:pos_dashboard' %}" 
-                   class="bg-orange-500 px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition">
-                   Go to Dashboard
-                </a>
-            {% else %}
-                <a href="{% url 'core:login' %}" 
-                   class="bg-orange-500 px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition">
-                   Login
-                </a>
-            {% endif %}
-        </div>
-    </div>
-</section>
+    <div class="max-w-6xl mx-auto px-6 grid md:grid-cols-2 gap-12 items-center">
 
-<!-- FEATURES -->
-<section class="py-20 bg-white">
-    <div class="max-w-6xl mx-auto px-6 text-center">
-        <h2 class="text-3xl font-bold mb-12">One Smart System. Total Control.</h2>
+        <!-- LEFT: TEXT -->
+        <div>
+            <h1 class="text-4xl md:text-5xl font-extrabold mb-6">
+                {{ SYSTEM_SHORT_NAME }}
+            </h1>
 
-        <div class="grid md:grid-cols-3 gap-10">
-            <div>
-                <h4 class="font-semibold text-lg mb-2">POS Management</h4>
-                <p>Fast, reliable order and payment processing.</p>
-            </div>
-            <div>
-                <h4 class="font-semibold text-lg mb-2">Kitchen Display System</h4>
-                <p>Instant order transmission to the kitchen.</p>
-            </div>
-            <div>
-                <h4 class="font-semibold text-lg mb-2">Real-Time Analytics</h4>
-                <p>Track revenue, performance, and growth metrics.</p>
+            <p class="text-xl font-semibold mb-4">
+                {{ SYSTEM_TAGLINE }}
+            </p>
+
+            <p class="mb-8 text-black/80">
+                A modern restaurant POS system built for speed, reliability,
+                and complete operational control.
+            </p>
+
+            <div class="flex flex-wrap gap-4">
+
+                {% if user.is_authenticated %}
+                    <a href="{% url 'core:pos_dashboard' %}"
+                       class="bg-black text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-900 transition">
+                        Go to Dashboard
+                    </a>
+                {% else %}
+                    <a href="{% url 'core:register' %}"
+                       class="bg-black text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-900 transition">
+                        Start Free Trial
+                    </a>
+
+                    <a href="{% url 'core:login' %}"
+                       class="border-2 border-black px-6 py-3 rounded-lg font-semibold hover:bg-black hover:text-white transition">
+                        Login
+                    </a>
+                {% endif %}
+
             </div>
         </div>
+
+        <!-- RIGHT: ANIMATED BEE -->
+        <div class="flex justify-center">
+
+            <div class="w-48 h-48">
+
+                <div class="bee-loader">
+<svg width="120" height="120" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Floating Animation -->
+  <g>
+    <animateTransform
+      attributeName="transform"
+      type="translate"
+      values="0 0; 0 -8; 0 0"
+      dur="2s"
+      repeatCount="indefinite" />
+
+    <!-- Bee Body -->
+    <ellipse cx="100" cy="110" rx="40" ry="30" fill="#FACC15"/>
+    <ellipse cx="100" cy="110" rx="40" ry="30" fill="none" stroke="#000" stroke-width="4"/>
+
+    <!-- Stripes -->
+    <rect x="75" y="95" width="50" height="8" fill="#000"/>
+    <rect x="75" y="115" width="50" height="8" fill="#000"/>
+
+    <!-- Head -->
+    <circle cx="140" cy="105" r="20" fill="#FACC15" stroke="#000" stroke-width="4"/>
+
+    <!-- Eye -->
+    <circle cx="148" cy="100" r="4" fill="#000"/>
+
+    <!-- Wings -->
+    <g>
+      <animateTransform
+        attributeName="transform"
+        type="rotate"
+        values="0 100 90; 8 100 90; 0 100 90"
+        dur="0.3s"
+        repeatCount="indefinite" />
+      <ellipse cx="85" cy="80" rx="20" ry="35"
+               fill="white"
+               opacity="0.7"
+               stroke="#000"
+               stroke-width="3"/>
+    </g>
+
+    <g>
+      <animateTransform
+        attributeName="transform"
+        type="rotate"
+        values="0 115 90; -8 115 90; 0 115 90"
+        dur="0.3s"
+        repeatCount="indefinite" />
+      <ellipse cx="115" cy="80" rx="20" ry="35"
+               fill="white"
+               opacity="0.7"
+               stroke="#000"
+               stroke-width="3"/>
+    </g>
+
+  </g>
+</svg>
+</div>
+
+            </div>
+
+        </div>
+
     </div>
+
 </section>
 
-<!-- CTA -->
-<section class="py-20 bg-blue-900 text-white text-center">
+
+<!-- ================= FEATURES ================= -->
+<section class="py-24 bg-white dark:bg-gray-950">
+
+    <div class="max-w-6xl mx-auto px-6 text-center">
+
+        <h2 class="text-3xl font-bold mb-16 dark:text-white">
+            Everything Your Restaurant Needs
+        </h2>
+
+        <div class="grid md:grid-cols-3 gap-12">
+
+            <div class="p-6 rounded-xl shadow-sm hover:shadow-lg transition bg-gray-50 dark:bg-gray-900">
+                <div class="text-4xl mb-4">💳</div>
+                <h4 class="font-semibold text-lg mb-2 dark:text-white">
+                    Lightning Fast POS
+                </h4>
+                <p class="text-gray-600 dark:text-gray-400">
+                    Process orders and payments instantly with a streamlined interface.
+                </p>
+            </div>
+
+            <div class="p-6 rounded-xl shadow-sm hover:shadow-lg transition bg-gray-50 dark:bg-gray-900">
+                <div class="text-4xl mb-4">👨‍🍳</div>
+                <h4 class="font-semibold text-lg mb-2 dark:text-white">
+                    Kitchen Display
+                </h4>
+                <p class="text-gray-600 dark:text-gray-400">
+                    Real-time order transmission keeps your kitchen synchronized.
+                </p>
+            </div>
+
+            <div class="p-6 rounded-xl shadow-sm hover:shadow-lg transition bg-gray-50 dark:bg-gray-900">
+                <div class="text-4xl mb-4">📈</div>
+                <h4 class="font-semibold text-lg mb-2 dark:text-white">
+                    Real-Time Reports
+                </h4>
+                <p class="text-gray-600 dark:text-gray-400">
+                    Monitor revenue, performance, and growth metrics instantly.
+                </p>
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- ================= CTA ================= -->
+<section class="py-24 bg-black text-white text-center">
+
     <div class="max-w-4xl mx-auto px-6">
+
         <h3 class="text-3xl font-bold mb-6">
-            Ready to Transform Your Restaurant?
+            Ready to Upgrade Your Restaurant?
         </h3>
 
+        <p class="mb-8 text-gray-400">
+            Join restaurants using {{ SYSTEM_SHORT_NAME }} to simplify operations
+            and increase profitability.
+        </p>
+
         {% if user.is_authenticated %}
-            <a href="{% url 'core:pos_dashboard' %}" 
-                class="bg-orange-500 px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition">
+            <a href="{% url 'core:pos_dashboard' %}"
+               class="bg-yellow-400 text-black px-8 py-3 rounded-lg font-semibold hover:bg-yellow-500 transition">
                 Go to Dashboard
             </a>
         {% else %}
-            <a href="{% url 'core:register' %}" 
-                class="bg-orange-500 px-6 py-3 rounded-lg font-semibold hover:bg-orange-600 transition">
-                Start Free 14-Day Trial
-            </a>
-
-            <a href="{% url 'core:login' %}" 
-                class="border border-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-blue-900 transition">
-                Login
+            <a href="{% url 'core:register' %}"
+               class="bg-yellow-400 text-black px-8 py-3 rounded-lg font-semibold hover:bg-yellow-500 transition">
+                Start Free 14‑Day Trial
             </a>
         {% endif %}
+
     </div>
+
 </section>
 
 {% endblock %}

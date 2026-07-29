@@ -201,3 +201,25 @@ def format_currency(amount, restaurant=None):
         currency_code,
         locale=locale
     )
+    
+    
+from django.utils import timezone
+from core.models import Subscription
+
+
+def has_active_subscription(restaurant):
+    subscription = Subscription.objects.filter(
+        restaurant=restaurant
+    ).first()
+
+    if not subscription:
+        return False
+
+    if subscription.status in ["active", "trialing"]:
+        if (
+            subscription.current_period_end
+            and subscription.current_period_end > timezone.now()
+        ):
+            return True
+
+    return False

@@ -7,7 +7,8 @@ from django.db import transaction
 from .models import Order, Payment, PaymentIntentLog
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-
+from django.utils import timezone
+from .models import Subscription
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -116,5 +117,106 @@ def stripe_webhook(request):
 
             except Order.DoesNotExist:
                 pass
+            
+     # ===============================
+    # ✅ CHECKOUT SESSION COMPLETED (Subscription Created)
+    # ===============================
+    elif event["type"] == "checkout.session.completed":
 
+        session = intent_data
+
+        if session.get("mode") == "subscription":
+
+            stripe_sub_id = session.get("subscription")
+            stripe_customer_id = session.get("customer")
+
+            metadata = session.get("metadata", {})
+            restaurant_id = metadata.get("restaurant_id")
+            plan_id = metadata.get("plan_id")
+
+            if not stripe_sub_id or not restaurant_id or not plan_id:
+                return HttpResponse(status=200)
+
+            try:
+                from core.models import Restaurant, Plan
+
+                restaurant = Restaurant.objects.get(id=restaurant_id)
+                plan = Plan.objects.get(id=plan_id)
+
+                # ✅ Retrieve full subscription from Stripe
+                stripe_subscription = stripe.Subscription.retrieve(
+                    stripe_sub_id
+                )
+
+                Subscription.objects.update_or_create(
+                    restaurant=restaurant,
+                    defaults={
+                        "plan": plan,
+                        "stripe_subscription_id": stripe_sub_id,
+                        "stripe_customer_id": stripe_customer_id,
+                        "status": stripe_subscription.get("status"),  # trialing
+                        "current_period_start": timezone.datetime.fromtimestamp(
+                            stripe_subscription.get("current_period_start"),
+                            tz=timezone.utc
+                        ),
+                        "current_period_end": timezone.datetime.fromtimestamp(
+                            stripe_subscription.get("current_period_end"),
+                            tz=timezone.utc
+                        ),
+                        "cancel_at_period_end": stripe_subscription.get(
+                            "cancel_at_period_end"
+                        ),
+                    },
+                )
+
+            except Exception:
+                pass       
+    
+    # ===============================
+    # ✅ SUBSCRIPTION UPDATED
+    # ===============================
+    elif event["type"] == "customer.subscription.updated":
+
+        sub = intent_data
+        stripe_sub_id = sub.get("id")
+
+        try:
+            subscription = Subscription.objects.get(
+                stripe_subscription_id=stripe_sub_id
+            )
+
+            subscription.status = sub.get("status")
+            subscription.current_period_start = timezone.datetime.fromtimestamp(
+                sub.get("current_period_start"),
+                tz=timezone.utc
+            )
+            subscription.current_period_end = timezone.datetime.fromtimestamp(
+                sub.get("current_period_end"),
+                tz=timezone.utc
+            )
+            subscription.cancel_at_period_end = sub.get("cancel_at_period_end")
+
+            subscription.save()
+
+        except Subscription.DoesNotExist:
+            pass
+
+
+    # ===============================
+    # ✅ SUBSCRIPTION CANCELED
+    # ===============================
+    elif event["type"] == "customer.subscription.deleted":
+
+        sub = intent_data
+        stripe_sub_id = sub.get("id")
+
+        try:
+            subscription = Subscription.objects.get(
+                stripe_subscription_id=stripe_sub_id
+            )
+            subscription.status = "canceled"
+            subscription.save(update_fields=["status"])
+
+        except Subscription.DoesNotExist:
+            pass
     return HttpResponse(status=200)

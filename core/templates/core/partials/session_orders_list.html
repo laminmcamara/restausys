@@ -1,0 +1,76 @@
+{% load humanize %}
+
+{% for order in orders %}
+<div class="order-row p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 transition-all duration-300
+    {% if order.payment_status != "PAID" %}
+        bg-rose-50 border-l-4 border-rose-400
+    {% endif %}
+"
+data-order-id="{{ order.id }}">
+
+    <!-- Order Info -->
+    <div>
+        <div class="flex items-center gap-3">
+            <span class="font-semibold text-slate-900">
+                #{{ order.order_number }}
+            </span>
+
+            <span class="text-xs text-slate-500">
+                {{ order.created_at|date:"M d · H:i" }}
+            </span>
+        </div>
+
+        {% if order.payment_status == "PARTIALLY_PAID" %}
+        <div class="mt-1 text-xs text-amber-600 font-medium">
+            Partially Paid
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Payment Badge -->
+    <div>
+        {% if order.payment_status == "PAID" %}
+            <span class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
+                Paid
+            </span>
+        {% elif order.payment_status == "PARTIALLY_PAID" %}
+            <span class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">
+                Partial
+            </span>
+        {% else %}
+            <span class="px-3 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">
+                Unpaid
+            </span>
+        {% endif %}
+    </div>
+
+    <!-- Total + Actions -->
+    <div class="flex items-center gap-6">
+
+        <div class="text-lg font-bold text-slate-900">
+            ${{ order.total|floatformat:2|intcomma }}
+        </div>
+
+        <div class="flex gap-4 text-sm font-medium">
+
+            <a href="{% url 'core:order_detail' order.pk %}"
+               class="text-indigo-600 hover:text-indigo-800">
+                View
+            </a>
+
+            {% if order.payment_status != "PAID" %}
+            <a href="{% url 'core:dashboard_order_pay' order.pk %}"
+               class="text-emerald-600 hover:text-emerald-800">
+                Pay
+            </a>
+            {% endif %}
+
+        </div>
+
+    </div>
+</div>
+{% empty %}
+<div class="p-6 text-sm text-slate-500">
+    No orders yet.
+</div>
+{% endfor %}

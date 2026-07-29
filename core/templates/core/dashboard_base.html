@@ -3,148 +3,173 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{{ request.restaurant.name }} | BestPos</title>
+    <title>{{ request.restaurant.name }} | {{ SYSTEM_SHORT_NAME }}</title>
 
-    <!-- Google Font -->
+    <!-- Font -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
 
+    <!-- ✅ Dark SaaS Design System -->
     <link rel="stylesheet" href="{% static 'core/css/dashboard.css' %}">
 </head>
+
 <body>
 
 <div class="app-container">
 
     <!-- ================= SIDEBAR ================= -->
-    <aside class="sidebar">
+<aside class="sidebar">
 
-        <!-- ✅ SYSTEM BRAND -->
-        <div class="brand">
-            <div class="brand-logo">BP</div>
-            <div class="brand-text">
-                <div class="brand-name">BestPos</div>
-                <div class="brand-sub">Restaurant System</div>
-            </div>
+    <!-- BRAND -->
+    <div class="brand">
+        <div class="brand-logo">
+            {{ SYSTEM_SHORT_NAME|slice:":2" }}
         </div>
-
-        <!-- ✅ RESTAURANT NAME -->
-        <div class="sidebar-header">
-            <h2>{{ request.restaurant.name }}</h2>
+        <div class="brand-text">
+            <div class="brand-name">{{ SYSTEM_SHORT_NAME }}</div>
+            <div class="brand-sub">Smart POS System</div>
         </div>
+    </div>
 
-        <!-- ✅ NAVIGATION -->
-        <nav class="sidebar-nav">
+    <div class="restaurant-name">
+        {{ request.restaurant.name }}
+    </div>
 
-            <a href="{% url 'core:pos_dashboard' %}"
-   class="flex items-center px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition">
-    
-    <!-- Credit Card Icon -->
-    <svg xmlns="http://www.w3.org/2000/svg"
-         class="w-5 h-5 mr-3 text-gray-500"
-         fill="none"
-         viewBox="0 0 24 24"
-         stroke="currentColor"
-         stroke-width="1.5">
-        <path stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M2.25 8.25h19.5M3.75 6h16.5A1.5 1.5 0 0121.75 7.5v9A1.5 1.5 0 0120.25 18h-16.5A1.5 1.5 0 012.25 16.5v-9A1.5 1.5 0 013.75 6zM6 15h.75m3 0h4.5" />
-    </svg>
+    <!-- NAVIGATION -->
+    <nav class="sidebar-nav">
 
-    POS
-</a>
+        {% if request.user.can_access_pos %}
+        <a href="{% url 'core:pos_dashboard' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'pos_dashboard' %}active{% endif %}">
+            <i data-lucide="credit-card"></i>
+            <span>POS</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:dashboard' %}" class="dashboard">
-                <span class="icon">
-                    📊
-                </span>
-                Dashboard
-            </a>
+        {% if request.user.can_view_dashboard %}
+        <a href="{% url 'core:dashboard' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+            <i data-lucide="layout-dashboard"></i>
+            <span>Dashboard</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:orders' %}" class="orders">
-                <span class="icon">🧾</span>
-                Orders
-            </a>
+        {% if request.user.can_access_pos %}
+        <a href="{% url 'core:orders' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'orders' %}active{% endif %}">
+            <i data-lucide="receipt"></i>
+            <span>Orders</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:manage_products' %}" class="menu">
-                <span class="icon">🍔</span>
-                Products
-            </a>
-            
-            <a href="{% url 'core:category_list' %}"
-                class="{% if request.resolver_match.url_name == 'category_list' %}active{% endif %}">
-                <span class="icon">📂</span>
-                <span>Categories</span>
-            </a>
+        {% if request.user.can_manage_products %}
+        <a href="{% url 'core:product_list' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'product_list' %}active{% endif %}">
+            <i data-lucide="utensils-crossed"></i>
+            <span>Products</span>
+        </a>
 
+        <a href="{% url 'core:category_list' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'category_list' %}active{% endif %}">
+            <i data-lucide="folder"></i>
+            <span>Categories</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:table_overview' %}" class="tables">
-                <span class="icon">🪑</span>
-                Tables
-            </a>
+        {% if request.user.can_manage_tables %}
+        <a href="{% url 'core:table_overview' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'table_overview' %}active{% endif %}">
+            <i data-lucide="armchair"></i>
+            <span>Tables</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:kitchen_display' %}" class="kitchen">
-                <span class="icon">👨‍🍳</span>
-                Kitchen
-            </a>
+        {% if request.user.can_access_kitchen %}
+        <a href="{% url 'core:kitchen_display' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'kitchen_display' %}active{% endif %}">
+            <i data-lucide="chef-hat"></i>
+            <span>Kitchen</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:daily_reports' %}" class="reports">
-                <span class="icon">📈</span>
-                Reports
-            </a>
+        {% if request.user.can_view_reports %}
+        <a href="{% url 'core:daily_reports' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'daily_reports' %}active{% endif %}">
+            <i data-lucide="bar-chart-3"></i>
+            <span>Reports</span>
+        </a>
+        {% endif %}
 
-            <a href="{% url 'core:settings' %}" class="settings">
-                <span class="icon">⚙️</span>
-                Settings
-            </a>
-            
-            <a href="{% url 'core:customer_display_shortcut' %}" 
-                class="public-display"
-                target="_blank">
-            <span class="icon">📺</span>
-               Public Display
-            </a>
+        {% if request.user.can_access_public_display %}
+        <a href="{% url 'core:dashboard_public_display' %}"
+           target="_blank"
+           class="sidebar-link">
+            <i data-lucide="monitor"></i>
+            <span>Pickup Display</span>
+        </a>
+        {% endif %}
 
-        </nav>
+        {% if request.user.can_manage_settings %}
+        <a href="{% url 'core:settings' %}"
+           class="sidebar-link {% if request.resolver_match.url_name == 'settings' %}active{% endif %}">
+            <i data-lucide="settings"></i>
+            <span>Settings</span>
+        </a>
+        {% endif %}
 
-    </aside>
+    </nav>
 
+    <!-- LOGOUT -->
+    <div class="sidebar-footer">
+        <form method="post" action="{% url 'core:logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="logout-btn">
+                <i data-lucide="log-out"></i>
+                <span>Logout</span>
+            </button>
+        </form>
+    </div>
 
-    <!-- ================= MAIN AREA ================= -->
-    <div class="main-content">
+</aside>
 
-        <!-- ✅ TOP BAR -->
-        <header class="topbar">
+    <!-- ================= MAIN ================= -->
+    <div class="main-content" style="flex:1; display:flex; flex-direction:column;">
 
-            <div class="restaurant-info">
-                <span class="status-badge status-{{ request.restaurant.status|lower }}">
-                    {{ request.restaurant.get_status_display }}
-                </span>
+        <!-- TOP BAR -->
+        <div class="topbar">
+            <div style="display:flex; gap:12px; align-items:center;">
 
-                <span class="currency-badge">
+                {% if request.restaurant.status == "OPEN" %}
+                    <span class="badge badge-success">
+                        {{ request.restaurant.get_status_display }}
+                    </span>
+                {% else %}
+                    <span class="badge badge-danger">
+                        {{ request.restaurant.get_status_display }}
+                    </span>
+                {% endif %}
+
+                <span class="badge badge-warning">
                     {{ request.restaurant.currency }}
                 </span>
+
             </div>
 
-            <div class="user-info">
+            <div>
                 {{ request.user.username }}
             </div>
+        </div>
 
-        </header>
-
-
-        <!-- ✅ PAGE CONTENT -->
-        <main class="content">
+        <!-- PAGE CONTENT -->
+        <div class="content w-full max-w-7xl mx-auto px-6 py-6">
             {% block content %}
             {% endblock %}
-        </main>
+        </div>
 
     </div>
 
 </div>
 
 <!-- HTMX -->
-{% block extra_scripts %}{% endblock %}
-
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 
 <script>
@@ -167,6 +192,9 @@ document.body.addEventListener('htmx:configRequest', function (event) {
     event.detail.headers['X-CSRFToken'] = getCookie('csrftoken');
 });
 </script>
-
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+    lucide.createIcons();
+</script>
 </body>
 </html>

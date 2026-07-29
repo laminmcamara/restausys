@@ -1,144 +1,117 @@
-{% extends "core/dashboard_base.html" %}
-{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ restaurant.name }} - Pickup Display</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-{% block title %}Pickup Display{% endblock %}
+    <!-- Auto refresh every 10 seconds -->
+    <meta http-equiv="refresh" content="10">
 
-{% block content %}
+    <script src="https://cdn.tailwindcss.com"></script>
 
-<style>
-@keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.9); }
-    to { opacity: 1; transform: scale(1); }
-}
-@keyframes pulseGlow {
-    0%, 100% { box-shadow: 0 0 0px rgba(34,197,94,0); }
-    50% { box-shadow: 0 0 40px rgba(34,197,94,0.9); }
-}
-.order-card {
-    animation: fadeIn 0.4s ease-out;
-}
-.ready-glow {
-    animation: pulseGlow 2s infinite;
-}
-</style>
+    <style>
+        body { background: #0f172a; }
 
-<div class="min-h-screen bg-black text-white flex flex-col">
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .order-card {
+            animation: fadeIn 0.3s ease-out;
+        }
+    </style>
+</head>
+
+<body class="text-white min-h-screen flex flex-col">
 
     <!-- HEADER -->
-    <div class="text-center py-8 border-b border-slate-800">
+    <div class="text-center py-10 border-b border-slate-700">
 
-        <h1 class="text-6xl font-extrabold tracking-wide">
+        <h1 class="text-4xl md:text-5xl font-bold tracking-wide">
             {{ restaurant.name }}
         </h1>
 
-        <p class="text-slate-400 text-xl mt-3">
-            Order Pickup Status
+        <p class="text-slate-400 text-xl mt-3 uppercase tracking-widest">
+            Now Serving
         </p>
 
     </div>
 
-    <!-- MAIN GRID -->
-    <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8 p-10">
+    <!-- SPLIT SCREEN -->
+    <div class="flex-1 p-8 md:p-12 grid grid-cols-2 gap-12">
 
-        <!-- PREPARING COLUMN -->
-        <div class="flex flex-col">
-
-            <h2 class="text-4xl font-bold text-yellow-400 text-center mb-8 tracking-wide">
+        <!-- PREPARING -->
+        <div>
+            <h2 class="text-3xl font-bold text-orange-400 mb-8 tracking-wide">
                 Preparing
             </h2>
 
-            <div id="preparing-list"
-                 class="flex-1 grid grid-cols-2 lg:grid-cols-3 gap-8 content-start">
-            </div>
+            <div class="space-y-6">
+                {% for order in orders %}
+                    {% if order.status == "PLACED" or order.status == "IN_PROGRESS" %}
+                        <div class="order-card bg-slate-800 rounded-2xl p-6 text-center border border-slate-700">
 
+                            <div class="text-4xl md:text-5xl font-extrabold tracking-wide">
+                                #{{ order.display_id|default:order.id|stringformat:"s"|slice:":6"|upper }}
+                            </div>
+
+                            <div class="mt-3 text-lg text-slate-300">
+                                {% if order.table %}
+                                    Table {{ order.table.number }}
+                                {% else %}
+                                    Takeaway
+                                {% endif %}
+                            </div>
+
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
         </div>
 
-        <!-- READY COLUMN -->
-        <div class="flex flex-col">
-
-            <h2 class="text-4xl font-bold text-green-400 text-center mb-8 tracking-wide">
-                Ready for Pickup
+        <!-- READY -->
+        <div>
+            <h2 class="text-3xl font-bold text-emerald-400 mb-8 tracking-wide">
+                Ready
             </h2>
 
-            <div id="ready-list"
-                 class="flex-1 grid grid-cols-2 lg:grid-cols-3 gap-8 content-start">
-            </div>
+            <div class="space-y-6">
+                {% for order in orders %}
+                    {% if order.status == "READY" %}
+                        <div class="order-card bg-emerald-600/10 rounded-2xl p-6 text-center border border-emerald-500">
 
+                            <div class="text-5xl md:text-6xl font-extrabold tracking-wide text-emerald-400 drop-shadow-lg">
+                                #{{ order.display_id|default:order.id|stringformat:"s"|slice:":6"|upper }}
+                            </div>
+
+                            <div class="mt-3 text-lg text-slate-300">
+                                {% if order.table %}
+                                    {% if order.table.number %}
+                                    Table {{ order.table.number }}
+                                {% elif order.table.name %}
+                                    {{ order.table.name }}
+                                {% else %}
+                                    Dine-In
+                                {% endif %}
+                                {% else %}
+                                Takeaway
+                                {% endif %}
+                            </div>
+
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
         </div>
 
     </div>
 
-</div>
+    <!-- FOOTER -->
+    <div class="text-center py-3 text-slate-600 text-xs border-t border-slate-800">
+        Screen auto-refreshes every 10 seconds
+    </div>
 
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-
-    const restaurantId = "{{ restaurant.id }}";
-    const wsScheme = location.protocol === "https:" ? "wss" : "ws";
-
-    const socket = new WebSocket(
-        `${wsScheme}://${window.location.host}/ws/customer/${restaurantId}/`
-    );
-
-    const preparingList = document.getElementById("preparing-list");
-    const readyList = document.getElementById("ready-list");
-
-    socket.onmessage = function (event) {
-        const data = JSON.parse(event.data);
-
-        if (data.type === "pickup_update") {
-            renderPreparing(data.now_preparing || []);
-            renderReady(data.ready || []);
-        }
-    };
-
-    function renderPreparing(orders) {
-
-        preparingList.innerHTML = "";
-
-        if (orders.length === 0) {
-            preparingList.innerHTML =
-                "<div class='col-span-full text-slate-600 text-2xl text-center'>No Orders</div>";
-            return;
-        }
-
-        orders.forEach(number => {
-
-            const div = document.createElement("div");
-
-            div.className =
-                "order-card bg-yellow-400 text-black rounded-2xl py-10 text-5xl font-extrabold text-center shadow-2xl";
-
-            div.innerText = "#" + number;
-
-            preparingList.appendChild(div);
-        });
-    }
-
-    function renderReady(orders) {
-
-        readyList.innerHTML = "";
-
-        if (orders.length === 0) {
-            readyList.innerHTML =
-                "<div class='col-span-full text-slate-600 text-2xl text-center'>No Orders</div>";
-            return;
-        }
-
-        orders.forEach(number => {
-
-            const div = document.createElement("div");
-
-            div.className =
-                "order-card ready-glow bg-green-500 text-black rounded-2xl py-10 text-5xl font-extrabold text-center shadow-2xl";
-
-            div.innerText = "#" + number;
-
-            readyList.appendChild(div);
-        });
-    }
-
-});
-</script>
-
-{% endblock %}
+</body>
+</html>

@@ -5,10 +5,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>{% block title %}BestPOS Pro{% endblock %}</title>
+    <title>{% block title %}{{ SYSTEM_NAME }}{% endblock %}</title>
 
-    <!-- Tailwind (Development Only) -->
+    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32"
+          href="{% static 'core/icons/favicon-32x32.png' %}">
+    <link rel="icon" type="image/png" sizes="16x16"
+          href="{% static 'core/icons/favicon-16x16.png' %}">
+    <link rel="apple-touch-icon"
+          href="{% static 'core/icons/apple-touch-icon.png' %}">
 
     <!-- Bootstrap Icons -->
     <link rel="stylesheet"
@@ -21,104 +29,118 @@
     {% block extra_head %}{% endblock %}
 </head>
 
-<body class="bg-gray-50 text-gray-800 min-h-full flex flex-col">
-
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 min-h-full flex flex-col transition-colors duration-300">
+{% with days=request.user.restaurant.subscription_days_remaining %}
+    {% if days <= 3 %}
+        <div class="bg-red-100 border border-red-300 text-red-800 px-4 py-2 rounded text-sm text-center">
+            ⚠ Your subscription expires in {{ days }} days.
+        </div>
+    {% else %}
+        <div class="bg-blue-100 border border-blue-300 text-blue-800 px-4 py-2 rounded text-sm text-center">
+            {{ days }} days left in your subscription.
+        </div>
+    {% endif %}
+{% endwith %}
 <!-- ================= NAVBAR ================= -->
-<nav class="bg-white shadow-md fixed w-full z-50">
-    <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+<nav class="bg-white dark:bg-gray-800 shadow-md fixed w-full z-50 transition">
+
+    <div class="max-w-7xl mx-auto px-6 py-2 flex justify-between items-center">
 
         <!-- Logo -->
-        <a href="{% url 'core:home' %}" class="text-2xl font-bold text-blue-900">
-            BestPOS <span class="text-orange-500">Pro</span>
+        <a href="{% url 'core:home' %}" class="flex items-center space-x-2">
+
+            <img src="{% static 'core/images/beepos_logo_nav.png' %}"
+                 alt="BeePOS"
+                 class="h-12 w-auto">
+
+            <span class="text-xl font-bold text-gray-900 dark:text-white">
+                {{ SYSTEM_SHORT_NAME }}
+            </span>
+
         </a>
 
         <!-- Desktop Menu -->
         <div class="hidden md:flex items-center space-x-6">
 
-            <a href="{% url 'core:home' %}" class="hover:text-orange-500 transition">
+            <a href="{% url 'core:home' %}" class="hover:text-yellow-500 transition">
                 Home
             </a>
 
             {% if user.is_authenticated %}
-                <a href="{% url 'core:pos_dashboard' %}" class="hover:text-orange-500 transition">
+                <a href="{% url 'core:pos_dashboard' %}" class="hover:text-yellow-500 transition">
                     Dashboard
                 </a>
-                <a href="{% url 'core:kitchen_display' %}" class="hover:text-orange-500 transition">
+
+                <a href="{% url 'core:kitchen_display' %}" class="hover:text-yellow-500 transition">
                     Kitchen
                 </a>
             {% endif %}
-            {% if user.is_authenticated and user.is_cashier %}
-                {% if active_shift %}
-                    <span class="px-3 py-1 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
-                    🟢 Shift Active
-                    </span>
-                {% else %}
-                    <span class="px-3 py-1 text-xs font-semibold bg-red-100 text-red-700 rounded-full">
-                    🔴 No Shift
-                    </span>
-                {% endif %}
-            {% endif %}
+
             <!-- Theme Toggle -->
-            <button id="theme-toggle" type="button" class="text-gray-600 hover:text-orange-500">
+            <button id="theme-toggle"
+                    type="button"
+                    class="text-gray-600 dark:text-gray-300 hover:text-yellow-500 transition">
                 <i class="bi bi-circle-half text-lg"></i>
             </button>
 
-            <!-- Auth Section -->
+            <!-- Auth -->
             {% if user.is_authenticated %}
+
                 <div class="relative" id="user-menu-container">
+
                     <button id="user-menu-button"
-                            class="flex items-center space-x-2 bg-gray-100 px-3 py-2 rounded-lg hover:bg-gray-200 transition">
-                        <span class="w-8 h-8 flex items-center justify-center bg-orange-500 text-white rounded-full text-sm font-semibold">
+                            class="flex items-center space-x-2 bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition">
+
+                        <span class="w-8 h-8 flex items-center justify-center bg-yellow-400 text-black rounded-full text-sm font-semibold">
                             {{ user.username|first|upper }}
                         </span>
+
                         <i class="bi bi-chevron-down text-sm"></i>
                     </button>
 
                     <div id="user-menu-dropdown"
-                         class="absolute right-0 mt-3 w-48 bg-white shadow-lg rounded-lg hidden">
-                        <div class="px-4 py-3 text-sm text-gray-500 border-b">
+                         class="absolute right-0 mt-3 w-48 bg-white dark:bg-gray-800 shadow-lg rounded-lg hidden">
+
+                        <div class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                             Signed in as <br>
                             <strong>{{ user.username }}</strong>
                         </div>
 
                         <a href="{% url 'core:settings' %}"
-                           class="block px-4 py-2 hover:bg-gray-100">
+                           class="block px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700">
                             <i class="bi bi-gear-fill mr-2"></i> Settings
                         </a>
-                        
-                        {% if user.can_manage_staff %}
-                        <a href="{% url 'core:staff_list' %}"
-                            class="block px-4 py-2 hover:bg-gray-100">
-                              <i class="bi bi-people-fill mr-2"></i> Staff Management
-                        </a>
-                        {% endif %}
 
                         <form method="post" action="{% url 'core:logout' %}">
                             {% csrf_token %}
                             <button type="submit"
-                                    class="w-full text-left px-4 py-2 hover:bg-gray-100 text-red-600">
+                                    class="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 text-red-600">
                                 <i class="bi bi-box-arrow-right mr-2"></i> Logout
                             </button>
                         </form>
                     </div>
                 </div>
+
             {% else %}
                 <a href="{% url 'core:login' %}"
-                   class="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition">
+                   class="bg-yellow-400 hover:bg-yellow-500 text-black px-4 py-2 rounded-lg font-semibold transition">
                     Login
                 </a>
             {% endif %}
         </div>
 
         <!-- Mobile Button -->
-        <button id="mobile-menu-open" class="md:hidden text-2xl">
+        <button id="mobile-menu-open"
+                class="md:hidden text-2xl text-gray-700 dark:text-gray-200">
             <i class="bi bi-list"></i>
         </button>
 
     </div>
 
     <!-- Mobile Menu -->
-    <div id="mobile-menu" class="hidden md:hidden bg-white border-t">
+    <div id="mobile-menu"
+         class="hidden md:hidden bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+
         <div class="px-6 py-4 space-y-3">
 
             <a href="{% url 'core:home' %}" class="block">Home</a>
@@ -127,10 +149,6 @@
                 <a href="{% url 'core:pos_dashboard' %}" class="block">Dashboard</a>
                 <a href="{% url 'core:kitchen_display' %}" class="block">Kitchen</a>
 
-                {% if user.can_manage_staff %}
-                <a href="{% url 'core:staff_list' %}" class="block">Staff Management</a>
-                {% endif %}
-
                 <form method="post" action="{% url 'core:logout' %}">
                     {% csrf_token %}
                     <button type="submit" class="text-red-600">
@@ -138,23 +156,24 @@
                     </button>
                 </form>
             {% else %}
-                <a href="{% url 'core:login' %}" class="block text-orange-500">
+                <a href="{% url 'core:login' %}" class="block text-yellow-500">
                     Login
                 </a>
             {% endif %}
         </div>
     </div>
+
 </nav>
 
-<!-- ================= MAIN CONTENT ================= -->
-<main class="flex-grow pt-24">
+<!-- ================= MAIN ================= -->
+<main class="flex-grow pt-20 px-6">
     {% block page_title %}{% endblock %}
     {% block content %}{% endblock %}
 </main>
 
 <!-- ================= FOOTER ================= -->
-<footer class="bg-gray-800 text-gray-300 py-6 text-center mt-16">
-    © 2026 BestPOS Pro. All rights reserved.
+<footer class="bg-gray-900 text-gray-400 py-6 text-center">
+        © 2026 {{ SYSTEM_NAME }}. All rights reserved.
 </footer>
 
 <!-- ================= SCRIPTS ================= -->
@@ -184,6 +203,16 @@ document.addEventListener('DOMContentLoaded', function() {
     if (mobileBtn && mobileMenu) {
         mobileBtn.addEventListener('click', function() {
             mobileMenu.classList.toggle('hidden');
+        });
+    }
+
+    // DARK MODE TOGGLE
+    const toggleBtn = document.getElementById('theme-toggle');
+    const html = document.documentElement;
+
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            html.classList.toggle('dark');
         });
     }
 

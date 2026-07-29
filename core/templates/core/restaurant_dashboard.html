@@ -1,36 +1,42 @@
 {% extends "core/dashboard_base.html" %}
 {% block content %}
 
-<h1 class="page-title">Dashboard</h1>
-<p class="page-subtitle">
+<!-- ================= PAGE HEADER ================= -->
+
+<div class="page-heading">Dashboard</div>
+<div class="page-subheading">
     Welcome back. Here’s what’s happening today.
-</p>
+</div>
+
+
+<!-- ================= EXECUTIVE INSIGHT STRIP ================= -->
+
+<div class="insight-strip">
+    {% if revenue_trend_direction == "up" %}
+        🚀 Revenue is trending upward compared to yesterday.
+    {% elif revenue_trend_direction == "down" %}
+        ⚠ Revenue dipped compared to yesterday. Monitor activity.
+    {% else %}
+        ✅ Revenue is stable compared to yesterday.
+    {% endif %}
+</div>
+
 
 <!-- ================= KPI GRID ================= -->
+
 <div class="kpi-grid">
 
     <!-- TODAY ORDERS -->
-    <div class="kpi-card">
-        <div class="kpi-title">
-            Today’s Orders
-            <div class="kpi-sub">
-                {{ today_label|date:"M d, Y" }}
-            </div>
-        </div>
-
-        <div class="kpi-value">{{ today_orders }}</div>
-
-        <div class="kpi-trend
-            {% if orders_trend_direction == "up" %}up
-            {% elif orders_trend_direction == "down" %}down
-            {% else %}neutral
-            {% endif %}">
-
+    <div class="card metric-card">
+        <div class="metric-label">Today’s Orders</div>
+        <div class="metric-value">{{ today_orders }}</div>
+        <div class="metric-meta">
+            {{ today_label|date:"M d, Y" }} ·
             {% if orders_trend is not None %}
                 {% if orders_trend_direction == "up" %}
-                    ↑ {{ orders_trend }}% vs yesterday
+                    <span class="metric-positive">↑ {{ orders_trend }}% vs yesterday</span>
                 {% elif orders_trend_direction == "down" %}
-                    ↓ {{ orders_trend }}% vs yesterday
+                    <span class="metric-negative">↓ {{ orders_trend }}% vs yesterday</span>
                 {% else %}
                     0% vs yesterday
                 {% endif %}
@@ -41,32 +47,24 @@
     </div>
 
 
-    <!-- TODAY REVENUE -->
-    <div class="kpi-card">
-        <div class="kpi-title">
-            Today’s Revenue
-            <div class="kpi-sub">
-                Compared to {{ yesterday_label|date:"M d" }}
-            </div>
+    <!-- TODAY REVENUE (PRIMARY KPI) -->
+    <div class="card metric-card">
+        <div class="metric-label">Today’s Revenue</div>
+
+        <div class="metric-value">
+            <span style="font-size:16px; opacity:0.6;">{{ currency }}</span>
+            {{ today_revenue|floatformat:2 }}
         </div>
 
-        <div class="kpi-value">
-            {{ currency }} {{ today_revenue|floatformat:2 }}
-        </div>
-
-        <div class="kpi-trend
-            {% if revenue_trend_direction == "up" %}up
-            {% elif revenue_trend_direction == "down" %}down
-            {% else %}neutral
-            {% endif %}">
-
+        <div class="metric-meta">
+            Compared to {{ yesterday_label|date:"M d" }} ·
             {% if revenue_trend is not None %}
                 {% if revenue_trend_direction == "up" %}
-                    ↑ {{ revenue_trend }}% vs yesterday
+                    <span class="metric-positive">↑ {{ revenue_trend }}%</span>
                 {% elif revenue_trend_direction == "down" %}
-                    ↓ {{ revenue_trend }}% vs yesterday
+                    <span class="metric-negative">↓ {{ revenue_trend }}%</span>
                 {% else %}
-                    0% vs yesterday
+                    0%
                 {% endif %}
             {% else %}
                 No previous data
@@ -76,27 +74,16 @@
 
 
     <!-- WEEKLY ORDERS -->
-    <div class="kpi-card">
-        <div class="kpi-title">
-            Weekly Orders
-            <div class="kpi-sub">
-                Since {{ week_start|date:"M d" }}
-            </div>
-        </div>
-
-        <div class="kpi-value">{{ this_week_orders }}</div>
-
-        <div class="kpi-trend
-            {% if trend_direction == "up" %}up
-            {% elif trend_direction == "down" %}down
-            {% else %}neutral
-            {% endif %}">
-
+    <div class="card metric-card">
+        <div class="metric-label">Weekly Orders</div>
+        <div class="metric-value">{{ this_week_orders }}</div>
+        <div class="metric-meta">
+            Since {{ week_start|date:"M d" }} ·
             {% if weekly_trend is not None %}
                 {% if trend_direction == "up" %}
-                    ↑ {{ weekly_trend }}% vs last week
+                    <span class="metric-positive">↑ {{ weekly_trend }}% vs last week</span>
                 {% elif trend_direction == "down" %}
-                    ↓ {{ weekly_trend }}% vs last week
+                    <span class="metric-negative">↓ {{ weekly_trend }}% vs last week</span>
                 {% else %}
                     0% vs last week
                 {% endif %}
@@ -108,30 +95,36 @@
 
 
     <!-- MONTHLY REVENUE -->
-    <div class="kpi-card">
-        <div class="kpi-title">
-            Monthly Revenue
-            <div class="kpi-sub">
-                Since {{ month_start|date:"M 1" }}
-            </div>
+    <div class="card metric-card">
+        <div class="metric-label">Monthly Revenue</div>
+
+        <div class="metric-value">
+            <span style="font-size:16px; opacity:0.6;">{{ currency }}</span>
+            {{ monthly_revenue|floatformat:2 }}
         </div>
 
-        <div class="kpi-value">
-            {{ currency }}{{ monthly_revenue|floatformat:2 }}
-        </div>
-
-        <div class="kpi-trend neutral">
-            This month total
+        <div class="metric-meta">
+            Since {{ month_start|date:"M d" }}
         </div>
     </div>
 
 </div>
 
-<!-- ================= CHART ================= -->
+
+<!-- ================= 7 DAY REVENUE CHART ================= -->
+
 <div class="card section-card">
-    <div class="card-header">Revenue Overview</div>
-    <canvas id="salesChart"></canvas>
+    <div class="section-title">Revenue — Last 7 Days</div>
+    <div class="section-subtitle">Daily performance trend</div>
+    <canvas id="salesChart" height="90"></canvas>
 </div>
 
 
+<!-- ================= HOURLY REVENUE CHART ================= -->
+
+<div class="card section-card">
+    <div class="section-title">Today — Hourly Revenue</div>
+    <div class="section-subtitle">Peak activity insight</div>
+    <canvas id="hourlyChart" height="90"></canvas>
+</div>
 {% endblock %}

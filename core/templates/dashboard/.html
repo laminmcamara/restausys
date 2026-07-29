@@ -1,0 +1,32 @@
+{% extends "core/dashboard_base.html" %}
+
+{% block content %}
+
+<div class="page-centered">
+    <div class="card surface-light confirm-card">
+
+        <h2 class="confirm-title">Delete Category</h2>
+
+        <p class="confirm-text">
+            Are you sure you want to delete
+            <strong>{{ object.name }}</strong>?
+        </p>
+
+        <form method="POST">
+            {% csrf_token %}
+
+            <div class="confirm-actions">
+                <a href="{% url 'core:category_list' %}" class="btn btn-outline">
+                    Cancel
+                </a>
+
+                <button type="submit" class="btn btn-danger">
+                    Yes, Delete
+                </button>
+            </div>
+        </form>
+
+    </div>
+</div>
+
+{% endblock %}

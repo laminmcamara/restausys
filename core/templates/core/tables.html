@@ -1,140 +1,159 @@
 {% extends "core/dashboard_base.html" %}
 {% load static %}
 
-{% block title %}Manage Tables & QR Codes — RestaurantSys{% endblock %}
-
-{% block page_header %}
-  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
-    Manage Tables & QR Codes
-  </h1>
-  <p class="mt-1 text-base text-slate-600">
-    View table status, print, and regenerate QR codes for customer ordering.
-  </p>
-{% endblock %}
+{% block title %}Tables — RestaurantSys{% endblock %}
 
 {% block content %}
 
-<div class="mb-6">
-  <p class="text-sm text-slate-500">
-    Total Tables: <span class="font-semibold text-slate-800">{{ tables|length }}</span>
-  </p>
+<!-- ============================= -->
+<!-- PAGE HEADER -->
+<!-- ============================= -->
+<div class="mb-10">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-slate-900">
+        Tables Overview
+      </h1>
+      <p class="mt-1 text-sm text-slate-500">
+        Monitor live table activity and manage QR access.
+      </p>
+    </div>
+
+    <div class="text-sm text-slate-600">
+      Total Tables:
+      <span class="font-semibold text-slate-900">{{ tables|length }}</span>
+    </div>
+  </div>
 </div>
 
-<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
+<!-- ============================= -->
+<!-- OPEN TABLES -->
+<!-- ============================= -->
+<div class="mb-12">
+  <h2 class="text-lg font-semibold text-rose-600 uppercase tracking-wide mb-5">
+    Open Tables
+  </h2>
 
-{% for t in tables %}
-<div class="group bg-white rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-200 flex flex-col justify-between">
+  {% if tables %}
+  <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+    {% for t in tables %}
+      {% if t.has_active_session %}
+      <div class="relative bg-gradient-to-br from-rose-50 to-white border-2 border-rose-300 rounded-2xl shadow-sm hover:shadow-md transition">
 
-  <!-- MAIN CLICKABLE TABLE AREA -->
-  <a href="{% if t.has_active_session %}
-              {% url 'core:dashboard_session_detail' t.active_session_id %}
-           {% else %}
-              {% url 'core:dashboard_table_open' t.id %}
-           {% endif %}"
-     class="p-6 text-center flex flex-col items-center justify-center">
+        <a href="{% url 'core:dashboard_session_detail' t.active_session_id %}"
+           class="block p-6 text-center">
 
-      <div class="text-4xl font-extrabold tracking-tight text-slate-800 group-hover:text-indigo-600 transition">
-        {{ t.table_number }}
-      </div>
+          <div class="text-4xl font-extrabold text-rose-700 tracking-tight">
+            {{ t.table_number }}
+          </div>
 
-      <div class="text-sm text-slate-500 mt-1">
-        {{ t.capacity }} Seats
-      </div>
-
-      <!-- STATUS -->
-      <div class="mt-3">
-        {% if t.has_active_session %}
-          <span id="status-badge-{{ t.id }}"
-                class="px-3 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-700">
+          <div class="mt-2 text-xs font-bold text-rose-600 uppercase tracking-wider">
             Occupied
-          </span>
-        {% else %}
-          <span id="status-badge-{{ t.id }}"
-                class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
-            Available
-          </span>
-        {% endif %}
-      </div>
-  </a>
+          </div>
 
-  <!-- QR + ACTIONS -->
-  <div class="px-4 pb-4">
+          <div class="mt-2 text-xs text-slate-500">
+            {{ t.capacity }} Seats
+          </div>
+        </a>
 
-      <!-- Small QR -->
-      {% if t.qr_code %}
-      <div class="flex justify-center mb-3">
-          <img src="{{ t.qr_code.url }}"
-               class="w-20 h-20 object-cover rounded-lg border cursor-pointer preview-btn"
-               data-url="{{ t.qr_code.url }}">
+        <a href="{% url 'core:dashboard_table_close' t.active_session_id %}"
+           class="absolute top-3 right-3 text-xs font-medium text-rose-600 hover:text-rose-800">
+          Close
+        </a>
+
       </div>
       {% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+    <p class="text-sm text-slate-400">No tables found.</p>
+  {% endif %}
+</div>
 
-      <!-- Actions -->
-      <div class="flex justify-between text-xs font-medium">
+<!-- ============================= -->
+<!-- AVAILABLE TABLES -->
+<!-- ============================= -->
+<div>
+  <h2 class="text-lg font-semibold text-emerald-600 uppercase tracking-wide mb-5">
+    Available Tables
+  </h2>
 
-          {% if t.has_active_session %}
-          <a class="text-rose-600 hover:text-rose-800"
-             href="{% url 'core:dashboard_table_close' t.active_session_id %}">
-             Close
-          </a>
-          {% else %}
-          <a class="text-indigo-600 hover:text-indigo-800"
-             href="{% url 'core:dashboard_table_open' t.id %}">
-             Open POS
-          </a>
-          {% endif %}
+  <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+    {% for t in tables %}
+      {% if not t.has_active_session %}
+      <div class="relative bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition">
 
-          <a class="text-emerald-600 hover:text-emerald-800"
-             href="{% url 'core:print_qr' t.id %}"
-             target="_blank">
-             Print
-          </a>
+        <a href="{% url 'core:dashboard_table_open' t.id %}"
+           class="block p-6 text-center">
 
-          <a class="text-slate-600 hover:text-slate-800"
-             href="{% url 'core:regenerate_qr' t.id %}">
-             Regenerate
+          <div class="text-4xl font-extrabold text-slate-800 tracking-tight hover:text-indigo-600 transition">
+            {{ t.table_number }}
+          </div>
+
+          <div class="mt-2 text-xs font-bold text-emerald-600 uppercase tracking-wider">
+            Available
+          </div>
+
+          <div class="mt-2 text-xs text-slate-500">
+            {{ t.capacity }} Seats
+          </div>
+        </a>
+
+        {% if t.qr_code %}
+        <div class="absolute bottom-3 right-3">
+          <img src="{{ t.qr_code.url }}"
+               class="w-12 h-12 rounded-md border cursor-pointer preview-btn hover:scale-105 transition"
+               data-url="{{ t.qr_code.url }}">
+        </div>
+        {% endif %}
+
+        <div class="absolute top-3 right-3 flex gap-3 text-xs font-medium">
+          <a href="{% url 'core:print_qr' t.id %}"
+             target="_blank"
+             class="text-emerald-600 hover:text-emerald-800">
+            Print
           </a>
+          <a href="{% url 'core:regenerate_qr' t.id %}"
+             class="text-slate-600 hover:text-slate-800">
+            Regenerate
+          </a>
+        </div>
 
       </div>
+      {% endif %}
+    {% endfor %}
   </div>
-
 </div>
-{% endfor %}
 
+<!-- ============================= -->
+<!-- QR MODAL -->
+<!-- ============================= -->
+<div id="previewModal"
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center z-50">
+
+  <div class="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full text-center relative">
+
+    <button onclick="closeModal()"
+            class="absolute top-3 right-3 text-slate-500 hover:text-slate-700 text-sm">
+      ✕
+    </button>
+
+    <img id="previewImage"
+         src=""
+         class="w-64 h-64 mx-auto rounded-lg border">
+
+    <p class="mt-4 text-sm text-slate-500">
+      Scan to access table menu
+    </p>
+  </div>
 </div>
-{% endblock %}
 
-{% block extra_head %}
-<style>
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 500;
-    color: white;
-    text-decoration: none;
-    transition: background-color 0.2s;
-    border: none;
-    cursor: pointer;
-  }
-  .btn:focus {
-    outline: none;
-    box-shadow: 0 0 0 3px var(--tw-ring-color);
-  }
-</style>
 {% endblock %}
-
 
 {% block extra_scripts %}
 <script>
 document.addEventListener("DOMContentLoaded", function () {
 
-  // ==========================
-  // QR MODAL
-  // ==========================
   const previewModal = document.getElementById('previewModal');
   const previewImage = document.getElementById('previewImage');
 
@@ -142,56 +161,21 @@ document.addEventListener("DOMContentLoaded", function () {
     const img = e.target.closest(".preview-btn");
     if (!img) return;
 
-    const url = img.dataset.url;
-    if (!url) return;
-
-    previewImage.src = url;
+    previewImage.src = img.dataset.url;
     previewModal.classList.remove("hidden");
+    previewModal.classList.add("flex");
   });
 
-  previewModal.addEventListener("click", function () {
+  window.closeModal = function () {
     previewModal.classList.add("hidden");
+    previewModal.classList.remove("flex");
     previewImage.src = "";
+  };
+
+  previewModal.addEventListener("click", function (e) {
+    if (e.target === previewModal) closeModal();
   });
 
-  previewImage.addEventListener("click", function (e) {
-    e.stopPropagation();
-  });
-
-  // ==========================
-  // STATUS AUTO REFRESH
-  // ==========================
-  async function refreshStatuses() {
-    const statusUrl = "{% url 'core:table-list' %}";
-
-    try {
-      const response = await fetch(statusUrl);
-      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-
-      const tables = await response.json();
-
-      tables.forEach(table => {
-        const badge = document.getElementById(`status-badge-${table.id}`);
-        if (!badge) return;
-
-        badge.className = "status-badge text-xs font-semibold px-2.5 py-1 rounded-full inline-block";
-
-        if (table.has_active_session) {
-          badge.textContent = "Occupied";
-          badge.classList.add("bg-amber-100", "text-amber-800");
-        } else {
-          badge.textContent = "Available";
-          badge.classList.add("bg-green-100", "text-green-800");
-        }
-      });
-
-    } catch (error) {
-      console.warn("Could not refresh table statuses:", error);
-    }
-  }
-
-  setInterval(refreshStatuses, 5000);
-  refreshStatuses();
 });
 </script>
 {% endblock %}

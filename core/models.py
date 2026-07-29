@@ -84,14 +84,13 @@ class CustomUser(AbstractUser):
         CASHIER = 'CASHIER', 'Cashier'
         CUSTOMER = 'CUSTOMER', 'Customer'
         STAFF = 'STAFF', 'General Staff'
-    
+
     # =====================================================
     # PLATFORM AUTHORITY
     # =====================================================
 
     is_platform_owner = models.BooleanField(default=False)
 
-    
     # =====================================================
     # RELATIONS
     # =====================================================
@@ -117,7 +116,6 @@ class CustomUser(AbstractUser):
     )
 
     phone_number = models.CharField(
-        validators=[phone_regex],
         max_length=17,
         blank=True
     )
@@ -137,7 +135,7 @@ class CustomUser(AbstractUser):
 
     def save(self, *args, **kwargs):
 
-    # ✅ Restaurant-level users must belong to a restaurant
+        # ✅ Restaurant-level users must belong to a restaurant
         if (
             not self.is_superuser
             and not self.is_platform_owner
@@ -149,26 +147,27 @@ class CustomUser(AbstractUser):
         if self.is_superuser:
             self.is_staff = True
 
-        # ✅ Platform owner has admin access (but is not necessarily superuser)
+        # ✅ Platform owner has admin access
         elif self.is_platform_owner:
             self.is_staff = True
 
-        # ✅ Restaurant manager can access Django admin (optional choice)
+        # ✅ Restaurant manager may access Django admin
         else:
             self.is_staff = self.role == self.Roles.MANAGER
 
         super().save(*args, **kwargs)
+
     # =====================================================
-    # ROLE HELPERS (RBAC LAYER)
+    # ROLE HELPERS (Hierarchical)
     # =====================================================
 
     @property
     def is_owner(self):
-        return self.is_platform_owner
+        return self.is_platform_owner or self.is_superuser
 
     @property
     def is_manager(self):
-        return self.role == self.Roles.MANAGER or self.is_platform_owner
+        return self.role == self.Roles.MANAGER or self.is_owner
 
     @property
     def is_cashier(self):
@@ -191,48 +190,51 @@ class CustomUser(AbstractUser):
         return self.role == self.Roles.STAFF
 
     # =====================================================
-    # PERMISSION CAPABILITIES
+    # PERMISSION CAPABILITIES (Capability-Based Access)
     # =====================================================
 
     @property
     def can_manage_staff(self):
-        return self.is_platform_owner or self.role == self.Roles.MANAGER
-    
-    
+        return self.is_manager
+
     @property
     def can_access_pos(self):
-        allowed_roles = {
-            self.Roles.CASHIER,
-            self.Roles.SERVER,
-            self.Roles.MANAGER,
-        }
-
-        return (
-            self.is_superuser
-            or self.is_platform_owner
-            or self.role in allowed_roles
-        )
+        return self.is_cashier or self.is_server
 
     @property
     def can_access_kitchen(self):
-        return self.is_cook or self.role == self.Roles.MANAGER or self.is_platform_owner
-
+        return self.is_cook or self.is_manager
     
     @property
+    def can_access_public_display(self):
+        return self.is_manager
+
+    @property
+    def can_view_dashboard(self):
+        return self.is_manager
+
+    @property
     def can_view_reports(self):
-        return self.role == self.Roles.MANAGER or self.is_platform_owner
+        return self.is_manager
+
+    @property
+    def can_manage_products(self):
+        return self.is_manager
+
+    @property
+    def can_manage_tables(self):
+        return self.is_manager
 
     @property
     def can_manage_settings(self):
-        return self.role == self.Roles.MANAGER or self.is_platform_owner
-    
+        return self.is_manager
+
     # =====================================================
     # STRING REPRESENTATION
     # =====================================================
 
     def __str__(self):
         return f"{self.username} ({self.role})"
-    
 class Attendance(models.Model):
     employee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -324,12 +326,14 @@ class Customer(TimeStampedModel):
 # === COMPANY RESTAURANTS =======================================================
 # =============================================================================
 
+
 class Restaurant(TimeStampedModel):
+
     class RestaurantStatus(models.TextChoices):
         OPEN = 'OPEN', 'Open'
         CLOSED = 'CLOSED', 'Closed'
         HOLIDAY = 'HOLIDAY', 'Holiday Hours'
-    
+
     CURRENCY_CHOICES = [
         ("USD", "US Dollar ($)"),
         ("EUR", "Euro (€)"),
@@ -357,14 +361,19 @@ class Restaurant(TimeStampedModel):
         ("RWF", "Rwandan Franc (FRw)"),
     ]
 
-    
-    company = models.ForeignKey("core.Company", on_delete=models.CASCADE, related_name='restaurants')
+    company = models.ForeignKey(
+        "core.Company",
+        on_delete=models.CASCADE,
+        related_name='restaurants'
+    )
+
     name = models.CharField(max_length=100)
+
     address_line_1 = models.CharField(max_length=255, blank=True)
     address_line_2 = models.CharField(max_length=255, blank=True)
     city = models.CharField(max_length=100, blank=True)
-
     country = models.CharField(max_length=60, blank=True)
+
     timezone = models.CharField(max_length=64, default="UTC")
     currency = models.CharField(max_length=6, default="USD")
     locale = models.CharField(
@@ -372,13 +381,53 @@ class Restaurant(TimeStampedModel):
         default="en_US",
         help_text="Locale for formatting (e.g., en_US, de_DE, fr_FR)"
     )
+
     logo = models.ImageField(upload_to="restaurants/logos/", null=True, blank=True)
     phone_number = models.CharField(max_length=20, blank=True)
-    status = models.CharField(max_length=10, choices=RestaurantStatus.choices, default=RestaurantStatus.OPEN)
-    display_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    status = models.CharField(
+        max_length=10,
+        choices=RestaurantStatus.choices,
+        default=RestaurantStatus.OPEN
+    )
+
+    display_token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
+
     slug = models.SlugField(unique=True)
-    def __str__(self):
-        return f"{self.name} ({self.company.name})"
+
+    # =====================================================
+    # SUBSCRIPTION LOGIC
+    # =====================================================
+
+    from django.utils import timezone
+
+
+    @property
+    def subscription_valid(self):
+        try:
+            subscription = self.subscription
+        except Subscription.DoesNotExist:
+            return False
+
+        if not subscription.is_active:
+            return False
+
+        today = timezone.now().date()
+        return subscription.end_date >= today
+
+    @property
+    def subscription_days_remaining(self):
+        if not self.subscription_valid:
+            return 0
+
+        today = timezone.now().date()
+        delta = self.subscription.end_date - today
+        return max(delta.days, 0)
+
     @property
     def profile_complete(self):
         return all([
@@ -386,13 +435,16 @@ class Restaurant(TimeStampedModel):
             self.city,
             self.country,
         ])
-    
+
     def save(self, *args, **kwargs):
         if not self.slug:
             base_slug = slugify(self.name)
             self.slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
         super().save(*args, **kwargs)
-    
+
+    def __str__(self):
+        return f"{self.name} ({self.company.name})"
+
     class Meta:
         unique_together = ('company', 'name')
 
@@ -423,8 +475,13 @@ class Table(models.Model):
     )
     capacity = models.PositiveIntegerField(default=4)
     class Meta:
-        unique_together = ("restaurant", "table_number")
-
+        constraints = [
+            models.UniqueConstraint(
+                fields=["restaurant", "table_number"],
+                name="unique_table_number_per_restaurant"
+            )
+        ]
+        
     def __str__(self):
         return f"Table {self.table_number}"
     
@@ -718,24 +775,113 @@ class TableSession(models.Model):
 
 class InventoryItem(models.Model):
     restaurant = models.ForeignKey(
-        "core.Restaurant", on_delete=models.CASCADE, related_name="inventory"
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="inventory"
     )
+
     name = models.CharField(max_length=100)
     category = models.CharField(max_length=50, blank=True, null=True)
-    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    quantity = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        validators=[MinValueValidator(Decimal("0.00"))]
+    )
+
     unit = models.CharField(max_length=20, default="pcs")
-    reorder_level = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    unit_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    # ✅ This is your low stock threshold
+    reorder_level = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    unit_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    # ✅ Cached low stock flag (for fast dashboards)
+    is_low_stock = models.BooleanField(default=False)
+
     last_updated = models.DateTimeField(auto_now=True)
     active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["name"]
         unique_together = ("restaurant", "name")
+        indexes = [
+            models.Index(fields=["restaurant", "is_low_stock"]),
+            models.Index(fields=["restaurant", "active"]),
+        ]
+
+    # -------------------------------------------------
+    # LOW STOCK LOGIC
+    # -------------------------------------------------
+
+    def check_low_stock(self):
+        """
+        Returns True if item is below reorder level.
+        """
+        return self.quantity <= self.reorder_level
+
+    def refresh_low_stock_flag(self):
+        """
+        Sync cached low stock flag.
+        """
+        low = self.check_low_stock()
+        if self.is_low_stock != low:
+            self.is_low_stock = low
+            super().save(update_fields=["is_low_stock"])
+
+    # -------------------------------------------------
+    # SAFE DEDUCTION
+    # -------------------------------------------------
+
+    def deduct(self, amount):
+        """
+        Deduct stock safely.
+        Must be used inside transaction + select_for_update.
+        """
+
+        if amount <= 0:
+            return
+
+        if self.quantity < amount:
+            raise ValidationError(
+                f"Not enough {self.name} in stock."
+            )
+
+        self.quantity -= amount
+        super().save(update_fields=["quantity"])
+
+        # ✅ Automatically check for low stock
+        self.refresh_low_stock_flag()
+
+    # -------------------------------------------------
+    # SAFE RESTOCK
+    # -------------------------------------------------
+
+    def restock(self, amount):
+        """
+        Add stock safely.
+        """
+
+        if amount <= 0:
+            return
+
+        self.quantity += amount
+        super().save(update_fields=["quantity"])
+
+        self.refresh_low_stock_flag()
 
     def __str__(self):
         return f"{self.name} ({self.quantity} {self.unit})"
-
+    
 # =============================================================================
 # === ### NEW & IMPROVED MENU SYSTEM ### ======================================
 # =============================================================================
@@ -1002,11 +1148,11 @@ class Order(TimeStampedModel):
             models.Index(fields=["restaurant", "status"]),
             models.Index(fields=["restaurant", "order_type"]),
         ]
+
     # -------------------------------------------------
     # IDENTIFICATION
     # -------------------------------------------------
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
     order_number = models.PositiveIntegerField(null=True, blank=True, editable=False)
 
     restaurant = models.ForeignKey(
@@ -1014,6 +1160,9 @@ class Order(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="orders"
     )
+
+    # ✅ Prevent double inventory deduction
+    inventory_deducted = models.BooleanField(default=False)
 
     # -------------------------------------------------
     # RELATIONS
@@ -1067,7 +1216,7 @@ class Order(TimeStampedModel):
         choices=PaymentStatus.choices,
         default=PaymentStatus.UNPAID
     )
-    
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -1075,13 +1224,7 @@ class Order(TimeStampedModel):
         blank=True,
         related_name="orders_created"
     )
-    
-    total_amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=0
-    )
-    
+
     notes = models.TextField(blank=True, null=True)
 
     # -------------------------------------------------
@@ -1097,139 +1240,10 @@ class Order(TimeStampedModel):
     objects = OrderManager()
 
     # =============================================================================
-    # FACTORY METHODS (SECTION + FULL TABLE SUPPORT)
-    # =============================================================================
-
-    @classmethod
-    def create_for_table(cls, table, **extra_fields):
-
-        with transaction.atomic():
-
-            table = (
-                Table.objects
-                .select_for_update()
-                .get(pk=table.pk)
-            ) 
-
-            # Block if any section active
-            if TableSession.objects.filter(
-                table=table,
-                section__isnull=False,
-                is_active=True
-            ).exists():
-                raise ValueError("One or more sections are occupied.")
-
-            session, _ = TableSession.objects.get_or_create(
-                table=table,
-                section=None,
-                restaurant=table.restaurant,
-                is_active=True,
-            )
-
-            return cls._create_for_session(session, None, **extra_fields)
-    
-    @property
-    def is_editable(self):
-        return (
-            self.payment_status != self.PaymentStatus.PAID and
-            self.status not in [self.Status.COMPLETED, self.Status.CANCELED]
-        )
-    
-    @classmethod
-    def create_for_section(cls, section, **extra_fields):
-
-        with transaction.atomic():
-
-            # Lock the table row
-            table = (
-                Table.objects
-                .select_for_update()
-                .get(pk=section.table_id)
-            )
-
-            # Check full-table occupation
-            if TableSession.objects.filter(
-                table=table,
-                section__isnull=True,
-                is_active=True
-            ).exists():
-                raise ValueError("Entire table is currently occupied.")
-
-            # Lock the section row
-            section = (
-                TableSection.objects
-                .select_for_update()
-                .get(pk=section.pk)
-            )
-
-            session, _ = TableSession.objects.get_or_create(
-                table=table,
-                section=section,
-                restaurant=table.restaurant,
-                is_active=True,
-            )
-
-            return cls._create_for_session(session, section, **extra_fields)
-    @property
-    def total_paid(self):
-        return self.payments.aggregate(
-        total=Sum("amount")
-        )["total"] or Decimal("0.00")
-
-
-    @property
-    def remaining_balance(self):
-        balance = self.total - self.total_paid
-        return balance if balance > Decimal("0.00") else Decimal("0.00")
-    
-    @property
-    def is_fully_paid(self):
-        return self.remaining_balance <= 0
-
-    @classmethod
-    def _create_for_session(cls, session, section, **extra_fields):
-        """
-        Internal helper to create order linked to a session.
-        Ensures only one active order per session.
-        """
-        # Lock session row
-        TableSession.objects.select_for_update().get(pk=session.pk)
-        
-        # Prevent duplicate active order for same session
-        existing = cls.objects.filter(
-            session=session,
-            status__in=[
-                cls.Status.DRAFT,
-                cls.Status.PLACED,
-                cls.Status.IN_PROGRESS,
-                cls.Status.READY,
-                cls.Status.SERVED,
-            ]
-        ).first()
-
-        if existing:
-            return existing
-
-        order = cls.objects.create(
-            restaurant=session.restaurant,
-            table=session.table,
-            section=section,
-            session=session,
-            order_type=cls.OrderType.DINE_IN,
-            status=cls.Status.DRAFT,
-            payment_status=cls.PaymentStatus.UNPAID,
-            **extra_fields
-        )
-
-        return order
-    
-    
-    # =============================================================================
     # CALCULATIONS
     # =============================================================================
 
     def calculate_totals(self):
-
         subtotal = self.items.aggregate(
             total=Sum("final_price")
         )["total"] or Decimal("0.00")
@@ -1245,117 +1259,143 @@ class Order(TimeStampedModel):
         )
 
         super().save(update_fields=["subtotal", "total"])
-        
+
     # =============================================================================
-    # STATE MACHINE
+    # INVENTORY DEDUCTION
     # =============================================================================
 
-    VALID_TRANSITIONS = {
-        Status.DRAFT: [Status.PLACED],
-        Status.PLACED: [Status.IN_PROGRESS, Status.CANCELED],
-        Status.IN_PROGRESS: [Status.READY],
-        Status.READY: [Status.SERVED],
-        Status.SERVED: [Status.COMPLETED],
-    }
+    def deduct_inventory(self):
+        """
+        Deduct inventory based on recipe items.
+        Must be called inside an atomic block.
+        """
 
+        from core.models import RecipeItem, InventoryItem
+
+        if self.inventory_deducted:
+            return
+
+        for item in self.items.select_related("product"):
+
+            recipe_items = RecipeItem.objects.select_related(
+                "ingredient"
+            ).filter(product=item.product)
+
+            for recipe in recipe_items:
+
+                total_quantity_used = recipe.quantity_used * item.quantity
+
+                # ✅ LOCK THE INVENTORY ROW
+                ingredient = (
+                    InventoryItem.objects
+                    .select_for_update()
+                    .get(pk=recipe.ingredient.pk)
+                )
+
+                if ingredient.quantity < total_quantity_used:
+                    raise ValidationError(
+                        f"Not enough {ingredient.name} in stock."
+                    )
+
+                ingredient.quantity -= total_quantity_used
+                ingredient.save(update_fields=["quantity"])
+
+                # ✅ Auto refresh low stock flag (if implemented)
+                if hasattr(ingredient, "refresh_low_stock_flag"):
+                    ingredient.refresh_low_stock_flag()
+
+        self.inventory_deducted = True
+        super().save(update_fields=["inventory_deducted"])
+    
     def transition_to(self, new_status, actor=None):
+        """
+        Centralized status transition logic.
+        """
 
-        allowed = self.VALID_TRANSITIONS.get(self.status, [])
-        if new_status not in allowed:
-            raise ValueError(f"Invalid transition from {self.status} to {new_status}")
+        allowed_transitions = {
+            self.Status.DRAFT: [self.Status.PLACED, self.Status.CANCELED],
+            self.Status.PLACED: [self.Status.IN_PROGRESS, self.Status.CANCELED],
+            self.Status.IN_PROGRESS: [self.Status.READY, self.Status.CANCELED],
+            self.Status.READY: [self.Status.SERVED, self.Status.CANCELED],
+            self.Status.SERVED: [self.Status.COMPLETED],
+            self.Status.COMPLETED: [],
+            self.Status.CANCELED: [],
+        }
 
-        old_status = self.status
-
-        if actor:
-            self._validate_actor_permission(new_status, actor)
+        if new_status not in allowed_transitions.get(self.status, []):
+            raise ValidationError(
+                f"Invalid transition from {self.status} to {new_status}"
+            )
 
         self.status = new_status
         self.save(update_fields=["status"])
-
-        OrderStatusHistory.objects.create(
-            order=self,
-            restaurant=self.restaurant,
-            from_status=old_status,
-            to_status=new_status,
-            changed_by=actor
-        )
-        
-        
-    def _validate_actor_permission(self, new_status, actor):
-        """
-        Enforces role-based permissions for order state transitions.
-        """
-
-        # Platform owner or superuser override
-        if actor.is_superuser or actor.is_owner:
-            return
-
-        # Manager override
-        if actor.is_manager:
-            return
-
-        # -------------------------------
-        # DRAFT → PLACED
-        # -------------------------------
-        if new_status == self.Status.PLACED:
-            if not actor.is_server:
-                raise PermissionDenied("Only servers can place orders to kitchen.")
-            return
-
-        # -------------------------------
-        # PLACED → IN_PROGRESS
-        # -------------------------------
-        if new_status == self.Status.IN_PROGRESS:
-            if not actor.is_cook:
-                raise PermissionDenied("Only kitchen staff can start preparation.")
-            return
-
-        # -------------------------------
-        # IN_PROGRESS → READY
-        # -------------------------------
-        if new_status == self.Status.READY:
-            if not actor.is_cook:
-                raise PermissionDenied("Only kitchen staff can mark order as ready.")
-            return
-
-        # -------------------------------
-        # READY → SERVED
-        # -------------------------------
-        if new_status == self.Status.SERVED:
-            if not actor.is_server:
-                raise PermissionDenied("Only servers can mark order as served.")
-            return
-
-        # -------------------------------
-        # SERVED → COMPLETED
-        # -------------------------------
-        if new_status == self.Status.COMPLETED:
-            if not actor.is_cashier:
-                raise PermissionDenied("Only cashiers can complete orders.")
-            return
-
-        # -------------------------------
-        # CANCEL
-        # -------------------------------
-        if new_status == self.Status.CANCELED:
-            if not (actor.is_cashier or actor.is_manager):
-                raise PermissionDenied("Only manager or cashier can cancel orders.")
-            return
-
+    
     # =============================================================================
     # COMPLETION LOGIC
     # =============================================================================
 
     def complete_order(self, actor=None):
+        """
+        Mark order as completed.
+        - Requires payment to be PAID
+        - Deducts inventory
+        - Locks order row
+        - Closes session
+        """
+
         if self.payment_status != self.PaymentStatus.PAID:
             raise PermissionDenied("Order must be paid before completion.")
 
-        self.transition_to(self.Status.COMPLETED, actor=actor)
+        with transaction.atomic():
 
-        # Close session
-        if self.session and self.session.is_active:
-            self.session.close()
+            order = Order.objects.select_for_update().get(pk=self.pk)
 
+            # ✅ Prevent duplicate completion
+            if order.status == self.Status.COMPLETED:
+                return order
+
+            # ✅ Deduct inventory safely
+            order.deduct_inventory()
+
+            # ✅ Mark completed
+            order.status = self.Status.COMPLETED
+            order.save(update_fields=["status"])
+
+            # ✅ Close session safely
+            if order.session and order.session.is_active:
+                order.session.is_active = False
+                order.session.closed_at = timezone.now()
+                order.session.save(update_fields=["is_active", "closed_at"])
+
+            return order
+    def mark_as_paid(self, actor=None):
+        if self.payment_status == self.PaymentStatus.PAID:
+            return self
+
+        self.payment_status = self.PaymentStatus.PAID
+        self.save(update_fields=["payment_status"])
+
+        return self
+    
+    def restore_inventory(self):
+
+        for item in self.items.all():
+            for ingredient in item.product.ingredients.all():
+                ingredient.stock += ingredient.quantity_required * item.quantity
+                ingredient.save(update_fields=["stock"])
+                
+    def mark_as_refunded(self, actor=None):
+
+        if self.payment_status == self.PaymentStatus.REFUNDED:
+            return self
+
+        self.payment_status = self.PaymentStatus.REFUNDED
+        self.status = self.Status.CANCELLED
+        self.save(update_fields=["payment_status", "status"])
+
+        return self
+    
+    
     # =============================================================================
     # SAVE OVERRIDE
     # =============================================================================
@@ -1364,7 +1404,6 @@ class Order(TimeStampedModel):
 
         creating = self._state.adding
 
-        # Get previous status before saving (for transition detection)
         previous_status = None
         if not creating and self.pk:
             previous_status = (
@@ -1373,7 +1412,7 @@ class Order(TimeStampedModel):
                 .first()
             )
 
-        # ✅ Auto-generate order number (only on create)
+        # ✅ Auto-generate order number
         if creating and not self.order_number:
             last_number = (
                 Order.objects.filter(restaurant=self.restaurant)
@@ -1383,14 +1422,14 @@ class Order(TimeStampedModel):
 
         super().save(*args, **kwargs)
 
-        # ✅ Kitchen ticket auto-create when entering IN_PROGRESS
+        # ✅ Kitchen ticket auto-create
         if (
             self.status == self.Status.IN_PROGRESS
             and previous_status != self.Status.IN_PROGRESS
         ):
             KitchenTicket.objects.get_or_create(order=self)
 
-        # ✅ Auto-close session when order completes or is canceled
+        # ✅ Auto-close session
         if (
             self.status in [self.Status.COMPLETED, self.Status.CANCELED]
             and previous_status not in [self.Status.COMPLETED, self.Status.CANCELED]
@@ -1399,14 +1438,7 @@ class Order(TimeStampedModel):
                 self.session.is_active = False
                 self.session.closed_at = timezone.now()
                 self.session.save()
-    def next_action_label(self):
-        mapping = {
-            self.Status.DRAFT: "Send to Kitchen",
-            self.Status.READY: "Serve Order",
-            self.Status.SERVED: "Complete & Pay",
-        }
-        return mapping.get(self.status, "")
-    
+
     # =============================================================================
     # HELPERS
     # =============================================================================
@@ -1415,17 +1447,13 @@ class Order(TimeStampedModel):
     def is_active(self):
         return self.status not in [self.Status.CANCELED, self.Status.COMPLETED]
 
-    def short_id(self):
-        return str(self.id)[:8]
-    
-    
     def __str__(self):
         return f"Order #{self.order_number} - {self.restaurant.name}"
     
     
     
 class OrderItem(models.Model):
-    
+
     class Meta:
         indexes = [
             models.Index(fields=["order"]),
@@ -1441,14 +1469,14 @@ class OrderItem(models.Model):
         "core.Product",
         on_delete=models.PROTECT
     )
-    
+
     variant = models.ForeignKey(
-        ProductVariant,
+        "core.ProductVariant",
         on_delete=models.SET_NULL,
         null=True,
         blank=True
     )
-    
+
     modifiers = models.ManyToManyField(
         "core.ModifierOption",
         blank=True
@@ -1460,19 +1488,24 @@ class OrderItem(models.Model):
 
     status = models.CharField(max_length=20, default="QUEUED")
 
+    # ✅ This is now a true snapshot field
     final_price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         default=Decimal("0.00")
     )
 
-    
     # -------------------------------------------------
-    # CALCULATED SUBTOTAL
+    # CALCULATED SUBTOTAL (READ-ONLY PROPERTY)
     # -------------------------------------------------
 
     @property
     def subtotal(self):
+        """
+        This is only for display.
+        It recalculates dynamically and should NOT be used
+        for accounting logic.
+        """
         base_price = (
             self.variant.price if self.variant else self.product.base_price
         )
@@ -1482,8 +1515,36 @@ class OrderItem(models.Model):
         )
 
         return (base_price + modifiers_total) * self.quantity
+
     # -------------------------------------------------
-    # SAVE OVERRIDE
+    # SAFE PRICE RECALCULATION (CALL AFTER M2M SET)
+    # -------------------------------------------------
+
+    def recalculate_price(self):
+        """
+        Calculates final_price safely AFTER modifiers
+        are attached.
+        """
+
+        base_price = (
+            self.variant.price if self.variant else self.product.base_price
+        )
+
+        modifiers_total = sum(
+            mod.price_adjustment for mod in self.modifiers.all()
+        )
+
+        final_price = (base_price + modifiers_total) * self.quantity
+
+        # ✅ Update via queryset to avoid recursive save()
+        type(self).objects.filter(pk=self.pk).update(
+            final_price=final_price
+        )
+
+        self.final_price = final_price
+
+    # -------------------------------------------------
+    # SAVE OVERRIDE (NO PRICE CALCULATION HERE)
     # -------------------------------------------------
 
     def save(self, *args, **kwargs):
@@ -1497,25 +1558,28 @@ class OrderItem(models.Model):
             )
 
             if order.payment_status == order.PaymentStatus.PAID:
-                raise PermissionDenied("Cannot modify items on a paid order.")
+                raise PermissionDenied(
+                    "Cannot modify items on a paid order."
+                )
 
             if order.status in [
                 order.Status.COMPLETED,
                 order.Status.CANCELED
             ]:
-                raise PermissionDenied("Cannot modify items on a closed order.")
+                raise PermissionDenied(
+                    "Cannot modify items on a closed order."
+                )
 
             if self.product.category.menu.restaurant_id != self.order.restaurant_id:
-                raise ValidationError("Product does not belong to the same restaurant as the order.")
-            is_new = self.pk is None
+                raise ValidationError(
+                    "Product does not belong to the same restaurant as the order."
+                )
+
             super().save(*args, **kwargs)
-            final_price = self.subtotal
-            # ✅ Update using queryset to avoid re-insert issues
-            type(self).objects.filter(pk=self.pk).update(
-                final_price=final_price
-            )
-            self.final_price = final_price
+
+            # ✅ DO NOT calculate price here anymore
             order.calculate_totals()
+
     # -------------------------------------------------
     # DELETE OVERRIDE
     # -------------------------------------------------
@@ -1531,13 +1595,17 @@ class OrderItem(models.Model):
             )
 
             if order.payment_status == order.PaymentStatus.PAID:
-                raise PermissionDenied("Cannot delete items from a paid order.")
+                raise PermissionDenied(
+                    "Cannot delete items from a paid order."
+                )
 
             if order.status in [
                 order.Status.COMPLETED,
                 order.Status.CANCELED
             ]:
-                raise PermissionDenied("Cannot delete items from a closed order.")
+                raise PermissionDenied(
+                    "Cannot delete items from a closed order."
+                )
 
             super().delete(*args, **kwargs)
 
@@ -1882,78 +1950,69 @@ class DailyReport(models.Model):
         return f"{self.restaurant.name} - {self.date}"
 
 
+from django.core.validators import MinValueValidator, MaxValueValidator
+
+
 class Settings(models.Model):
 
     restaurant = models.OneToOneField(
         "core.Restaurant",
         on_delete=models.CASCADE,
         related_name="settings",
-        null=True,
-        blank=True,
     )
 
-    # ===============================
-    # General Settings
-    # ===============================
-
+    # General
     restaurant_display_name = models.CharField(max_length=150)
     currency_symbol = models.CharField(max_length=5, default="$")
     timezone = models.CharField(max_length=50, default="UTC")
 
-    # ===============================
     # Tax & Charges
-    # ===============================
+    tax_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
 
-    tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    service_charge_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    service_charge_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+
     prices_include_tax = models.BooleanField(default=False)
 
-    # ===============================
     # Order Behavior
-    # ===============================
-
     auto_mark_order_paid = models.BooleanField(default=False)
     allow_split_payments = models.BooleanField(default=True)
     allow_table_merge = models.BooleanField(default=True)
 
-    # ===============================
-    # Receipt Settings
-    # ===============================
-
+    # Receipt
     show_logo_on_receipt = models.BooleanField(default=True)
     receipt_footer_text = models.CharField(max_length=255, blank=True, null=True)
 
-    # ===============================
-    # Inventory Settings
-    # ===============================
-
+    # Inventory
     stock_alerts_enabled = models.BooleanField(default=True)
     auto_deduct_inventory = models.BooleanField(default=True)
 
-    # ✅ ADD THIS SECTION HERE
-    # ===============================
-    # Notification Settings
-    # ===============================
-
+    # Notifications
     email_notifications_enabled = models.BooleanField(default=True)
     send_daily_sales_report = models.BooleanField(default=False)
     low_stock_email_alerts = models.BooleanField(default=True)
     notify_on_new_order = models.BooleanField(default=True)
 
-    # ===============================
-    # UI Settings
-    # ===============================
-
+    # UI
     THEME_CHOICES = [
-        ('system', 'System Preference'),
-        ('light', 'Light Mode'),
-        ('dark', 'Dark Mode'),
+        ("system", "System Preference"),
+        ("light", "Light Mode"),
+        ("dark", "Dark Mode"),
     ]
 
     default_theme = models.CharField(
         max_length=10,
         choices=THEME_CHOICES,
-        default='system'
+        default="system",
     )
 
     items_per_page = models.PositiveIntegerField(default=20)
@@ -1961,8 +2020,21 @@ class Settings(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def calculate_tax(self, subtotal):
+        if self.prices_include_tax:
+            return Decimal("0.00")
+        return (subtotal * self.tax_percentage) / Decimal("100")
+
+    def calculate_service_charge(self, subtotal):
+        return (subtotal * self.service_charge_percentage) / Decimal("100")
+
     def __str__(self):
         return f"{self.restaurant.name} Settings"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["restaurant"]),
+        ]
     
 class CashierShift(models.Model):
     user = models.ForeignKey(
@@ -2082,9 +2154,116 @@ class WaiterCall(TimeStampedModel):
     def __str__(self):
         return f"Call from Table {self.table.table_number}"
     
-class Subscription(models.Model):
-    restaurant = models.OneToOneField(Restaurant, on_delete=models.CASCADE)
-    plan_name = models.CharField(max_length=100)
-    start_date = models.DateField(auto_now_add=True)
-    end_date = models.DateField()
+class Plan(models.Model):
+
+    name = models.CharField(max_length=100, unique=True)
+    stripe_price_id = models.CharField(max_length=150, unique=True)
+
+    monthly_price = models.DecimalField(max_digits=10, decimal_places=2)
+
+    max_users = models.PositiveIntegerField(default=5)
+    max_tables = models.PositiveIntegerField(default=20)
+
+    allow_inventory = models.BooleanField(default=True)
+    allow_analytics = models.BooleanField(default=True)
+
     is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+    class Meta:
+        ordering = ["monthly_price"]
+
+from django.db import models
+from django.utils import timezone
+
+
+class Subscription(models.Model):
+
+    STATUS_CHOICES = [
+        ("trialing", "Trialing"),
+        ("active", "Active"),
+        ("past_due", "Past Due"),
+        ("canceled", "Canceled"),
+        ("unpaid", "Unpaid"),
+        ("incomplete", "Incomplete"),
+        ("incomplete_expired", "Incomplete Expired"),
+    ]
+
+    restaurant = models.OneToOneField(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="subscription"
+    )
+
+    plan = models.ForeignKey(
+        "core.Plan",
+        on_delete=models.PROTECT,
+        related_name="subscriptions",
+        null=True,
+        blank=True,
+    )
+    
+    stripe_customer_id = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True
+    )
+
+    stripe_subscription_id = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True
+    )
+
+    status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default="trialing"
+    )
+
+    current_period_start = models.DateTimeField(blank=True, null=True)
+    current_period_end = models.DateTimeField(blank=True, null=True)
+
+    cancel_at_period_end = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # ===============================
+    # Business Logic
+    # ===============================
+
+    def is_active(self):
+        """
+        Returns True if subscription is currently valid.
+        """
+        if self.status not in ["active", "trialing"]:
+            return False
+
+        if self.current_period_end and self.current_period_end < timezone.now():
+            return False
+
+        return True
+
+    def is_trial(self):
+        return self.status == "trialing"
+
+    def is_past_due(self):
+        return self.status == "past_due"
+
+    def can_use_inventory(self):
+        return self.is_active() and self.plan.allow_inventory
+
+    def can_use_analytics(self):
+        return self.is_active() and self.plan.allow_analytics
+
+    def __str__(self):
+        return f"{self.restaurant.name} - {self.plan.name}"
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["stripe_subscription_id"]),
+            models.Index(fields=["stripe_customer_id"]),
+        ]

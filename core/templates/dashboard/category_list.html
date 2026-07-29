@@ -6,13 +6,12 @@
 <div class="card">
 
     <!-- Header -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <div class="card-header-row">
         <div>
-            <h2 style="margin:0;">Categories</h2>
+            <h2 class="page-title">Categories</h2>
             <div class="card-muted">Organize your menu sections</div>
         </div>
 
-        <!-- ✅ Correct URL name -->
         <button 
             hx-get="{% url 'core:category_add' %}"
             hx-target="#modal"
@@ -22,14 +21,14 @@
         </button>
     </div>
 
-    <!-- ✅ Category Table Container -->
+    <!-- Category Table -->
     <div id="category-table">
         {% include "core/partials/category_table.html" %}
     </div>
 
 </div>
 
-<!-- ✅ Modal Container -->
+<!-- Modal Container -->
 <div id="modal"></div>
 
 {% endblock %}

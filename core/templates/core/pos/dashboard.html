@@ -3,167 +3,18 @@
 
 {% block content %}
 
-<style>
-.dashboard-container {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-}
-
-/* KPI */
-.kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 20px;
-}
-
-.kpi-card {
-    background: #ffffff;
-    border-radius: 14px;
-    padding: 20px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.kpi-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
-}
-
-.kpi-title {
-    font-size: 13px;
-    color: #6b7280;
-    margin-bottom: 6px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.kpi-value {
-    font-size: 26px;
-    font-weight: 700;
-    color: #111827;
-}
-
-.section-card {
-    background: #ffffff;
-    border-radius: 14px;
-    padding: 24px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-}
-
-.section-title {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 18px;
-}
-
-.table-modern {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.table-modern th {
-    text-align: left;
-    font-size: 13px;
-    color: #6b7280;
-    padding-bottom: 12px;
-    border-bottom: 1px solid #e5e7eb;
-}
-
-.table-modern td {
-    padding: 12px 0;
-    border-bottom: 1px solid #f3f4f6;
-    font-size: 14px;
-}
-
-.badge-paid {
-    background: #dcfce7;
-    color: #15803d;
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.badge-unpaid {
-    background: #fee2e2;
-    color: #b91c1c;
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.btn {
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    text-decoration: none;
-}
-
-.btn-primary {
-    background: #2563eb;
-    color: white;
-}
-
-.btn-danger {
-    background: #dc2626;
-    color: white;
-}
-
-.btn-success {
-    background: #16a34a;
-    color: white;
-}
-
-.empty-state {
-    text-align: center;
-    color: #9ca3af;
-    padding: 20px 0;
-}
-</style>
-
 <div class="dashboard-container">
 
-    <!-- ================= SHIFT STATUS ================= -->
-    <div class="section-card">
-        <div class="section-title">Shift Status</div>
-
-        {% if active_shift %}
-            <p>
-                ✅ Shift opened at 
-                {{ active_shift.opened_at|date:"M d, Y H:i" }}
-            </p>
-
-            <p>
-                Sales this shift:
-                <strong>{{ active_shift.total_sales|currency:currency }}</strong>
-            </p>
-
-            <a href="{% url 'core:close_shift' %}" class="btn btn-danger">
-                Close Shift
-            </a>
-        {% else %}
-            <p>No active shift.</p>
-            <a href="{% url 'core:open_shift' %}" class="btn btn-success">
-                Open Shift
-            </a>
-        {% endif %}
-
-        <a href="{% url 'core:generate_z_report' %}" class="btn btn-primary" style="margin-left:10px;">
-            Generate Z-Report
-        </a>
-    </div>
-
-
-    <!-- ================= KPI SECTION ================= -->
+    <!-- ================= EXECUTIVE KPI ================= -->
     <div class="kpi-grid">
 
         <div class="kpi-card">
             <div class="kpi-title">Total Revenue</div>
             <div class="kpi-value">
                 {{ total_sales|currency:currency }}
+            </div>
+            <div class="kpi-meta">
+                This period performance
             </div>
         </div>
 
@@ -172,12 +23,18 @@
             <div class="kpi-value">
                 {{ payment_count }}
             </div>
+            <div class="kpi-meta">
+                Completed transactions
+            </div>
         </div>
 
         <div class="kpi-card">
             <div class="kpi-title">Active Sessions</div>
             <div class="kpi-value">
                 {{ active_sessions.count }}
+            </div>
+            <div class="kpi-meta">
+                Currently open
             </div>
         </div>
 
@@ -186,17 +43,76 @@
             <div class="kpi-value">
                 {{ current_year }}
             </div>
+            <div class="kpi-meta">
+                System cycle
+            </div>
         </div>
 
     </div>
 
 
+    <!-- ================= QUICK INSIGHT ================= -->
+    <div class="insight-card">
+        {% if active_sessions.count > 5 %}
+            ⚠ High number of active sessions. Monitor pending payments.
+        {% else %}
+            ✅ Operations running smoothly.
+        {% endif %}
+    </div>
+
+
+    <!-- ================= SHIFT STATUS ================= -->
+    <div class="section-card">
+
+        <div class="section-header">
+            <h3>Shift Status</h3>
+        </div>
+
+        {% if active_shift %}
+            <div class="shift-info">
+                <div>
+                    <span class="label">Opened</span>
+                    <strong>{{ active_shift.opened_at|date:"M d, Y H:i" }}</strong>
+                </div>
+
+                <div>
+                    <span class="label">Shift Sales</span>
+                    <strong>{{ active_shift.total_sales|currency:currency }}</strong>
+                </div>
+            </div>
+
+            <div class="action-row">
+                <a href="{% url 'core:close_shift' %}" class="btn btn-danger">
+                    Close Shift
+                </a>
+
+                <a href="{% url 'core:shift_z_report_print' active_shift.id %}" 
+                   class="btn btn-primary">
+                    Generate Z-Report
+                </a>
+            </div>
+
+        {% else %}
+            <div class="empty-state">
+                No active shift.
+            </div>
+
+            <a href="{% url 'core:open_shift' %}" class="btn btn-success">
+                Open Shift
+            </a>
+        {% endif %}
+    </div>
+
+
     <!-- ================= ACTIVE SESSIONS ================= -->
     <div class="section-card">
-        <div class="section-title">Active Sessions</div>
+
+        <div class="section-header">
+            <h3>Active Sessions</h3>
+        </div>
 
         {% if active_sessions %}
-        <table class="table-modern">
+        <table class="table">
             <thead>
                 <tr>
                     <th>Session</th>
@@ -204,20 +120,17 @@
                     <th>Paid</th>
                     <th>Remaining</th>
                     <th>Status</th>
-                    <th>Actions</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
                 {% for session in active_sessions %}
-                <tr>
+                <tr class="{% if not session.is_fully_paid %}row-warning{% endif %}">
                     <td>
                         {% if session.is_takeaway %}
                             🥡 Takeaway #{{ session.id }}
                         {% else %}
                             🍽 Table {{ session.table.table_number }}
-                            {% if session.section %}
-                                ({{ session.section.label }})
-                            {% endif %}
                         {% endif %}
                     </td>
 
@@ -227,20 +140,16 @@
 
                     <td>
                         {% if session.is_fully_paid %}
-                            <span class="badge-paid">Paid</span>
+                            <span class="badge badge-success">Paid</span>
                         {% else %}
-                            <span class="badge-unpaid">Unpaid</span>
+                            <span class="badge badge-danger">Unpaid</span>
                         {% endif %}
                     </td>
 
                     <td>
-                        {% if session.is_fully_paid %}
-                            <a href="{% url 'core:close_session' session.id %}" class="btn btn-success">
-                                Close
-                            </a>
-                        {% endif %}
-
-                        <a href="{% url 'core:session_receipt_pdf' session.id %}" target="_blank" class="btn btn-primary">
+                        <a href="{% url 'core:session_receipt_pdf' session.id %}" 
+                           target="_blank" 
+                           class="btn btn-outline">
                             Receipt
                         </a>
                     </td>
@@ -258,10 +167,13 @@
 
     <!-- ================= RECENT PAYMENTS ================= -->
     <div class="section-card">
-        <div class="section-title">Recent Payments</div>
+
+        <div class="section-header">
+            <h3>Recent Payments</h3>
+        </div>
 
         {% if recent_payments %}
-        <table class="table-modern">
+        <table class="table">
             <thead>
                 <tr>
                     <th>Order</th>
@@ -276,7 +188,7 @@
                     <td>#{{ payment.order.id }}</td>
                     <td>{{ payment.amount|currency:currency }}</td>
                     <td>
-                        <span class="badge-paid">
+                        <span class="badge badge-success">
                             {{ payment.status }}
                         </span>
                     </td>
@@ -291,23 +203,6 @@
             </div>
         {% endif %}
     </div>
-
-
-    <!-- ================= ROLE SECTIONS ================= -->
-    {% for section in dashboard_sections %}
-    <div class="section-card">
-        <div class="section-title">{{ section.title }}</div>
-
-        <div class="kpi-grid">
-            {% for item in section.items %}
-            <a href="{% url item.url %}" class="kpi-card" style="text-decoration:none;">
-                <div class="kpi-title">{{ item.name }}</div>
-                <div class="kpi-value">Open</div>
-            </a>
-            {% endfor %}
-        </div>
-    </div>
-    {% endfor %}
 
 </div>
 

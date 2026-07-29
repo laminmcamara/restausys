@@ -1,5 +1,7 @@
 from django.contrib import admin
-from rest_framework.permissions import BasePermission, SAFE_METHODS
+from rest_framework.permissions import BasePermission
+from django.utils import timezone
+from core.models import Subscription
 
 
 # ===================================================================
@@ -56,22 +58,42 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
 # 2. DRF PERMISSIONS
 # ===================================================================
 
-class IsStaffOfRestaurant(BasePermission):
-    message = "You do not have permission to view or edit this object."
+from rest_framework.permissions import BasePermission
 
-    def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
+
+class IsStaffOfRestaurant(BasePermission):
+    message = "You do not have permission to access this resource."
+
+    def has_permission(self, request, view):
+        print("=== DEBUG PERMISSION ===")
+        print("User:", request.user)
+        print("Authenticated:", request.user.is_authenticated)
+        print("Restaurant:", getattr(request.user, "restaurant", None))
+
+        user = request.user
+
+        if not user or not user.is_authenticated:
             return False
 
-        if request.user.is_superuser:
+        if user.is_superuser:
+            return True
+
+        return hasattr(user, "restaurant") and user.restaurant is not None
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_superuser:
             return True
 
         if not hasattr(obj, "restaurant"):
             return False
 
-        # ✅ Restrict both read & write to same restaurant
-        return obj.restaurant == request.user.restaurant
-
+        return obj.restaurant == user.restaurant
+    
 
 class IsOwnerOrManager(BasePermission):
     message = "Only a manager can perform this action."
@@ -101,8 +123,46 @@ class IsOwnerOrManager(BasePermission):
         if role.strip().lower() != "manager":
             return False
 
-        # ✅ Ensure same restaurant (if object has restaurant field)
         if hasattr(obj, "restaurant"):
             return obj.restaurant == user.restaurant
 
         return True
+
+
+# ===================================================================
+# 3. SUBSCRIPTION PERMISSION (SaaS Enforcement)
+# ===================================================================
+
+class HasActiveSubscription(BasePermission):
+    message = "Active subscription required."
+
+    def has_permission(self, request, view):
+
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_superuser:
+            return True
+
+        restaurant = getattr(user, "restaurant", None)
+
+        if not restaurant:
+            return False
+
+        subscription = Subscription.objects.filter(
+            restaurant=restaurant
+        ).first()
+
+        if not subscription:
+            return False
+
+        if subscription.status in ["active", "trialing"]:
+            if (
+                subscription.current_period_end
+                and subscription.current_period_end > timezone.now()
+            ):
+                return True
+
+        return False

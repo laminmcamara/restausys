@@ -1,6 +1,5 @@
 <div class="modal">
-    <div class="card" style="max-width:500px; margin:40px auto;">
-
+    <div class="card surface-light modal-card">
         <h3 style="margin-bottom:20px;">Add Category</h3>
 
         <form
@@ -12,7 +11,7 @@
         >
             {% csrf_token %}
 
-            <div style="display:grid; gap:16px;">
+            <div class="form-grid">
                 {{ form.as_p }}
             </div>
 

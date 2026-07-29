@@ -25,12 +25,18 @@ from django.views.generic import (
     UpdateView,
     DeleteView,
     
-    
-)
 
+)
+from core.mixins import (
+    RestaurantScopedMixin,
+    SubscriptionRequiredMixin,
+)
+from django.http import HttpResponse, HttpResponseBadRequest
+from django.template.loader import render_to_string
 from django.db.models import Sum, Count, Prefetch, Exists, OuterRef, Subquery, DecimalField  
 
 from django.db.models.functions import TruncDate, TruncHour, Coalesce
+from core.utils import has_active_subscription
 
 from decimal import Decimal
 from django.conf import settings
@@ -66,15 +72,15 @@ from functools import wraps
 # CORE IMPORTS
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift, Subscription
 
 )
 from .serializers import (
     OrderSerializer, OrderItemSerializer,
     CategorySerializer, ProductSerializer,
-    TableSerializer, PaymentSerializer
+    TableSerializer, PaymentSerializer, CustomUserSerializer, MenuSerializer, ModifierOptionSerializer,  ModifierGroupSerializer, SubscriptionSerializer, MenuSerializer 
 )
-from .permissions import IsStaffOfRestaurant
+from .permissions import IsStaffOfRestaurant, HasActiveSubscription
 from django.contrib.auth import get_user_model
 from .models import Subscription
 from django.utils.timezone import now
@@ -91,7 +97,16 @@ User = get_user_model()
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from .decorators import subscription_required
+from django.views.decorators.csrf import csrf_protect
 
+ACTION_STATUS_MAP = {
+    "placed": Order.Status.PLACED,
+    "start": Order.Status.IN_PROGRESS,
+    "ready": Order.Status.READY,
+    "served": Order.Status.SERVED,
+    "complete": Order.Status.COMPLETED,
+}
 
 def broadcast_order_update(order):
     """
@@ -183,170 +198,18 @@ class IndexView(TemplateView):
             context["featured_products"] = Product.objects.none()
 
         return context
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = CustomUserSerializer(request.user)
+        return Response(serializer.data)
     
 # ======================================================================
 # POS DASHBOARD (ROLE-DRIVEN + PROTECTED)
 # ======================================================================
 
-class DashboardRouterView(LoginRequiredMixin, View):
-    """
-    Redirects authenticated users to the correct dashboard
-    based on their role.
-    """
-
-    def get(self, request, *args, **kwargs):
-        user = request.user
-
-        # Safety: ensure user belongs to a restaurant
-        if not hasattr(user, "restaurant") or not user.restaurant:
-            return redirect("core:login")
-
-        # ✅ FIXED DUPLICATE ROLE BUG
-        if user.role == CustomUser.Roles.MANAGER:
-            return redirect("core:manager_dashboard")
-
-        if user.role == CustomUser.Roles.RESTAURANT:
-            return redirect("core:restaurant_dashboard")
-
-        if user.role == CustomUser.Roles.CASHIER:
-            return redirect("core:pos_dashboard")
-
-        return redirect("core:login")
-    
-    
-class PosDashboardView(LoginRequiredMixin, TemplateView):
-    template_name = "core/pos/dashboard.html"
-
-    # ✅ SHIFT PROTECTION
-    def dispatch(self, request, *args, **kwargs):
-
-        user = request.user
-
-        # Only cashiers require active shift
-        if user.is_cashier:
-            active_shift = CashierShift.objects.filter(
-                user=user,
-                restaurant=user.restaurant,
-                is_active=True
-            ).exists()
-
-            if not active_shift:
-                messages.error(
-                    request,
-                    "You must open a cashier shift before accessing POS."
-                )
-                return redirect("core:start_shift")
-
-        return super().dispatch(request, *args, **kwargs)
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-
-        user = self.request.user
-        restaurant = user.restaurant
-
-        # ✅ ACTIVE SHIFT IN CONTEXT
-        active_shift = CashierShift.objects.filter(
-            user=user,
-            restaurant=restaurant,
-            is_active=True
-        ).first()
-
-        context["active_shift"] = active_shift
-
-        # ✅ BASIC INFO
-        context["profile_incomplete"] = not restaurant.profile_complete
-        context["currency"] = restaurant.currency
-        context["current_year"] = timezone.now().year
-
-        # ✅ ACTIVE CATEGORIES
-        context["categories"] = Category.objects.filter(
-            menu__restaurant=restaurant,
-            is_active=True
-        ).order_by("name")
-
-        # ✅ SALES DATA
-        payments = Payment.objects.filter(
-            order__restaurant=restaurant,
-            status=Payment.Status.PAID
-        )
-
-        total_sales = payments.aggregate(
-            total=Sum("amount")
-        )["total"] or 0
-
-        context.update({
-            "total_sales": total_sales,
-            "payment_count": payments.count(),
-            "recent_payments": payments.order_by("-created_at")[:5],
-        })
-
-        # ✅ ROLE-DRIVEN SECTIONS (SMART SHIFT BUTTON)
-        sections = []
-
-        if user.is_cashier:
-
-            if active_shift:
-                shift_item = {
-                    "name": "Close Shift",
-                    "url": "core:close_shift",
-                    "icon": "bi-stop-circle",
-                    "color": "bg-red-600 hover:bg-red-500",
-                }
-            else:
-                shift_item = {
-                    "name": "Open Shift",
-                    "url": "core:start_shift",
-                    "icon": "bi-play-circle",
-                    "color": "bg-green-600 hover:bg-green-500",
-                }
-
-            sections.append({
-                "title": "Cashier",
-                "items": [shift_item],
-            })
-
-        if user.is_manager or user.is_superuser:
-            sections.append({
-                "title": "Management",
-                "items": [
-                    {
-                        "name": "Manager Dashboard",
-                        "url": "core:manager_dashboard",
-                        "icon": "bi-briefcase",
-                        "color": "bg-blue-900/40 hover:bg-orange-500",
-                    },
-                    {
-                        "name": "Restaurant Dashboard",
-                        "url": "core:restaurant_dashboard",
-                        "icon": "bi-building",
-                        "color": "bg-blue-900/40 hover:bg-orange-500",
-                    },
-                    {
-                        "name": "Settings",
-                        "url": "core:settings",
-                        "icon": "bi-gear",
-                        "color": "bg-blue-900/40 hover:bg-orange-500",
-                    },
-                    {
-                        "name": "Daily Reports",
-                        "url": "core:daily_reports",
-                        "icon": "bi-calendar",
-                        "color": "bg-indigo-600 hover:bg-indigo-700",
-                    },
-                    {
-                        "name": "Analytics",
-                        "url": "core:analytics",
-                        "icon": "bi-graph-up",
-                        "color": "bg-emerald-600 hover:bg-emerald-700",
-                    },
-                ],
-            })
-
-        context["dashboard_sections"] = sections
-
-        return context
-    
     
 class PosDashboardView(LoginRequiredMixin, TemplateView):
     template_name = "core/pos/dashboard.html"
@@ -564,6 +427,8 @@ def customer_display_shortcut(request):
 # API: UPDATE ORDER STATUS (STRICT & SAFE)
 # =============================================================================
 
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
@@ -577,33 +442,15 @@ def update_order_status(request, order_id):
 
     action = request.data.get("action")
 
+    if action not in ACTION_STATUS_MAP:
+        return Response({"error": "Invalid action"}, status=400)
+
     try:
-        if action == "placed":
-            order.mark_as_placed()
+        new_status = ACTION_STATUS_MAP[action]
+        order.transition_to(new_status, actor=request.user)
 
-        elif action == "start":
-            order.send_to_kitchen()
-
-        elif action == "ready":
-            order.mark_ready()
-
-        elif action == "served":
-            order.mark_served()
-
-        elif action == "complete":
-            order.complete_order()
-
-        else:
-            return Response(
-                {"error": "Invalid action"},
-                status=400
-            )
-
-    except ValueError as e:
-        return Response(
-            {"error": str(e)},
-            status=400
-        )
+    except (ValidationError, PermissionDenied, ValueError) as e:
+        return Response({"error": str(e)}, status=400)
 
     broadcast_order_update(order)
 
@@ -611,6 +458,8 @@ def update_order_status(request, order_id):
         "success": True,
         "status": order.status
     })
+    
+    
 def manager_required(view_func):
     @wraps(view_func)
     @login_required
@@ -884,45 +733,75 @@ class AnalyticsView(LoginRequiredMixin, TemplateView):
 
 @require_POST
 @login_required
+@subscription_required
 def create_order_api(request):
-
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-    items = data.get("items", [])
+    items = data.get("items")
     order_id = data.get("order_id")
 
-    if not items or not order_id:
-        return JsonResponse({"error": "Missing data"}, status=400)
+    if not isinstance(items, list) or not order_id:
+        return JsonResponse({"error": "Invalid payload"}, status=400)
 
     restaurant = request.user.restaurant
 
-    order = get_object_or_404(
-        Order,
-        id=order_id,
-        restaurant=restaurant,
-        status=Order.Status.DRAFT
-    )
+    MAX_QTY_PER_ITEM = 100  # Prevent abuse
 
     with transaction.atomic():
 
-        order.items.all().delete()  # Optional: reset items
+        # ✅ Lock the order row to prevent race conditions
+        try:
+            order = Order.objects.select_for_update().get(
+                id=order_id,
+                restaurant=restaurant
+            )
+        except Order.DoesNotExist:
+            return JsonResponse({"error": "Order not found"}, status=404)
+
+        # ✅ Explicit status validation (double-submit protection)
+        if order.status != Order.Status.DRAFT:
+            return JsonResponse(
+                {"error": "Order already processed"},
+                status=400
+            )
+
+        if not items:
+            return JsonResponse(
+                {"error": "Order cannot be empty"},
+                status=400
+            )
+
+        # ✅ Reset items safely
+        order.items.all().delete()
 
         total = 0
+        created_items = 0
 
         for item in items:
             variant_id = item.get("variantId")
-            qty = int(item.get("qty", 1))
+            qty = item.get("qty")
 
-            if not variant_id or qty <= 0:
+            if not variant_id:
                 continue
 
-            variant = ProductVariant.objects.select_related("product").get(
-                id=variant_id,
-                product__category__menu__restaurant=restaurant
-            )
+            try:
+                qty = int(qty)
+            except (TypeError, ValueError):
+                continue
+
+            if qty <= 0 or qty > MAX_QTY_PER_ITEM:
+                continue
+
+            try:
+                variant = ProductVariant.objects.select_related("product").get(
+                    id=variant_id,
+                    product__category__menu__restaurant=restaurant
+                )
+            except ProductVariant.DoesNotExist:
+                continue
 
             unit_price = variant.price
             line_total = unit_price * qty
@@ -932,17 +811,28 @@ def create_order_api(request):
                 product=variant.product,
                 variant=variant,
                 quantity=qty,
-                final_price=unit_price
+                final_price=unit_price  # ✅ server authoritative price
             )
 
             total += line_total
+            created_items += 1
+
+        if created_items == 0:
+            return JsonResponse(
+                {"error": "No valid items provided"},
+                status=400
+            )
 
         order.total = total
-        order.status = Order.Status.PLACED
-        order.save(update_fields=["total", "status"])
+        order.save(update_fields=["total"])
+
+        # ✅ Transition state after items & total are valid
+        order.transition_to(Order.Status.PLACED, actor=request.user)
 
     return JsonResponse({
-        "order_id": str(order.id)
+        "order_id": str(order.id),
+        "total": str(total),
+        "status": order.status,
     })
     
 class OrderListView(LoginRequiredMixin, ListView):
@@ -978,35 +868,35 @@ class OrderListView(LoginRequiredMixin, ListView):
         today = timezone.now().date()
 
         today_orders = Order.objects.filter(
-        restaurant=self.request.user.restaurant,
-        created_at__date=today
-    )
+            restaurant=self.request.user.restaurant,
+            created_at__date=today
+        )
 
         context["today_sales"] = (
-        today_orders.filter(status="PAID")
-        .aggregate(total=Sum("payments__amount"))["total"]
-        or Decimal("0.00")
-    )
+            today_orders
+            .filter(status="PAID")
+            .aggregate(total=Sum("payments__amount"))["total"]
+            or Decimal("0.00")
+        )
 
         context["today_orders_count"] = today_orders.count()
 
         context["paid_orders_count"] = Order.objects.filter(
-        restaurant=self.request.user.restaurant,
-        status="PAID"
-    ).count()
+            restaurant=self.request.user.restaurant,
+            status="PAID"
+        ).count()
 
         return context
-    
 
     def render_to_response(self, context, **response_kwargs):
         if self.request.headers.get("HX-Request"):
             return render(
-            self.request,
-            "core/partials/orders_container.html",
-            context
+                self.request,
+                "core/partials/orders_container.html",
+                context
             )
         return super().render_to_response(context, **response_kwargs)
-
+    
 class OrderDetailView(LoginRequiredMixin, DetailView):
     model = Order
     template_name = "core/order_detail.html"
@@ -1027,14 +917,20 @@ class OrderDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
+        # Categories belonging to restaurants the user is assigned to
         context["categories"] = Category.objects.filter(
-            menu__restaurant=self.request.user.restaurant
+            restaurant=self.request.user.restaurant 
         )
 
-        context["products"] = Product.objects.filter(
-            category__menu__restaurant=self.request.user.restaurant,
-            is_available=True
-        ).select_related("category")
+        # Available products from those restaurants
+        context["products"] = (
+            Product.objects
+            .filter(
+                category__menu__restaurant=self.request.user.restaurant,
+                is_available=True
+            )
+            .select_related("category")
+        )
 
         return context
     
@@ -1059,65 +955,62 @@ def add_order_item(request, order_id, product_id):
 
     return redirect("core:order_detail", pk=order.id)
 
+@require_POST
 @login_required
-def dashboard_create_order(request, session_id):
-    session = get_object_or_404(
-        TableSession,
-        id=session_id,
-        table__restaurant=request.user.restaurant,
-        is_active=True
-    )
+@subscription_required
+def create_draft_order_api(request):
+    try:
+        data = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-    # ✅ Use your existing factory logic
-    order = Order._create_for_session(
-        session=session,
-        section=session.section,
-        created_by=request.user
-    )
+    restaurant = request.user.restaurant
+    session_id = data.get("session_id")
+    order_type = data.get("order_type", Order.Type.TAKEAWAY)
+    notes = data.get("notes", "")
 
-    return redirect("core:order_detail", pk=order.pk)
+    with transaction.atomic():
+
+        session = None
+        section = None
+
+        if session_id:
+            session = get_object_or_404(
+                TableSession.objects.select_for_update(),
+                id=session_id,
+                table__restaurant=restaurant,
+                is_active=True
+            )
+            section = session.section
+            order_type = Order.Type.DINE_IN
+
+        active_shift = Shift.objects.filter(
+            restaurant=restaurant,
+            ended_at__isnull=True
+        ).first()
+
+        order = Order.objects.create(
+            restaurant=restaurant,
+            created_by=request.user,
+            status=Order.Status.DRAFT,
+            type=order_type,
+            table=session.table if session else None,
+            session=session,
+            section=section,
+            shift=active_shift,
+            notes=notes,
+            total=0
+        )
+
+    return JsonResponse({
+        "order_id": str(order.id),
+        "status": order.status,
+        "type": order.type,
+    })
 
 class PosOrderScreenTakeoutView(LoginRequiredMixin, TemplateView):
     template_name = "core/direct_takeaway_order.html"
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-
-        restaurant = self.request.user.restaurant
-
-        # Categories
-        categories = Category.objects.filter(
-            menu__restaurant=restaurant
-        ).order_by("name")
-
-        products = Product.objects.filter(
-            category__menu__restaurant=restaurant,
-            is_available=True
-         ).select_related(
-            "category"
-        ).prefetch_related(
-            "modifier_groups__options"
-        ).order_by("name").distinct()
-        
-        # ✅ Active Takeout Orders (not canceled or completed)
-        active_orders = Order.objects.filter(
-            restaurant=restaurant,
-            order_type=Order.OrderType.TAKEOUT,
-        ).exclude(
-            status__in=[
-                Order.Status.CANCELED,
-                Order.Status.COMPLETED,
-            ]
-        ).order_by("-created_at")
-
-        # ✅ Add to context
-        context.update({
-            "categories": categories,
-            "products": products,
-            "active_orders": active_orders,
-        })
-
-        return context
+    
     
 class OrderSuccessView(LoginRequiredMixin, DetailView):
     model = Order
@@ -1128,7 +1021,14 @@ class OrderSuccessView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return (
             Order.objects
-            .filter(restaurant=self.request.user.restaurant)
+            .filter(
+                restaurant=self.request.user.restaurant,
+                status__in=[
+                    Order.Status.PLACED,
+                    Order.Status.PAID,
+                    Order.Status.COMPLETED,
+                ]
+            )
             .select_related("table", "session")
             .prefetch_related("items__product")
         )
@@ -1140,23 +1040,21 @@ def public_table_menu(request, token):
         access_token=token
     )
 
+    if not table.is_active:
+        return render(request, "customer/qr_expired.html")
+
     now = timezone.now()
 
-    # ✅ Bind session to this table
+    # ✅ Bind table securely to session
     request.session["table_id"] = str(table.id)
-
-    # ✅ Store token for verification (prevents manual session tampering)
     request.session["table_token"] = token
-
-    # ✅ QR session expiration (3 hours)
     request.session["qr_expires_at"] = (
         now + timedelta(hours=3)
     ).isoformat()
 
-    # ✅ Idempotency token for safe order placement
+    # ✅ Idempotency token
     nonce = uuid.uuid4().hex
     request.session["qr_nonce"] = nonce
-
     request.session.modified = True
 
     products = (
@@ -1166,6 +1064,7 @@ def public_table_menu(request, token):
             is_available=True
         )
         .select_related("category")
+        .prefetch_related("modifier_groups__options")
         .distinct()
     )
 
@@ -1173,76 +1072,151 @@ def public_table_menu(request, token):
         "table": table,
         "restaurant": table.restaurant,
         "products": products,
-        "qr_nonce": nonce,  # ✅ pass to template
+        "qr_nonce": nonce,
     })
     
-
+    
 # ✅ Order Status Page View  <-- ADD IT HERE
 def table_order_status(request, token, order_id):
 
     if not validate_qr_session(request, token):
         return render(request, "customer/session_expired.html")
 
-    order = get_object_or_404(
-        Order.objects.select_related("table", "restaurant"),
-        id=order_id
+    table = get_object_or_404(
+        Table.objects.select_related("restaurant"),
+        access_token=token,
+        is_active=True
     )
 
-    if not order.table:
-        return redirect("home")
+    order = get_object_or_404(
+        Order.objects.select_related("table", "restaurant"),
+        id=order_id,
+        table=table,  # ✅ Must belong to this table
+        restaurant=table.restaurant,
+        status__in=[
+            Order.Status.PLACED,
+            Order.Status.PAID,
+            Order.Status.COMPLETED,
+        ]
+    )
 
-    if request.session.get("table_id") != str(order.table.id):
+    # ✅ Extra safety: session match
+    if request.session.get("table_id") != str(table.id):
         return redirect("home")
 
     return render(request, "core/table_order_status.html", {
         "order": order
     })
     
+    
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import json
 
 
-@csrf_exempt  # only if you're not sending CSRF
+@require_POST
+@csrf_protect  # ✅ keep CSRF enabled
 def table_cart_api(request, token):
-    
+
     if not validate_qr_session(request, token):
         return JsonResponse({"error": "QR session expired."}, status=403)
 
-    
-    if request.method == "POST":
+    try:
         data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON."}, status=400)
 
-        product_id = str(data.get("item_id"))
-        quantity = int(data.get("quantity"))
+    product_id = data.get("item_id")
+    quantity = data.get("quantity")
 
-        cart = request.session.get("cart", {})
+    if not product_id:
+        return JsonResponse({"error": "Missing product."}, status=400)
 
-        cart[product_id] = cart.get(product_id, 0) + quantity
+    try:
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Invalid quantity."}, status=400)
 
-        request.session["cart"] = cart
-        request.session.modified = True
+    if quantity <= 0:
+        return JsonResponse({"error": "Quantity must be positive."}, status=400)
 
-        return JsonResponse({
-            "cart_count": sum(cart.values())
-        })
+    MAX_QTY_PER_ITEM = 50
+    if quantity > MAX_QTY_PER_ITEM:
+        return JsonResponse({"error": "Quantity too large."}, status=400)
 
-    return JsonResponse({"error": "Invalid request"}, status=400)
-    
+    # ✅ Get table from token
+    table = get_object_or_404(
+        Table.objects.select_related("restaurant"),
+        access_token=token,
+        is_active=True
+    )
+
+    # ✅ Validate product belongs to restaurant
+    product = get_object_or_404(
+        Product,
+        id=product_id,
+        category__menu__restaurant=table.restaurant,
+        is_available=True
+    )
+
+    cart = request.session.get("cart", {})
+
+    product_id = str(product.id)
+
+    new_qty = cart.get(product_id, 0) + quantity
+
+    if new_qty > MAX_QTY_PER_ITEM:
+        return JsonResponse({"error": "Too many items in cart."}, status=400)
+
+    cart[product_id] = new_qty
+
+    request.session["cart"] = cart
+    request.session.modified = True
+
+    return JsonResponse({
+        "cart_count": sum(cart.values())
+    })
+
+
 def table_checkout(request, token):
-    
+
     if not validate_qr_session(request, token):
         return render(request, "customer/session_expired.html")
 
-    table = get_object_or_404(Table, access_token=token)
+    table = get_object_or_404(
+        Table.objects.select_related("restaurant"),
+        access_token=token,
+        is_active=True
+    )
 
     cart = request.session.get("cart", {})
+
+    if not cart:
+        return redirect("public_table_menu", token=token)
 
     cart_items = []
     total = 0
 
+    MAX_QTY_PER_ITEM = 50
+
     for product_id, quantity in cart.items():
-        product = Product.objects.get(id=product_id)
+
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            continue
+
+        if quantity <= 0 or quantity > MAX_QTY_PER_ITEM:
+            continue
+
+        try:
+            product = Product.objects.get(
+                id=product_id,
+                category__menu__restaurant=table.restaurant,
+                is_available=True
+            )
+        except Product.DoesNotExist:
+            continue
 
         item_total = product.price * quantity
         total += item_total
@@ -1253,70 +1227,100 @@ def table_checkout(request, token):
             "total": item_total
         })
 
+    if not cart_items:
+        return redirect("public_table_menu", token=token)
+
     return render(request, "core/table_checkout.html", {
         "table": table,
         "cart_items": cart_items,
         "total": total
     })
     
+    
 @require_POST
 @transaction.atomic
 def place_table_order(request, token):
     """
-    Final production-safe QR order placement view.
+    Production-safe QR order placement.
     """
+
     if not validate_qr_session(request, token):
         return render(request, "customer/session_expired.html")
-    
-    # ✅ 1. Validate table via secure token
-    table = get_object_or_404(Table, access_token=token)
 
-    # ✅ 2. Get cart from session
+    table = get_object_or_404(
+        Table.objects.select_related("restaurant"),
+        access_token=token,
+        is_active=True
+    )
+
     cart = request.session.get("cart", {})
 
     if not cart:
         return redirect("core:public-table-menu", token=token)
 
-    # ✅ 3. Create or reuse active session order (uses your factory)
+    MAX_QTY_PER_ITEM = 50
+
+    # ✅ Create draft order
     order = Order.create_for_table(
         table=table,
-        created_by=None  # QR customer (no staff user)
+        created_by=None
     )
 
-    # ✅ 4. Clear existing draft items (safety if re-submitting)
+    # ✅ Lock order row
+    order = Order.objects.select_for_update().get(id=order.id)
+
+    if order.status != Order.Status.DRAFT:
+        return render(request, "customer/session_expired.html")
+
     order.items.all().delete()
 
-    # ✅ 5. Add items
+    total_items = 0
+
     for variant_id, qty in cart.items():
 
-        if int(qty) <= 0:
+        try:
+            qty = int(qty)
+        except (TypeError, ValueError):
             continue
 
-        variant = ProductVariant.objects.select_related("product").get(
-            id=variant_id,
-            product__category__menu__restaurant=table.restaurant
-        )
+        if qty <= 0 or qty > MAX_QTY_PER_ITEM:
+            continue
+
+        try:
+            variant = ProductVariant.objects.select_related("product").get(
+                id=variant_id,
+                product__category__menu__restaurant=table.restaurant,
+                product__is_available=True
+            )
+        except ProductVariant.DoesNotExist:
+            continue
 
         OrderItem.objects.create(
             order=order,
             product=variant.product,
             variant=variant,
-            quantity=int(qty)
-            # ✅ final_price auto-calculated in OrderItem.save()
+            quantity=qty
         )
 
-    # ✅ 6. Use your official state transition
-    order.mark_as_placed()
+        total_items += 1
 
-    # ✅ 7. Clear cart
+    if total_items == 0:
+        return redirect("core:public-table-menu", token=token)
+
+    # ✅ Use official state transition
+    order.transition_to(Order.Status.PLACED, actor=None)
+
+    # ✅ Clear cart
     request.session["cart"] = {}
     request.session.modified = True
 
-    # ✅ 8. Redirect to order tracking page
-    return redirect("core:table-order-status", token=token,
-        order_id=order.id)
-
-
+    return redirect(
+        "core:table-order-status",
+        token=token,
+        order_id=order.id
+    )
+    
+    
 # ======================================================================
 # ======================== API VIEWSETS ================================
 # ======================================================================
@@ -1327,7 +1331,7 @@ class TableViewSet(TenantModelViewSet):
     def get_queryset(self):
         restaurant = self.request.user.restaurant
 
-        active_session_subquery = TableSession.objects.filter(
+        active_session_qs = TableSession.objects.filter(
             table=OuterRef("pk"),
             restaurant=restaurant,
             is_active=True
@@ -1337,67 +1341,101 @@ class TableViewSet(TenantModelViewSet):
             Table.objects
             .filter(restaurant=restaurant)
             .annotate(
-                has_active_session=Exists(active_session_subquery),
+                has_active_session=Exists(active_session_qs),
                 active_session_id=Subquery(
-                    active_session_subquery.values("id")[:1]
+                    active_session_qs.values("id")[:1]
                 )
             )
             .order_by("table_number")
         )
         
-        
+# TODO: Remove when staff dashboard fully API-driven      
 class TableCreateView(LoginRequiredMixin, CreateView):
     model = Table
     fields = ["table_number", "capacity"]
     template_name = "core/table_form.html"
     success_url = reverse_lazy("core:tables")
 
+    def dispatch(self, request, *args, **kwargs):
+        # Cache restaurant once
+        self.restaurant = Restaurant.objects.filter(
+            users=request.user
+        ).first()
+
+        if not self.restaurant:
+            return redirect("core:dashboard")
+
+        return super().dispatch(request, *args, **kwargs)
+
     def form_valid(self, form):
-        form.instance.restaurant = self.request.user.restaurant
+        form.instance.restaurant = self.restaurant
         return super().form_valid(form)
     
-    def dispatch(self, request, *args, **kwargs):
-        if not request.user.restaurant:
-            return redirect("core:dashboard")  # or raise PermissionDenied
-        return super().dispatch(request, *args, **kwargs)
     
+# TODO: Remove when staff dashboard fully API-driven      
 class TableUpdateView(LoginRequiredMixin, UpdateView):
     model = Table
     fields = ["table_number", "capacity"]
     template_name = "core/table_form.html"
     success_url = reverse_lazy("core:tables")
 
+    def dispatch(self, request, *args, **kwargs):
+        if not hasattr(request.user, "restaurant"):
+            return redirect("core:dashboard")
+        return super().dispatch(request, *args, **kwargs)
+
     def get_queryset(self):
         return Table.objects.filter(
             restaurant=self.request.user.restaurant
         )
-
+        
+        
 class TableDeleteView(LoginRequiredMixin, DeleteView):
     model = Table
     template_name = "core/table_confirm_delete.html"
     success_url = reverse_lazy("core:tables")
 
+    def dispatch(self, request, *args, **kwargs):
+        if not hasattr(request.user, "restaurant"):
+            return redirect("core:dashboard")
+        return super().dispatch(request, *args, **kwargs)
+
     def get_queryset(self):
         return Table.objects.filter(
             restaurant=self.request.user.restaurant
         )
-        
-        
 
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 
 class OrderViewSet(TenantModelViewSet):
-    queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, IsStaffOfRestaurant]
 
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["table", "status"]
+
+    def get_queryset(self):
+        restaurant = getattr(self.request.user, "restaurant", None)
+        if not restaurant:
+            return Order.objects.none()
+
+        return Order.objects.filter(restaurant=restaurant)
+
     def perform_create(self, serializer):
+        restaurant = getattr(self.request.user, "restaurant", None)
+
+        if not restaurant:
+            raise PermissionDenied("No restaurant assigned.")
+
         order = serializer.save(
-            restaurant=self.request.user.restaurant,
+            restaurant=restaurant,
             staff=self.request.user
         )
 
         broadcast_order_update(order)
-
+        
+        
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [IsAuthenticated]
@@ -1410,40 +1448,75 @@ class OrderItemViewSet(viewsets.ModelViewSet):
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Category.objects.filter(
-            menu__restaurant=self.request.user.restaurant
-        ).select_related("menu", "parent").prefetch_related("products")
-
+        return (
+            Category.objects
+            .filter(menu__restaurant=self.request.user.restaurant)
+            .select_related("menu", "parent")
+            .prefetch_related("products")
+        )
+        
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
-    
+
     def get_queryset(self):
-        return Product.objects.filter(
+        return (
+        Product.objects
+        .filter(
             category__menu__restaurant=self.request.user.restaurant,
             is_available=True
-        ).select_related("category").prefetch_related("modifier_groups__options")
-        
-        
+        )
+        .select_related("category", "category__menu")
+        .prefetch_related("modifier_groups__options")
+        )
+
+class ManagerCategoryViewSet(viewsets.ModelViewSet):
+    serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def get_queryset(self):
+        return Category.objects.filter(
+            menu__restaurant=self.request.user.restaurant
+        )
+
+    def perform_create(self, serializer):
+        menu = serializer.validated_data["menu"]
+
+        # Tenant isolation check
+        if not menu.restaurant.users.filter(
+            id=self.request.user.id
+        ).exists():
+            raise PermissionDenied("Invalid menu for this restaurant.")
+
+        serializer.save()
+
 class ProductCreateView(LoginRequiredMixin, CreateView):
     model = Product
     form_class = ProductForm
     template_name = "core/admin/product_form.html"
     success_url = reverse_lazy("core:manage_products")
 
+    def get_user_restaurant(self):
+        return Restaurant.objects.filter(
+            users=self.request.user
+        ).first()
+
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
 
-        # ✅ Pass restaurant into form
-        kwargs["restaurant"] = self.request.user.restaurant
+        restaurant = self.get_user_restaurant()
+        if not restaurant:
+            raise PermissionDenied("No restaurant assigned.")
 
+        kwargs["restaurant"] = restaurant
         return kwargs
+    
     
 # ==============================================================
 # ================== PRODUCT UPDATE ============================
@@ -1452,20 +1525,28 @@ class ProductCreateView(LoginRequiredMixin, CreateView):
 class ProductUpdateView(LoginRequiredMixin, UpdateView):
     model = Product
     template_name = "core/admin/edit_product.html"
-    fields = ["name", "price", "description", "is_available", "category"]
-    
+    fields = ["name", "base_price", "description", "is_available", "category"]
+
     def get_queryset(self):
-        """
-        Restrict editing to products belonging to
-        the logged-in user's restaurant.
-        """
-        restaurant = self.request.user.restaurant
-        return Product.objects.filter(restaurant=restaurant)
+        # ✅ Correct tenant chain
+        return Product.objects.filter(
+            category__menu__restaurant=self.request.user.restaurant
+        )
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+
+        # ✅ Correct category filtering
+        form.fields["category"].queryset = Category.objects.filter(
+            menu__restaurant=self.request.user.restaurant
+        )
+
+        return form
 
     def get_success_url(self):
         return reverse_lazy("core:product_list")
-
-
+    
+    
 # ==============================================================
 # ================== PRODUCT DELETE ============================
 # ==============================================================
@@ -1475,47 +1556,210 @@ class ProductDeleteView(LoginRequiredMixin, DeleteView):
     template_name = "core/admin/delete_product.html"
 
     def get_queryset(self):
-        restaurant = self.request.user.restaurant
-        return Product.objects.filter(restaurant=restaurant)
+        return Product.objects.filter(
+            category__menu__restaurant=self.request.user.restaurant
+        )
 
     def get_success_url(self):
         return reverse_lazy("core:product_list")
     
-class ProductListView(LoginRequiredMixin, ListView):
+    
+    
+class ProductListView(
+    LoginRequiredMixin,
+    SubscriptionRequiredMixin,
+    RestaurantScopedMixin,
+    ListView
+):
     model = Product
     template_name = "core/admin/products.html"
     context_object_name = "products"
 
     def get_queryset(self):
-        return Product.objects.filter(
-            category__menu__restaurant=self.request.user.restaurant
-        ).select_related("category")
+        qs = super().get_queryset()
 
+        return (
+            qs
+            .select_related("category", "category__menu")
+            .order_by("name")
+        )
+        
 class ManagerProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+    permission_classes = [
+        IsAuthenticated,
+        IsOwnerOrManager,
+        HasActiveSubscription,   # ✅ ADD THIS
+    ]
 
     def get_queryset(self):
+        restaurant = self.request.user.restaurant
         return Product.objects.filter(
-            category__menu__restaurant=self.request.user.restaurant
-        )
-
-    def get_object(self):
-        return get_object_or_404(
-            Product,
-            pk=self.kwargs["pk"],
-            category__menu__restaurant=self.request.user.restaurant
+            category__menu__restaurant=restaurant
         )
 
     def perform_create(self, serializer):
         category = serializer.validated_data["category"]
+        restaurant = self.request.user.restaurant
 
-        # Extra safety check
-        if category.menu.restaurant != self.request.user.restaurant:
+        # ✅ Strong tenant isolation
+        if category.menu.restaurant != restaurant:
             raise PermissionDenied("Invalid category for this restaurant.")
 
         serializer.save()
+
+class ManagerMenuViewSet(viewsets.ModelViewSet):
+    serializer_class = MenuSerializer
+    permission_classes = [
+        IsAuthenticated,
+        IsOwnerOrManager,
+        HasActiveSubscription,   # ✅ ADD THIS
+    ]
+
+    def get_queryset(self):
+        restaurant = self.request.user.restaurant
+
+        return (
+            Menu.objects
+            .filter(restaurant=restaurant)
+            .prefetch_related(
+                "categories",
+                "categories__products",
+                "categories__products__modifier_groups",
+                "categories__products__modifier_groups__options",
+            )
+        )
+
+    def perform_create(self, serializer):
+        restaurant = self.request.user.restaurant
+
+        if serializer.validated_data.get("is_active", True):
+            Menu.objects.filter(
+                restaurant=restaurant,
+                is_active=True
+            ).update(is_active=False)
+
+        serializer.save(restaurant=restaurant)
+
+    def perform_update(self, serializer):
+        restaurant = self.request.user.restaurant
+
+        if serializer.instance.restaurant != restaurant:
+            raise PermissionDenied("You cannot modify this menu.")
+
+        if serializer.validated_data.get("is_active", False):
+            Menu.objects.filter(
+                restaurant=restaurant,
+                is_active=True
+            ).exclude(id=serializer.instance.id).update(is_active=False)
+
+        serializer.save()
         
+class PublicMenuViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = MenuSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        restaurant_id = self.kwargs.get("restaurant_id")
+
+        return (
+            Menu.objects
+            .filter(
+                restaurant_id=restaurant_id,
+                is_active=True
+            )
+            .prefetch_related(
+                "categories",
+                "categories__products",
+                "categories__products__modifier_groups",
+                "categories__products__modifier_groups__options",
+            )
+        )
+        
+class PosMenuViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = MenuSerializer
+    permission_classes = [
+        IsAuthenticated,
+        HasActiveSubscription,
+    ]
+
+    def get_queryset(self):
+        restaurant = self.request.user.restaurant
+
+        return (
+            Menu.objects
+            .filter(
+                restaurant=restaurant,
+                is_active=True
+            )
+            .prefetch_related(
+                "categories",
+                "categories__products",
+            )
+        )
+        
+        
+from rest_framework.exceptions import PermissionDenied
+
+class ManagerModifierGroupViewSet(viewsets.ModelViewSet):
+    serializer_class = ModifierGroupSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def get_queryset(self):
+        return ModifierGroup.objects.filter(
+            products__category__menu__restaurant=self.request.user.restaurant
+        ).distinct()
+
+    def perform_create(self, serializer):
+        products = serializer.validated_data.get("products", [])
+
+        for product in products:
+            if not product.category.menu.restaurant.users.filter(
+                id=self.request.user.id
+            ).exists():
+                raise PermissionDenied("Invalid product.")
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+
+        if not instance.products.filter(
+            category__menu__restaurant=self.request.user.restaurant
+        ).exists():
+            raise PermissionDenied("You cannot modify this modifier group.")
+
+        serializer.save()
+        
+class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
+    serializer_class = ModifierOptionSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def get_queryset(self):
+        return ModifierOption.objects.filter(
+            group__products__category__menu__restaurant=self.request.user.restaurant
+        ).distinct()
+
+    def perform_create(self, serializer):
+        group = serializer.validated_data["group"]
+
+        if not group.products.filter(
+            category__menu__restaurant=self.request.user.restaurant
+        ).exists():
+            raise PermissionDenied("Invalid modifier group.")
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+
+        if not instance.group.products.filter(
+            category__menu__restaurant=self.request.user.restaurant
+        ).exists():
+            raise PermissionDenied("You cannot modify this modifier option.")
+
+        serializer.save()
+
 
 
 class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1526,6 +1770,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         return Payment.objects.filter(
             order__restaurant=self.request.user.restaurant
         )
+        
 
 
 # ======================================================================
@@ -1568,13 +1813,14 @@ def order_receipt(request, pk):
     
 @login_required
 @require_POST
+@transaction.atomic
 def complete_order(request, pk):
 
     if not hasattr(request.user, "restaurant"):
         raise PermissionDenied("No restaurant assigned.")
 
     order = get_object_or_404(
-        Order,
+        Order.objects.select_for_update(),
         pk=pk,
         restaurant=request.user.restaurant
     )
@@ -1583,13 +1829,13 @@ def complete_order(request, pk):
     if order.status == Order.Status.COMPLETED:
         return redirect("core:order-receipt", pk=order.pk)
 
-    # ✅ Update order state
-    order.status = Order.Status.COMPLETED
-    order.payment_status = Order.PaymentStatus.PAID
-    order.completed_at = timezone.now()
-    order.save()
+    # ✅ Mark paid using model method
+    order.mark_as_paid(actor=request.user)
 
-    # ✅ Broadcast to Kitchen (only once)
+    # ✅ Transition (handles inventory + session closing)
+    order.transition_to(Order.Status.COMPLETED, actor=request.user)
+
+    # ✅ Broadcast update
     channel_layer = get_channel_layer()
     serialized = OrderSerializer(order).data
 
@@ -1598,7 +1844,7 @@ def complete_order(request, pk):
         {
             "type": "order_status_update",
             "data": {
-                "type": "new_order",
+                "type": "order_updated",
                 "order": serialized
             }
         }
@@ -1608,16 +1854,16 @@ def complete_order(request, pk):
 
 @login_required
 @require_POST
+@transaction.atomic
 def send_to_kitchen(request, pk):
 
     order = get_object_or_404(
-        Order,
+        Order.objects.select_for_update(),
         pk=pk,
         restaurant=request.user.restaurant
     )
 
-    if order.status == Order.Status.DRAFT:
-        order.transition_to(Order.Status.PLACED, actor=request.user)
+    order.transition_to(Order.Status.PLACED, actor=request.user)
 
     return redirect("core:pos", order_id=order.pk)
 
@@ -1627,68 +1873,104 @@ def send_to_kitchen(request, pk):
 
 
 
+@login_required
+@require_POST
 @transaction.atomic
 def complete_ticket(request, ticket_id):
+
+    if not hasattr(request.user, "restaurant"):
+        raise PermissionDenied("No restaurant assigned.")
+
     ticket = get_object_or_404(
         KitchenTicket.objects.select_for_update(),
-        pk=ticket_id
+        pk=ticket_id,
+        restaurant=request.user.restaurant
     )
 
     ticket.mark_completed(actor=request.user)
 
-    return JsonResponse({"detail": "Ticket completed successfully."})
-
+    return JsonResponse({
+        "detail": "Ticket completed successfully."
+    })
+    
 
 @login_required
 @require_POST
+@transaction.atomic
 def mark_as_paid(request, pk):
 
+    if not hasattr(request.user, "restaurant"):
+        raise PermissionDenied("No restaurant assigned.")
+
     order = get_object_or_404(
-        Order,
+        Order.objects.select_for_update(),
         pk=pk,
         restaurant=request.user.restaurant
     )
 
-    order.payment_status = Order.PaymentStatus.PAID
-    order.save(update_fields=["payment_status"])
+    # ✅ If already completed, just redirect
+    if order.status == Order.Status.COMPLETED:
+        return redirect("core:order-receipt", pk=order.pk)
 
-    # ✅ Use model completion logic
-    order.complete_order(actor=request.user)
+    # ✅ Mark payment via model method
+    order.mark_as_paid(actor=request.user)
+
+    # ✅ Complete via state machine (triggers inventory + session closing)
+    order.transition_to(Order.Status.COMPLETED, actor=request.user)
 
     return redirect("core:order-receipt", pk=order.pk)
-    
-def order_status_api(request,token, order_id):
-    
+
+
+@require_GET
+def order_status_api(request, token, order_id):
+
+    # ✅ Validate QR session
     if not validate_qr_session(request, token):
         return render(request, "customer/session_expired.html")
-    
-    table_id = request.session.get("table_id")
 
-    if not table_id:
+    table_id = request.session.get("table_id")
+    restaurant_id = request.session.get("restaurant_id")
+
+    if not table_id or not restaurant_id:
         return JsonResponse({"error": "Unauthorized"}, status=403)
 
     order = get_object_or_404(
         Order,
         id=order_id,
-        table__id=table_id
+        table_id=table_id,
+        restaurant_id=restaurant_id
     )
 
     return JsonResponse({
         "status": order.status
     })
-
-
+    
+    
 @require_POST
+@transaction.atomic
 def call_waiter_api(request, token):
 
+    # ✅ Validate QR session
     if not validate_qr_session(request, token):
         return JsonResponse({"error": "QR session expired."}, status=403)
 
     table = get_object_or_404(
-        Table,
+        Table.objects.select_for_update(),
         access_token=token
     )
 
+    # ✅ Optional anti-spam protection (recommended)
+    recent_call_exists = WaiterCall.objects.filter(
+        table=table,
+        resolved=False
+    ).exists()
+
+    if recent_call_exists:
+        return JsonResponse({
+            "detail": "Waiter already called."
+        }, status=200)
+
+    # ✅ Create waiter call
     WaiterCall.objects.create(
         restaurant=table.restaurant,
         table=table
@@ -1696,14 +1978,38 @@ def call_waiter_api(request, token):
 
     return JsonResponse({"success": True})
 
-def active_waiter_calls(request):
-    calls = WaiterCall.objects.filter(
-        restaurant=request.user.restaurant,
-        resolved=False
-    ).order_by("-created_at")
 
-    return render(request, "dashboard/waiter_calls.html", {"calls": calls})
+@require_GET
+@login_required
+def active_waiter_calls_api(request):
 
+    if not hasattr(request.user, "restaurant"):
+        raise PermissionDenied("No restaurant assigned.")
+
+    calls = (
+        WaiterCall.objects
+        .filter(
+            restaurant=request.user.restaurant,
+            resolved=False
+        )
+        .select_related("table")
+        .order_by("-created_at")
+    )
+
+    data = [
+        {
+            "id": call.id,
+            "table_id": call.table.id,
+            "table_name": call.table.name,
+            "created_at": call.created_at,
+        }
+        for call in calls
+    ]
+
+    return JsonResponse({"calls": data})
+
+
+    
 # ======================================================================
 # ======================== PAYMENTS API ================================
 # ======================================================================
@@ -1711,33 +2017,49 @@ def active_waiter_calls(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def generate_qr_payment(request, order_id):
 
     order = get_object_or_404(
-        Order,
+        Order.objects.select_for_update(),
         id=order_id,
         restaurant=request.user.restaurant
     )
 
+    # ✅ Prevent generating payment for completed order
     if order.payment_status == Order.PaymentStatus.PAID:
         return Response(
             {"error": "Order already paid"},
             status=400
         )
 
-    intent = create_stripe_payment_intent(order)
-
-    payment, _ = Payment.objects.update_or_create(
+    # ✅ If a pending payment already exists, reuse it
+    existing_payment = Payment.objects.filter(
         order=order,
-        defaults={
-            "stripe_payment_intent": intent.id,
-            "amount": order.total,
-            "status": "PENDING",
-        }
-    )
+        status="PENDING"
+    ).first()
+
+    if existing_payment and existing_payment.stripe_payment_intent:
+        intent_id = existing_payment.stripe_payment_intent
+        intent = stripe.PaymentIntent.retrieve(intent_id)
+
+    else:
+        # ✅ Create new Stripe intent
+        intent = create_stripe_payment_intent(order)
+
+        Payment.objects.update_or_create(
+            order=order,
+            defaults={
+                "stripe_payment_intent": intent.id,
+                "amount": order.total,
+                "status": "PENDING",
+            }
+        )
 
     qr_url = request.build_absolute_uri(
-        reverse("core:pay_order", args=[order.restaurant.slug, order.id]
+        reverse(
+            "core:pay_order",
+            args=[order.restaurant.slug, order.id]
         )
     )
 
@@ -1746,38 +2068,13 @@ def generate_qr_payment(request, order_id):
         "client_secret": intent.client_secret
     })
     
-def pay_order(request, restaurant_slug, order_id):
-    restaurant = get_object_or_404(Restaurant, slug=restaurant_slug)
-    order = get_object_or_404(Order, id=order_id, restaurant=restaurant)
-
-    # ✅ If already paid, show success page
-    if order.payment_status == Order.PaymentStatus.PAID:
-        return render(request, "core/payment_success.html", {
-            "order": order,
-            "restaurant": restaurant
-        })
-
-    if request.method == "POST":
-        with transaction.atomic():
-            order.payment_status = Order.PaymentStatus.PAID
-            order.save(update_fields=["payment_status"])
-            order.mark_as_placed()
-
-        return redirect(
-            "core:payment_success",
-            restaurant_slug=restaurant.slug,
-            order_id=order.id
-        )
-
-    # ✅ Normal GET
-    return render(request, "core/pay_order.html", {
-        "order": order,
-        "restaurant": restaurant,
-        "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
-    })
     
-def payment_success(request, restaurant_slug, order_id):
-    restaurant = get_object_or_404(Restaurant, slug=restaurant_slug)
+def pay_order(request, restaurant_slug, order_id):
+
+    restaurant = get_object_or_404(
+        Restaurant,
+        slug=restaurant_slug
+    )
 
     order = get_object_or_404(
         Order,
@@ -1785,13 +2082,60 @@ def payment_success(request, restaurant_slug, order_id):
         restaurant=restaurant
     )
 
-    if order.payment_status != Order.PaymentStatus.PAID:
-        return redirect("core:pay_order", restaurant_slug=restaurant.slug, order_id=order.id)
+    # ✅ If already paid, show success
+    if order.payment_status == Order.PaymentStatus.PAID:
+        return render(
+            request,
+            "core/payment_success.html",
+            {
+                "order": order,
+                "restaurant": restaurant
+            }
+        )
 
-    return render(request, "core/payment_success.html", {
-        "order": order,
-        "restaurant": restaurant
-    })
+    # ✅ GET: Render Stripe payment page
+    return render(
+        request,
+        "core/pay_order.html",
+        {
+            "order": order,
+            "restaurant": restaurant,
+            "STRIPE_PUBLISHABLE_KEY": settings.STRIPE_PUBLISHABLE_KEY,
+        }
+    )
+    
+from django.shortcuts import get_object_or_404, redirect, render
+
+
+def payment_success(request, restaurant_slug, order_id):
+
+    restaurant = get_object_or_404(
+        Restaurant,
+        slug=restaurant_slug
+    )
+
+    order = get_object_or_404(
+        Order,
+        id=order_id,
+        restaurant=restaurant
+    )
+
+    # ✅ Only allow success page if truly paid
+    if order.payment_status != Order.PaymentStatus.PAID:
+        return redirect(
+            "core:pay_order",
+            restaurant_slug=restaurant.slug,
+            order_id=order.id
+        )
+
+    return render(
+        request,
+        "core/payment_success.html",
+        {
+            "order": order,
+            "restaurant": restaurant
+        }
+    )
     
 
 @login_required
@@ -1804,14 +2148,20 @@ def refund_order(request, order_id):
         messages.error(request, "You do not have permission to process refunds.")
         return redirect("core:dashboard")
 
-    order = get_object_or_404(Order, id=order_id)
+    order = get_object_or_404(
+        Order.objects.select_for_update(),
+        id=order_id,
+        restaurant=user.restaurant
+    )
 
+    # ✅ Must be paid
     if order.payment_status != Order.PaymentStatus.PAID:
         messages.error(request, "Order is not paid.")
         return redirect("core:order_detail", order_id=order.id)
 
-    if hasattr(order, "refund_record"):
-        messages.error(request, "This order has already been refunded.")
+    # ✅ Prevent double refund
+    if order.payment_status == Order.PaymentStatus.REFUNDED:
+        messages.error(request, "Order already refunded.")
         return redirect("core:order_detail", order_id=order.id)
 
     # ✅ Require active shift
@@ -1825,8 +2175,8 @@ def refund_order(request, order_id):
         messages.error(request, "No active shift found.")
         return redirect("core:start_shift")
 
-    # ✅ Get all paid payments for this order
-    payments = order.payments.filter(status=Payment.Status.PAID)
+    # ✅ Get successful payments only
+    payments = order.payments.filter(status=Payment.Status.SUCCEEDED)
 
     if not payments.exists():
         messages.error(request, "No valid payments found.")
@@ -1836,25 +2186,31 @@ def refund_order(request, order_id):
         total=Sum("amount")
     )["total"] or Decimal("0.00")
 
+    # ✅ Reverse Stripe payments
+    for payment in payments:
+        stripe.Refund.create(
+            payment_intent=payment.stripe_payment_intent
+        )
+
+    # ✅ Restore inventory
+    order.restore_inventory()
+
+    # ✅ Mark payments as refunded
+    payments.update(status=Payment.Status.REFUNDED)
+
+    # ✅ Update order safely
+    order.mark_as_refunded(actor=user)
+
     # ✅ Create refund record
-    refund = Refund.objects.create(
+    Refund.objects.create(
         order=order,
         shift=active_shift,
         amount=total_paid,
         processed_by=user,
     )
 
-    # ✅ Mark payments as refunded
-    payments.update(status=Payment.Status.REFUNDED)
-
-    # ✅ Update order status
-    order.payment_status = Order.PaymentStatus.REFUNDED
-    order.status = Order.Status.CANCELLED
-    order.save()
-
     messages.success(request, "Refund processed successfully.")
     return redirect("core:order_detail", order_id=order.id)
-
 
 
 def mock_create_payment_intent(request, restaurant_slug, order_id):
@@ -1877,121 +2233,216 @@ def mock_create_payment_intent(request, restaurant_slug, order_id):
         "success": True
     })
 
-    
-class SettingsView(LoginRequiredMixin, UpdateView):
-    model = Settings
-    template_name = "core/settings.html"
-    success_url = reverse_lazy("core:settings")
-    fields = [
-        # General
-        "restaurant_display_name",
-        "currency_symbol",
-        "timezone",
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def mock_activate_subscription(request):
 
-        # Tax & Charges
-        "tax_percentage",
-        "service_charge_percentage",
-        "prices_include_tax",
+    restaurant = request.user.restaurant
+    plan_id = request.data.get("plan_id")
 
-        # Order Behavior
-        "auto_mark_order_paid",
-        "allow_split_payments",
-        "allow_table_merge",
+    try:
+        plan = Plan.objects.get(id=plan_id)
 
-        # Receipt
-        "show_logo_on_receipt",
-        "receipt_footer_text",
-
-        # Inventory
-        "stock_alerts_enabled",
-        "auto_deduct_inventory",
-
-        # Notifications
-        "email_notifications_enabled",
-        "send_daily_sales_report",
-        "low_stock_email_alerts",
-        "notify_on_new_order",
-
-        # UI
-        "default_theme",
-        "items_per_page",
-    ]
-
-    def get_object(self):
-        """
-        Ensure only restaurant users can edit settings.
-        """
-
-        restaurant = getattr(self.request.user, "restaurant", None)
-
-        if not restaurant:
-            raise PermissionDenied("SaaS admin cannot edit restaurant settings.")
-
-
-
-        settings, created = Settings.objects.get_or_create(
+        Subscription.objects.update_or_create(
             restaurant=restaurant,
             defaults={
-                "restaurant_display_name": restaurant.name,
-            }
+                "plan": plan,
+                "status": "trialing",
+                "current_period_start": timezone.now(),
+                "current_period_end": timezone.now() + timezone.timedelta(days=30),
+                "cancel_at_period_end": False,
+            },
         )
 
-        return settings
+        return Response({"success": True})
+
+    except Plan.DoesNotExist:
+        return Response({"error": "Invalid plan"}, status=400)
     
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def settings_api(request):
 
-        context["settings_tabs"] = [
-        "general",
-        "tax",
-        "orders",
-        "receipt",
-        "inventory",
-        "notifications",
-        "ui",
-    ]
+    restaurant = getattr(request.user, "restaurant", None)
 
-        context["order_fields"] = [
-        "auto_mark_order_paid",
-        "allow_split_payments",
-        "allow_table_merge",
-    ]
+    if not restaurant:
+        raise PermissionDenied("SaaS admin cannot edit restaurant settings.")
 
-        context["inventory_fields"] = [
-        "stock_alerts_enabled",
-        "auto_deduct_inventory",
-    ]
+    settings_obj, _ = Settings.objects.get_or_create(
+        restaurant=restaurant,
+        defaults={
+            "restaurant_display_name": restaurant.name,
+        }
+    )
 
-        context["notification_fields"] = [
-        "email_notifications_enabled",
-        "send_daily_sales_report",
-        "low_stock_email_alerts",
-        "notify_on_new_order",
-    ]
+    if request.method == "GET":
+        serializer = SettingsSerializer(settings_obj)
+        return Response(serializer.data)
 
-        return context
+    if request.method == "PATCH":
+        serializer = SettingsSerializer(
+            settings_obj,
+            data=request.data,
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data)
+    
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def me_api(request):
+
+    user = request.user
+    restaurant = getattr(user, "restaurant", None)
+
+    active_shift = None
+
+    if restaurant:
+        shift = CashierShift.objects.filter(
+            user=user,
+            restaurant=restaurant,
+            is_active=True
+        ).first()
+
+        if shift:
+            active_shift = {
+                "id": shift.id,
+                "started_at": shift.started_at,
+            }
+
+    return Response({
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "is_cashier": user.is_cashier,
+            "is_manager": user.is_manager,
+        },
+        "restaurant": {
+            "id": restaurant.id,
+            "name": restaurant.name,
+        } if restaurant else None,
+        "active_shift": active_shift,
+    })
+
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def subscription_detail(request):
+
+    restaurant = getattr(request.user, "restaurant", None)
+
+    if not restaurant:
+        return Response({"detail": "No restaurant assigned."}, status=400)
+
+    subscription = get_object_or_404(
+        Subscription,
+        restaurant=restaurant
+    )
+
+    serializer = SubscriptionSerializer(subscription)
+
+    return Response(serializer.data)
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_checkout_session(request):
+
+    restaurant = request.user.restaurant
+    plan_id = request.data.get("plan_id")
+
+    if not plan_id:
+        return Response({"error": "Plan ID is required"}, status=400)
+
+    try:
+        plan = Plan.objects.get(id=plan_id)
+    except Plan.DoesNotExist:
+        return Response({"error": "Invalid plan"}, status=400)
+
+    try:
+        # ✅ Prevent duplicate active or trial subscriptions
+        existing_subscription = Subscription.objects.filter(
+            restaurant=restaurant,
+            status__in=["trialing", "active"]
+        ).first()
+
+        if existing_subscription:
+            return Response(
+                {"error": "You already have an active subscription."},
+                status=400
+            )
+
+        # ✅ Create or reuse Stripe customer
+        if restaurant.stripe_customer_id:
+            customer_id = restaurant.stripe_customer_id
+        else:
+            customer = stripe.Customer.create(
+                email=request.user.email,
+                name=restaurant.name,
+                metadata={
+                    "restaurant_id": str(restaurant.id)
+                }
+            )
+            customer_id = customer["id"]
+
+            # Save Stripe customer on restaurant
+            restaurant.stripe_customer_id = customer_id
+            restaurant.save(update_fields=["stripe_customer_id"])
+
+        # ✅ Create Checkout Session
+        checkout_session = stripe.checkout.Session.create(
+            customer=customer_id,
+            payment_method_types=["card"],
+            mode="subscription",
+            line_items=[
+                {
+                    "price": plan.stripe_price_id,
+                    "quantity": 1,
+                }
+            ],
+            subscription_data={
+                "trial_period_days": 30,  # ✅ 1 month free trial
+                "metadata": {
+                    "restaurant_id": str(restaurant.id),
+                    "plan_id": str(plan.id),
+                },
+            },
+            metadata={
+                "restaurant_id": str(restaurant.id),
+                "plan_id": str(plan.id),
+            },
+            success_url=settings.FRONTEND_URL + "/billing/success",
+            cancel_url=settings.FRONTEND_URL + "/billing/cancel",
+        )
+
+        return Response({"url": checkout_session.url})
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=400)
+    
     
 class ManagerDashboardView(LoginRequiredMixin, TemplateView):
     template_name = "core/manager_dashboard.html"
     login_url = "core:login"
-    
+
     def dispatch(self, request, *args, **kwargs):
-
-        # ✅ First: make sure user is authenticated
-        if not request.user.is_authenticated:
-            return self.handle_no_permission()
-
-        # ✅ Then check role
+        # ✅ Role check (authentication already handled by LoginRequiredMixin)
         if request.user.role != CustomUser.Roles.MANAGER:
             return redirect("core:pos_dashboard")
 
         return super().dispatch(request, *args, **kwargs)
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
         today = timezone.now().date()
 
+        # ✅ Tenant-safe filtering
         orders_today = Order.objects.filter(
             restaurant=self.request.user.restaurant,
             created_at__date=today,
@@ -2008,6 +2459,8 @@ class ManagerDashboardView(LoginRequiredMixin, TemplateView):
         })
 
         return context
+
+
     
 
 class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
@@ -2016,7 +2469,14 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        restaurant = self.request.user.restaurant
+        # ✅ Resolve restaurant safely
+        restaurant = Restaurant.objects.filter(
+            users=self.request.user
+        ).first()
+
+        if not restaurant:
+            return context  # or raise PermissionDenied
+
         today = timezone.localdate()
         yesterday = today - timedelta(days=1)
 
@@ -2029,17 +2489,16 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
         # ================= TABLES IN USE =================
         tables_in_use = Table.objects.filter(
             restaurant=restaurant,
-            status__in=[
-                Table.Status.OCCUPIED,
-                Table.Status.RESERVED,
-            ]
+            status__in=[Table.Status.OCCUPIED, Table.Status.RESERVED]
         ).count()
 
         # ================= TODAY =================
-        today_orders = Order.objects.filter(
+        today_orders_qs = Order.objects.filter(
             restaurant=restaurant,
             created_at__date=today
-        ).count()
+        )
+
+        today_orders = today_orders_qs.count()
 
         today_revenue = Payment.objects.filter(
             order__restaurant=restaurant,
@@ -2090,21 +2549,21 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
             created_at__date__gte=month_start
         ).aggregate(total=Sum("amount"))["total"] or 0
 
-        # ================= TREND CALCULATION =================
+        # ================= TREND CALC =================
         def calculate_trend(current, previous):
             if previous == 0:
                 return None, None
 
-            raw_percentage = round(((current - previous) / previous) * 100, 1)
+            raw = round(((current - previous) / previous) * 100, 1)
 
-            if raw_percentage > 0:
+            if raw > 0:
                 direction = "up"
-            elif raw_percentage < 0:
+            elif raw < 0:
                 direction = "down"
             else:
                 direction = "neutral"
 
-            return abs(raw_percentage), direction
+            return abs(raw), direction
 
         orders_trend, orders_trend_direction = calculate_trend(
             today_orders, yesterday_orders
@@ -2122,7 +2581,7 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
             this_week_revenue, last_week_revenue
         )
 
-        # ================= DAILY REVENUE (LAST 7 DAYS) =================
+        # ================= DAILY REVENUE (7 DAYS) =================
         seven_days_ago = today - timedelta(days=6)
 
         daily_qs = (
@@ -2137,10 +2596,7 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
             .order_by("day")
         )
 
-        daily_data_map = {
-            item["day"]: float(item["total"] or 0)
-            for item in daily_qs
-        }
+        daily_map = {i["day"]: float(i["total"] or 0) for i in daily_qs}
 
         daily_labels = []
         daily_revenue_data = []
@@ -2148,9 +2604,9 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
         for i in range(7):
             day = seven_days_ago + timedelta(days=i)
             daily_labels.append(day.strftime("%b %d"))
-            daily_revenue_data.append(daily_data_map.get(day, 0))
+            daily_revenue_data.append(daily_map.get(day, 0))
 
-        # ================= HOURLY REVENUE (TODAY) =================
+        # ================= HOURLY REVENUE =================
         hourly_qs = (
             Payment.objects
             .filter(
@@ -2163,9 +2619,9 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
             .order_by("hour")
         )
 
-        hourly_data_map = {
-            item["hour"].hour: float(item["total"] or 0)
-            for item in hourly_qs
+        hourly_map = {
+            i["hour"].hour: float(i["total"] or 0)
+            for i in hourly_qs
         }
 
         hourly_labels = []
@@ -2173,17 +2629,13 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
 
         for hour in range(24):
             hourly_labels.append(f"{hour:02d}:00")
-            hourly_revenue_data.append(hourly_data_map.get(hour, 0))
+            hourly_revenue_data.append(hourly_map.get(hour, 0))
 
         # ================= ACTIVE SESSIONS =================
-        active_sessions = (
-            TableSession.objects
-            .filter(
-                restaurant=restaurant,
-                is_active=True
-            )
-            .select_related("table", "section")
-        )
+        active_sessions = TableSession.objects.filter(
+            restaurant=restaurant,
+            is_active=True
+        ).select_related("table", "section")
 
         # ================= PAYMENTS =================
         payment_qs = Payment.objects.filter(
@@ -2245,20 +2697,26 @@ class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
         return context
     
 
-
 class TableOverviewView(LoginRequiredMixin, TemplateView):
     template_name = "core/tables.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        restaurant = self.request.user.restaurant
+        # ✅ Resolve restaurant safely
+        restaurant = Restaurant.objects.filter(
+            users=self.request.user
+        ).first()
+
+        if not restaurant:
+            return context  # or raise PermissionDenied
 
         # --------------------------------------------------
-        # ✅ Subquery for active session
+        # ✅ Subquery for active session (scoped to restaurant)
         # --------------------------------------------------
         active_session_subquery = TableSession.objects.filter(
             table=OuterRef("pk"),
+            restaurant=restaurant,
             is_active=True
         )
 
@@ -2278,7 +2736,7 @@ class TableOverviewView(LoginRequiredMixin, TemplateView):
         )
 
         # --------------------------------------------------
-        # ✅ Active Orders (for dashboard use)
+        # ✅ Active Orders (dashboard use)
         # --------------------------------------------------
         active_orders = (
             Order.objects
@@ -2303,6 +2761,8 @@ class TableOverviewView(LoginRequiredMixin, TemplateView):
         })
 
         return context
+    
+    
     
 @login_required
 def dashboard_table_open(request, table_id):
@@ -2342,29 +2802,45 @@ def dashboard_table_open(request, table_id):
         session_id=session.id
     )
     
-    
+@require_POST
 @login_required
-def create_takeaway_order(request):
+@subscription_required
+def create_draft_order_api(request):
+    try:
+        data = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    restaurant = request.user.restaurant
+
+    order_type = data.get("order_type", Order.Type.TAKEAWAY)
+    table_id = data.get("table_id")  # optional
+    notes = data.get("notes", "")
+
+    # ✅ Optional: attach active shift
+    active_shift = Shift.objects.filter(
+        restaurant=restaurant,
+        ended_at__isnull=True
+    ).first()
 
     with transaction.atomic():
 
-        session = TableSession.objects.create(
-            restaurant=request.user.restaurant,
-            session_type=TableSession.SessionType.TAKEAWAY,
-            is_active=True
-        )
-
         order = Order.objects.create(
-            restaurant=request.user.restaurant,
-            session=session,
+            restaurant=restaurant,
             created_by=request.user,
-            status=Order.Status.DRAFT
+            status=Order.Status.DRAFT,
+            type=order_type,
+            table_id=table_id if order_type == Order.Type.DINE_IN else None,
+            shift=active_shift,
+            notes=notes,
+            total=0
         )
 
-    # Store session
-    request.session["session_id"] = session.id
-
-    return redirect("core:order_detail", pk=order.pk)
+    return JsonResponse({
+        "order_id": str(order.id),
+        "status": order.status,
+        "type": order.type,
+    })
 
 @login_required
 def dashboard_session_detail(request, session_id):
@@ -2399,7 +2875,7 @@ def dashboard_session_detail(request, session_id):
             output_field=DecimalField()
         )
     )["total"]
-
+    balance = session_total - paid_total
     return render(
         request,
         "dashboard/session_detail.html",
@@ -2408,8 +2884,35 @@ def dashboard_session_detail(request, session_id):
             "orders": orders,
             "session_total": session_total,
             "paid_total": paid_total,
+            "balance": balance,
         }
     )
+    
+    
+@login_required
+def dashboard_session_orders_refresh(request, session_id):
+    restaurant = request.user.restaurant
+
+    session = get_object_or_404(
+        TableSession,
+        id=session_id,
+        restaurant=restaurant
+    )
+
+    orders = Order.objects.filter(
+        session=session
+    ).order_by("-created_at")
+
+    html = render_to_string(
+        "core/partials/session_orders_list.html",
+        {
+            "orders": orders,
+            "session": session,
+        },
+        request=request
+    )
+
+    return JsonResponse({"html": html})
     
 @login_required
 def dashboard_table_close(request, session_id):
@@ -2978,33 +3481,70 @@ class ModifierOptionViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
+        return (
+            ModifierOption.objects
+            .filter(
+                group__products__category__restaurant=self.request.user.restaurant
+            )
+            .distinct()
+        )
 
-        if not hasattr(user, "restaurant") or user.restaurant is None:
-            return ModifierOption.objects.none()
-
-        return ModifierOption.objects.filter(
-            group__products__category__menu__restaurant=user.restaurant
-        ).distinct()
-        
     def perform_create(self, serializer):
-        option = serializer.save()
+        group = serializer.validated_data["group"]
 
-        # Security check: prevent cross-restaurant linking
-        if not option.group.products.filter(
+        # ✅ Security check BEFORE saving
+        if not group.products.filter(
             category__menu__restaurant=self.request.user.restaurant
         ).exists():
-            option.delete()  # rollback
             raise PermissionDenied("Invalid restaurant access.")
+
+        serializer.save()
         
-def public_display(request, restaurant_id):
-    restaurant = get_object_or_404(Restaurant, display_token=token, is_active=True)
+        
+def public_display(request, token):
+    restaurant = get_object_or_404(
+        Restaurant,
+        display_token=token,
+    )
+
+    orders = Order.objects.filter(
+        restaurant=restaurant,
+        status__in=["READY", "SERVED"]
+    ).order_by("-created_at")[:30]   # newest first, limit to 30
+
     return render(
         request,
         "core/pos/public_display.html",
-        {"restaurant": restaurant}
+        {
+            "restaurant": restaurant,
+            "orders": orders,
+            "now": timezone.now(),
+        }
     )
+    
 
+def legacy_public_display_redirect(request, token):
+    """
+    Redirect old /display/<token>/ URLs
+    to new /pickup/<token>/ URL.
+    """
+    return redirect("core:public_display", token=token)
+
+
+def legacy_customer_display_redirect(request, token, table_id):
+    """
+    Redirect old /display/<token>/<table_id>/ URLs
+    to new /table/<token>/<table_id>/ URL.
+    """
+    return redirect("core:customer_display", token=token, table_id=table_id)
+
+@login_required
+def dashboard_public_display(request):
+    if not request.user.can_access_public_display:
+        return redirect("core:dashboard")
+
+    token = request.user.restaurant.display_token
+    return redirect("core:public_display", token=token)
 
 class CategoryCreateView(LoginRequiredMixin, CreateView):
     model = Category
@@ -3012,20 +3552,30 @@ class CategoryCreateView(LoginRequiredMixin, CreateView):
     template_name = "core/partials/category_form.html"
 
     def form_valid(self, form):
+        # ✅ Resolve restaurant safely
+        restaurant = Restaurant.objects.filter(
+            users=self.request.user
+        ).first()
+
+        if not restaurant:
+            return HttpResponseBadRequest("No restaurant found.")
+
+        # ✅ Get menu belonging to this restaurant
         menu = Menu.objects.filter(
-            restaurant=self.request.user.restaurant
+            restaurant=restaurant
         ).first()
 
         if not menu:
             return HttpResponseBadRequest("No menu found.")
 
+        # ✅ Assign menu safely
         form.instance.menu = menu
         form.save()
 
-        # ✅ Return updated table instead of redirect
+        # ✅ Refresh categories (tenant-safe)
         categories = (
             Category.objects
-            .filter(menu__restaurant=self.request.user.restaurant)
+            .filter(menu__restaurant=restaurant)
             .annotate(product_count=Count("products"))
             .order_by("display_order", "name")
         )
@@ -3036,7 +3586,6 @@ class CategoryCreateView(LoginRequiredMixin, CreateView):
             {"categories": categories}
         )
 
-        # ✅ Tell HTMX to replace the table
         response["HX-Target"] = "#category-table"
         response["HX-Swap"] = "innerHTML"
 
@@ -3048,7 +3597,8 @@ class CategoryCreateView(LoginRequiredMixin, CreateView):
             "core/partials/category_form.html",
             {"form": form}
         )
-    
+        
+        
 class CategoryListView(LoginRequiredMixin, ListView):
     model = Category
     template_name = "dashboard/categories.html"
@@ -3061,6 +3611,8 @@ class CategoryListView(LoginRequiredMixin, ListView):
             .annotate(product_count=Count("products"))
             .order_by("display_order", "name")
         )
+        
+        
     
 class CategoryUpdateView(LoginRequiredMixin, UpdateView):
     model = Category
@@ -3087,14 +3639,29 @@ class CategoryDeleteView(LoginRequiredMixin, DeleteView):
         self.object = self.get_object()
 
         if self.object.products.exists():
-            return HttpResponseBadRequest(
-                "Cannot delete category with products."
+            html = render_to_string(
+                "core/admin/category_error.html",
+                {
+                    "message": "Cannot delete category with products."
+                },
+                request=request
             )
+            return HttpResponse(html)
 
         self.object.delete()
+        return HttpResponse(status=204)
+    
+from django.views.generic import DetailView
 
-        return HttpResponse(status=204)   # ✅ VERY IMPORTANT
-        
+class CategoryDeleteModalView(LoginRequiredMixin, DetailView):
+    model = Category
+    template_name = "core/partials/category_delete_modal.html"
+
+    def get_queryset(self):
+        return Category.objects.filter(
+            menu__restaurant=self.request.user.restaurant
+        )
+
 class UpdateCategoryOrderView(LoginRequiredMixin, View):
 
     def post(self, request):

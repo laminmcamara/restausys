@@ -39,7 +39,7 @@ else:
     print(f"⚠️ No environment file found for: {env_file}, using system defaults.")
 
 # --- Core Django settings ---
-SECRET_KEY = env("SECRET_KEY", default="django-insecure-placeholder-key")
+SECRET_KEY = env("SECRET_KEY")
 DEBUG = env.bool("DEBUG", default=False)
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
 
@@ -57,7 +57,6 @@ MANAGERS = ADMINS
 # APPLICATION DEFINITION
 # ==============================================================================
 
-AUTH_USER_MODEL = "core.CustomUser"
 
 INSTALLED_APPS = [
     # 1. Third-party UI enhancements (must precede admin)
@@ -76,6 +75,8 @@ INSTALLED_APPS = [
     
     "django.contrib.sites",
     "django_extensions",
+    "django_filters",
+
 
     # 3. Third‑party apps
     "crispy_forms",
@@ -107,13 +108,14 @@ SITE_ID = 1  # required for internationalization and multi-site features
 # ==============================================================================
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",  # ✅ MUST BE FIRST
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.locale.LocaleMiddleware",  # 🌍 enable language switching
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    'core.middleware.SubscriptionMiddleware',
+    "core.middleware.SubscriptionMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -143,7 +145,6 @@ TEMPLATES = [
                 "django.template.context_processors.static",
                 "django.template.context_processors.i18n",  # 🌍 language context
                 'core.context_processors.restaurant_context',
-                "core.context_processors.restaurant_context",
 
                 
             ],
@@ -253,13 +254,44 @@ else:
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",   # ✅ Browser login
-        "rest_framework_simplejwt.authentication.JWTAuthentication",  # ✅ Mobile/API
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
 }
+
+REST_FRAMEWORK = {
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+    ],
+}
+
+
+# ==============================
+# JWT Configuration
+# ==============================
+
+from datetime import timedelta
+
+DJANGO_ENV = os.environ.get("DJANGO_ENV", "dev")
+
+if DJANGO_ENV == "dev":
+    ACCESS_TIME = timedelta(hours=4)
+    REFRESH_TIME = timedelta(days=30)
+else:
+    ACCESS_TIME = timedelta(minutes=30)
+    REFRESH_TIME = timedelta(days=7)
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": ACCESS_TIME,
+    "REFRESH_TOKEN_LIFETIME": REFRESH_TIME,
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+}
+
+
 
 # ==============================================================================
 # EMAIL CONFIGURATION (safely overridable)
@@ -277,14 +309,17 @@ SERVER_EMAIL = os.getenv("SERVER_EMAIL", "server@localhost")
 
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
-SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("1", "true")
+SECURE_SSL_REDIRECT = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
-
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SECURE_BROWSER_XSS_FILTER = True
 # ==============================================================================
 # LOGGING CONFIGURATION
 # ==============================================================================
@@ -331,6 +366,9 @@ LOGGING = {
     },
 }
 
+SYSTEM_NAME = "BeePOS Pro"
+SYSTEM_SHORT_NAME = "BeePOS"
+SYSTEM_TAGLINE = "Smart. Fast. Reliable."
 # ==============================================================================
 # DJANGO CRISPY FORMS
 # ==============================================================================
@@ -364,14 +402,22 @@ PRINTERS = {
 }
 
 
-STRIPE_SECRET_KEY = "sk_test_xxx"
-STRIPE_PUBLIC_KEY = "pk_test_xxx"
-STRIPE_WEBHOOK_SECRET = "whsec_xxx"
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
 
-
+if not STRIPE_SECRET_KEY:
+    print("⚠️ WARNING: Stripe secret key not set")
 
 # ==============================================================================
 # DEFAULT AUTO FIELD
 # ==============================================================================
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "https://yourfrontenddomain.com",
+]

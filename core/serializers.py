@@ -15,6 +15,7 @@ from .models import (
     Menu,
     Payment,
     ProductVariant,
+    Subscription,
 )
 
 # ==============================================================================
@@ -69,8 +70,14 @@ class TableSerializer(serializers.ModelSerializer):
 class ModifierOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ModifierOption
-        fields = ["id", "name", "price_adjustment"]
-
+        fields = [
+            "id",
+            "group",
+            "name",
+            "price_adjustment",
+            "display_order",
+        ]
+        read_only_fields = ["id"]
 
 class ModifierGroupSerializer(serializers.ModelSerializer):
     options = ModifierOptionSerializer(many=True, read_only=True)
@@ -81,8 +88,11 @@ class ModifierGroupSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "selection_type",
+            "products",
             "options",
         ]
+        read_only_fields = ["id"]
+        
 
 class ProductSerializer(serializers.ModelSerializer):
     modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
@@ -115,9 +125,15 @@ class MenuSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Menu
-        fields = ["id", "name", "description", "is_active", "restaurant", "categories"]
-
-
+        fields = [
+            "id",
+            "name",
+            "description",
+            "is_active",
+            "restaurant",
+            "categories",
+        ]
+        read_only_fields = ["id", "restaurant"]
 # ==============================================================================
 # Order Serializers
 # ==============================================================================
@@ -132,7 +148,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     product = ProductSerializer(read_only=True)
     modifiers = ModifierOptionSerializer(many=True, read_only=True)
 
-    # ✅ Write fields (restricted per restaurant)
+    # ✅ Write fields
     product_id = serializers.PrimaryKeyRelatedField(
         queryset=Product.objects.none(),
         source="product",
@@ -170,16 +186,47 @@ class OrderItemSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             restaurant = request.user.restaurant
 
-            # ✅ Correct product filtering
             self.fields["product_id"].queryset = Product.objects.filter(
                 category__menu__restaurant=restaurant
             )
 
-            # ✅ Correct modifier filtering
             self.fields["modifier_ids"].queryset = ModifierOption.objects.filter(
                 group__products__category__menu__restaurant=restaurant
             ).distinct()
-    
+
+    # -------------------------------------------------
+    # ✅ VALIDATE MODIFIER SELECTION TYPE
+    # -------------------------------------------------
+
+    def validate(self, data):
+        product = data.get("product")
+        modifiers = data.get("modifiers", [])
+
+        if not product:
+            return data
+
+        # Group selected modifiers by group
+        grouped = {}
+
+        for modifier in modifiers:
+            group = modifier.group
+            grouped.setdefault(group.id, []).append(modifier)
+
+        for group in product.modifier_groups.all():
+            selected = grouped.get(group.id, [])
+
+            if group.selection_type == ModifierGroup.SelectionType.SINGLE:
+                if len(selected) > 1:
+                    raise serializers.ValidationError(
+                        f"{group.name} allows only one selection."
+                    )
+
+        return data
+
+    # -------------------------------------------------
+    # ✅ CREATE
+    # -------------------------------------------------
+
     def create(self, validated_data):
         modifiers = validated_data.pop("modifiers", [])
 
@@ -188,16 +235,32 @@ class OrderItemSerializer(serializers.ModelSerializer):
         if modifiers:
             item.modifiers.set(modifiers)
 
-        base_price = item.product.base_price
-        modifiers_total = sum(m.price_adjustment for m in modifiers)
-
-        item.final_price = (base_price + modifiers_total) * item.quantity
-        item.save(update_fields=["final_price"])
-
+        # ✅ Use model method (correct + future-safe)
+        item.recalculate_price()
         item.order.calculate_totals()
 
         return item
 
+    # -------------------------------------------------
+    # ✅ UPDATE
+    # -------------------------------------------------
+
+    def update(self, instance, validated_data):
+        modifiers = validated_data.pop("modifiers", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+
+        if modifiers is not None:
+            instance.modifiers.set(modifiers)
+
+        instance.recalculate_price()
+        instance.order.calculate_totals()
+
+        return instance
+    
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     staff = CustomUserSerializer(read_only=True)
@@ -281,3 +344,39 @@ class ProductVariantSerializer(serializers.ModelSerializer):
         ]
 
 
+# core/serializers.py
+
+from .models import Settings
+
+class SettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Settings
+        exclude = ["restaurant"]
+
+
+class SubscriptionSerializer(serializers.ModelSerializer):
+
+    plan_name = serializers.CharField(source="plan.name", read_only=True)
+    monthly_price = serializers.DecimalField(
+        source="plan.monthly_price",
+        max_digits=10,
+        decimal_places=2,
+        read_only=True
+    )
+
+    is_active = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Subscription
+        fields = [
+            "plan_name",
+            "monthly_price",
+            "status",
+            "current_period_start",
+            "current_period_end",
+            "cancel_at_period_end",
+            "is_active",
+        ]
+
+    def get_is_active(self, obj):
+        return obj.is_active()

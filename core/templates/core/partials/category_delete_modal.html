@@ -1,0 +1,43 @@
+<div class="modal" onclick="closeModal(event)">
+    <div class="card surface-light modal-card" onclick="event.stopPropagation()">
+
+        <h3 class="modal-title">Delete Category</h3>
+
+        <p class="modal-text">
+            Are you sure you want to delete
+            <strong>{{ object.name }}</strong>?
+        </p>
+
+        <div class="modal-actions">
+            <button 
+                class="btn btn-outline"
+                onclick="closeModal()">
+                Cancel
+            </button>
+
+            <button
+                hx-delete="{% url 'core:category_delete' object.id %}"
+                hx-target="#category-messages"
+                hx-swap="innerHTML"
+                hx-on::after-request="closeModal()"
+                class="btn btn-danger">
+                Yes, Delete
+            </button>
+        </div>
+
+    </div>
+</div>
+
+<script>
+function closeModal(event) {
+    if (!event || event.target.classList.contains('modal')) {
+        document.getElementById('modal').innerHTML = '';
+    }
+}
+
+document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") {
+        document.getElementById('modal').innerHTML = '';
+    }
+});
+</script>
