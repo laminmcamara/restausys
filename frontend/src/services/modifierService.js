@@ -34,33 +34,13 @@ const authFetch = async (url, options = {}, accessToken) => {
   });
 };
 
-export const fetchProducts = async (
-  accessToken,
-  refreshAccessToken,
-  logout
-) => {
-  const res = await authFetch(`${API}/products/`, {}, accessToken);
+export const fetchModifierGroups = async (accessToken) => {
+  const res = await authFetch(`${API}/modifier-groups/`, {}, accessToken);
 
   if (!res) return [];
 
   if (!res.ok) {
-    throw new Error(await parseError(res, "Failed to fetch products"));
-  }
-
-  return res.json();
-};
-
-export const fetchCategories = async (
-  accessToken,
-  refreshAccessToken,
-  logout
-) => {
-  const res = await authFetch(`${API}/categories/`, {}, accessToken);
-
-  if (!res) return [];
-
-  if (!res.ok) {
-    throw new Error(await parseError(res, "Failed to fetch categories"));
+    throw new Error(await parseError(res, "Failed to fetch modifier groups"));
   }
 
   return res.json();

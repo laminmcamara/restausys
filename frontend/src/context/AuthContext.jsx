@@ -1,58 +1,102 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
+import { AuthContext } from "./auth-context";
 
-const AuthContext = createContext();
-
-export function useAuth() {
-  return useContext(AuthContext);
-}
+const API_BASE = "http://127.0.0.1:8000";
 
 export function AuthProvider({ children }) {
-  const [accessToken, setAccessToken] = useState(null);
+  const [accessToken, setAccessToken] = useState(() =>
+    localStorage.getItem("accessToken")
+  );
+
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  // ✅ Load token on app start
-  useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (token) {
-      setAccessToken(token);
-    }
-  }, []);
-
-  // ✅ Login
-  const login = async (username, password) => {
-    try {
-      const response = await fetch("http://127.0.0.1:8000/api/token/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // ✅ Store tokens correctly
-        localStorage.setItem("accessToken", data.access);
-        localStorage.setItem("refreshToken", data.refresh);
-
-        setAccessToken(data.access);
-        setUser(username);
-
-        return true;
-      } else {
-        return false;
-      }
-    } catch (error) {
-      console.error("Login error:", error);
-      return false;
-    }
-  };
-
-  // ✅ Logout
   const logout = () => {
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
+
     setAccessToken(null);
     setUser(null);
+    setAuthLoading(false);
+  };
+
+  const fetchUser = async (token) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/me/`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        logout();
+        return null;
+      }
+
+      const data = await response.json();
+      setUser(data);
+
+      return data;
+    } catch (err) {
+      logout();
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const initAuth = async () => {
+      const storedAccessToken = localStorage.getItem("accessToken");
+
+      if (!storedAccessToken) {
+        setAuthLoading(false);
+        return;
+      }
+
+      setAccessToken(storedAccessToken);
+      await fetchUser(storedAccessToken);
+      setAuthLoading(false);
+    };
+
+    initAuth();
+  }, []);
+
+  const login = async (username, password) => {
+    setAuthLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/token/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          password,
+        }),
+      });
+
+      if (!response.ok) {
+        setAuthLoading(false);
+        return false;
+      }
+
+      const data = await response.json();
+
+      localStorage.setItem("accessToken", data.access);
+      localStorage.setItem("refreshToken", data.refresh);
+
+      setAccessToken(data.access);
+
+      await fetchUser(data.access);
+
+      setAuthLoading(false);
+
+      return true;
+    } catch (err) {
+      console.error("Login error:", err);
+      setAuthLoading(false);
+      return false;
+    }
   };
 
   return (
@@ -60,10 +104,11 @@ export function AuthProvider({ children }) {
       value={{
         accessToken,
         user,
+        authLoading,
+        isAuthenticated: Boolean(accessToken),
         login,
         logout,
-      }}
-    >
+      }}>
       {children}
     </AuthContext.Provider>
   );

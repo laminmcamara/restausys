@@ -3,8 +3,7 @@
 import uuid
 from datetime import date, timedelta
 from io import BytesIO
-from decimal import Decimal
-
+from decimal import Decimal, ROUND_HALF_UP
 from django.core.validators import MinValueValidator, RegexValidator
 from django.db import models
 from django.db import transaction
@@ -17,6 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.utils.text import slugify
+import secrets
 
 from django.db.models.functions import Coalesce
 
@@ -325,7 +325,8 @@ class Customer(TimeStampedModel):
 # =============================================================================
 # === COMPANY RESTAURANTS =======================================================
 # =============================================================================
-
+def generate_display_key():
+    return secrets.token_hex(16)
 
 class Restaurant(TimeStampedModel):
 
@@ -368,7 +369,12 @@ class Restaurant(TimeStampedModel):
     )
 
     name = models.CharField(max_length=100)
-
+    display_key = models.CharField(
+        max_length=64,
+        unique=True,
+        default=generate_display_key
+    )
+    
     address_line_1 = models.CharField(max_length=255, blank=True)
     address_line_2 = models.CharField(max_length=255, blank=True)
     city = models.CharField(max_length=100, blank=True)
@@ -1242,21 +1248,35 @@ class Order(TimeStampedModel):
     # =============================================================================
     # CALCULATIONS
     # =============================================================================
-
+    
+    
+    def short_id(self):
+        return str(self.id)[:8]
+    
+    
     def calculate_totals(self):
+        """
+        Recalculate order subtotal and total safely.
+        """
+
         subtotal = self.items.aggregate(
             total=Sum("final_price")
         )["total"] or Decimal("0.00")
 
-        self.subtotal = subtotal
+        # ✅ Ensure all monetary fields are Decimal
+        tax = self.tax or Decimal("0.00")
+        service_charge = self.service_charge or Decimal("0.00")
+        tip = self.tip or Decimal("0.00")
+        discount = self.discount or Decimal("0.00")
 
-        self.total = (
-            subtotal
-            + self.tax
-            + self.service_charge
-            + self.tip
-            - self.discount
-        )
+        total = subtotal + tax + service_charge + tip - discount
+
+        # ✅ Round properly to 2 decimal places
+        total = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        subtotal = subtotal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        self.subtotal = subtotal
+        self.total = total
 
         super().save(update_fields=["subtotal", "total"])
 
@@ -1390,7 +1410,7 @@ class Order(TimeStampedModel):
             return self
 
         self.payment_status = self.PaymentStatus.REFUNDED
-        self.status = self.Status.CANCELLED
+        self.status = self.Status.CANCELED
         self.save(update_fields=["payment_status", "status"])
 
         return self
@@ -1520,28 +1540,33 @@ class OrderItem(models.Model):
     # SAFE PRICE RECALCULATION (CALL AFTER M2M SET)
     # -------------------------------------------------
 
+
+
     def recalculate_price(self):
         """
-        Calculates final_price safely AFTER modifiers
-        are attached.
+        Calculate and persist final_price safely.
         """
 
+        if not self.product:
+            return
+
         base_price = (
-            self.variant.price if self.variant else self.product.base_price
-        )
+            self.variant.price
+            if getattr(self, "variant", None)
+            else self.product.base_price
+        ) or Decimal("0.00")
 
         modifiers_total = sum(
-            mod.price_adjustment for mod in self.modifiers.all()
+            (mod.price_adjustment or Decimal("0.00"))
+            for mod in self.modifiers.all()
         )
 
-        final_price = (base_price + modifiers_total) * self.quantity
+        quantity = self.quantity or 1
 
-        # ✅ Update via queryset to avoid recursive save()
-        type(self).objects.filter(pk=self.pk).update(
-            final_price=final_price
-        )
+        self.final_price = (base_price + modifiers_total) * quantity
 
-        self.final_price = final_price
+    # ✅ Use normal save — safe with update_fields
+        super().save(update_fields=["final_price"])
 
     # -------------------------------------------------
     # SAVE OVERRIDE (NO PRICE CALCULATION HERE)
@@ -1789,38 +1814,41 @@ class ChatMessage(models.Model):
         return f"[{self.timestamp:%Y-%m-%d %H:%M}] {sender}: {self.content[:40]}"
 
 class LoyaltyTier(models.Model):
-    name = models.CharField(max_length=50, unique=True)
-    points_required = models.PositiveIntegerField()
+    restaurant = models.ForeignKey(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="loyalty_tiers"
+    )
+
+    name = models.CharField(max_length=50)
+    min_points = models.PositiveIntegerField()
     reward_description = models.CharField(max_length=255, blank=True)
 
+    class Meta:
+        unique_together = ("restaurant", "name")
+        ordering = ["-min_points"]
+
     def __str__(self):
-        return f"{self.name} ({self.points_required} pts)"
+        return f"{self.name} ({self.min_points} pts)"
     
-    Customer.add_to_class(
-    "current_tier",
-    models.ForeignKey(
-        "core.LoyaltyTier",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="customers"
-    ),
-)
 
 def assign_tier(customer):
-    chosen = None
-
-    for tier in LoyaltyTier.objects.filter(
+    tiers = LoyaltyTier.objects.filter(
         restaurant=customer.restaurant
-    ).order_by("-min_points"):
+    ).order_by("-min_points")
+
+    for tier in tiers:
         if customer.loyalty_points >= tier.min_points:
-            chosen = tier
-            break
+            if customer.current_tier != tier:
+                customer.current_tier = tier
+                customer.save(update_fields=["current_tier"])
+            return
 
-    if chosen and customer.current_tier != chosen:
-        customer.current_tier = chosen
+    # No tier matched
+    if customer.current_tier:
+        customer.current_tier = None
         customer.save(update_fields=["current_tier"])
-
+        
 
 class Refund(models.Model):
     order = models.OneToOneField(
@@ -1874,12 +1902,23 @@ class Rider(models.Model):
 
 
 class PaymentMethod(models.Model):
-    name = models.CharField(max_length=50, unique=True)
+    restaurant = models.ForeignKey(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="payment_methods"
+    )
+
+    name = models.CharField(max_length=50)
     active = models.BooleanField(default=True)
 
-    def __str__(self):
-        return self.name
+    class Meta:
+        unique_together = ("restaurant", "name")
 
+    def __str__(self):
+        return f"{self.restaurant.name} - {self.name}"
+    
+    
+    
 class Payment(TimeStampedModel):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -1892,7 +1931,7 @@ class Payment(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name="payments"
     )
-    
+
     shift = models.ForeignKey(
         "core.CashierShift",
         on_delete=models.SET_NULL,
@@ -1900,28 +1939,41 @@ class Payment(TimeStampedModel):
         blank=True,
         related_name="payments"
     )
-    
-    method = models.CharField(
-        max_length=50,
-        default="unknown",
-        help_text="e.g., cash, card, stripe, mobile_money"
+
+    method = models.ForeignKey(
+        "core.PaymentMethod",
+        on_delete=models.PROTECT,
+        related_name="payments"
     )
+
     stripe_payment_intent = models.CharField(
         max_length=200,
         blank=True,
         null=True,
         help_text="Stripe PaymentIntent ID, if applicable."
     )
+
     amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        help_text="Amount paid for this payment transaction."
+        help_text="Amount paid for this transaction."
     )
+    
+    fee_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        help_text="Processing fee percentage"
+    )
+
+    requires_reference = models.BooleanField(default=False)
+
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
         default=Status.PENDING
     )
+
     reference = models.CharField(
         max_length=255,
         blank=True,
@@ -1931,12 +1983,34 @@ class Payment(TimeStampedModel):
 
     def __str__(self):
         return f"{self.order.id} - {self.method} - {self.amount} ({self.status})"
-
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["stripe_payment_intent"],
+                name="unique_stripe_intent",
+                condition=models.Q(stripe_payment_intent__isnull=False)
+            )
+        ]
+        
+        
+    class Meta:
+        indexes = [
+            models.Index(fields=["order"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["stripe_payment_intent"]),
+        ]
+    
+    
 class PaymentIntentLog(models.Model):
     intent_id = models.CharField(max_length=200, unique=True)
     payload = models.JSONField()
     received_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return self.intent_id
+    
+    
 class DailyReport(models.Model):
     restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE)
     date = models.DateField()

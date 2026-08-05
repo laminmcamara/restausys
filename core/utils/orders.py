@@ -7,7 +7,7 @@ from asgiref.sync import async_to_sync
 
 def serialize_order(order):
     return {
-        "id": str(order.id),
+        "id": str(order.display_id),
         "status": order.status,
         "table": order.table.name if order.table else None,
         "type": order.order_type,

@@ -5,6 +5,10 @@ from datetime import timedelta, datetime
 from django.http import HttpResponseForbidden
 
 from django.contrib.auth.views import LoginView, LogoutView
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+
 from django.contrib.auth import logout
 from django.contrib import messages
 from django.contrib.auth import views as auth_views
@@ -45,16 +49,15 @@ import random
 from openpyxl import Workbook
 
 # DRF
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
 from rest_framework.permissions import AllowAny
 from .permissions import IsOwnerOrManager
 from django.core.serializers.json import DjangoJSONEncoder
 
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, action
 from django.urls import reverse
 from rest_framework.viewsets import ModelViewSet
 from rest_framework import filters
@@ -120,49 +123,50 @@ def broadcast_order_update(order):
 
     channel_layer = get_channel_layer()
 
-    serialized = OrderSerializer(order).data
+    # ✅ Safety check (important for tests / migrations)
+    if not channel_layer:
+        return
 
-    data = {
-        "type": "order_status_update",
-        "order": serialized
-    }
+    try:
+        serialized = OrderSerializer(order).data
 
-    message = {
-        "type": "order_status_update",
-        "data": data
-    }
+        payload = {
+            "event": "ORDER_STATUS_UPDATED",
+            "order": serialized,
+        }
 
-    # ✅ POS
-    async_to_sync(channel_layer.group_send)(
-        f"pos_{order.restaurant_id}",
-        message
-    )
+        message = {
+            "type": "order_status_update",  # must match consumer method
+            "data": payload,
+        }
 
-    # ✅ Kitchen
-    async_to_sync(channel_layer.group_send)(
-        f"kitchen_{order.restaurant_id}",
-        message
-    )
+        restaurant_id = order.restaurant_id
 
-    # ✅ Restaurant Dashboard
-    async_to_sync(channel_layer.group_send)(
-        f"restaurant_{order.restaurant_id}",
-        message
-    )
+        groups = [
+            f"pos_{restaurant_id}",
+            f"kitchen_{restaurant_id}",
+            f"restaurant_{restaurant_id}",
+            f"customer_{restaurant_id}",
+        ]
 
-    # ✅ Table Screen
-    if order.table_id:
-        async_to_sync(channel_layer.group_send)(
-            f"table_{order.table_id}",
-            message
-        )
+        # ✅ Add table group if exists
+        if order.table_id:
+            groups.append(f"table_{order.table_id}")
 
-    # ✅ Customer Display
-    async_to_sync(channel_layer.group_send)(
-        f"customer_{order.restaurant_id}",
-        message
-    )
-    
+        for group in groups:
+            async_to_sync(channel_layer.group_send)(group, message)
+
+    except ImproperlyConfigured:
+        # Channels not configured (safe fallback)
+        pass
+
+    except Exception as e:
+        # Optional: log error instead of crashing request
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"WebSocket broadcast failed: {str(e)}")
+        
+        
 class IndexView(TemplateView):
     template_name = "core/home.html"
 
@@ -848,20 +852,18 @@ class OrderListView(LoginRequiredMixin, ListView):
 
         # Filters
         q = self.request.GET.get("q")
-        status = self.request.GET.get("status")
+        statuses = self.request.GET.getlist("status")
         payment = self.request.GET.get("payment")
 
         if q:
             queryset = queryset.filter(id__icontains=q)
 
-        if status:
-            queryset = queryset.filter(status=status)
+        if statuses:
+            queryset = queryset.filter(status__in=statuses)
 
         if payment:
             queryset = queryset.filter(payment_method=payment)
-
-        return queryset
-
+    
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
@@ -1405,8 +1407,7 @@ class TableDeleteView(LoginRequiredMixin, DeleteView):
             restaurant=self.request.user.restaurant
         )
 
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
+
 
 class OrderViewSet(TenantModelViewSet):
     serializer_class = OrderSerializer
@@ -1414,6 +1415,12 @@ class OrderViewSet(TenantModelViewSet):
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["table", "status"]
+    ordering_fields = ["created_at"]
+    ordering = ["-created_at"]
+
+    # -------------------------------------------------
+    # ✅ QUERYSET (TENANT SAFE)
+    # -------------------------------------------------
 
     def get_queryset(self):
         restaurant = getattr(self.request.user, "restaurant", None)
@@ -1422,20 +1429,229 @@ class OrderViewSet(TenantModelViewSet):
 
         return Order.objects.filter(restaurant=restaurant)
 
+    # -------------------------------------------------
+    # ✅ CREATE ORDER
+    # -------------------------------------------------
+
     def perform_create(self, serializer):
         restaurant = getattr(self.request.user, "restaurant", None)
-
         if not restaurant:
             raise PermissionDenied("No restaurant assigned.")
 
         order = serializer.save(
             restaurant=restaurant,
-            staff=self.request.user
+            created_by=self.request.user
         )
 
         broadcast_order_update(order)
-        
-        
+
+    # -------------------------------------------------
+    # ✅ OPEN OR CREATE DRAFT ORDER
+    # -------------------------------------------------
+
+    @action(detail=False, methods=["post"])
+    def open_or_create(self, request):
+        table_id = request.data.get("table_id")
+
+        if not table_id:
+            return Response(
+                {"error": "table_id required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        restaurant = getattr(request.user, "restaurant", None)
+        if not restaurant:
+            return Response(
+                {"error": "No restaurant assigned."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Ensure table belongs to this restaurant
+        table = get_object_or_404(
+            Table,
+            id=table_id,
+            restaurant=restaurant
+        )
+
+        # Check existing draft
+        order = Order.objects.filter(
+            table=table,
+            restaurant=restaurant,
+            status=Order.Status.DRAFT
+        ).first()
+
+        if order:
+            serializer = self.get_serializer(order)
+            return Response(serializer.data)
+
+        # Ensure active session
+        session, _ = TableSession.objects.get_or_create(
+            table=table,
+            restaurant=restaurant,
+            is_active=True,
+        )
+
+        # Create new draft order
+        order = Order.objects.create(
+            restaurant=restaurant,
+            table=table,
+            session=session,
+            order_type=Order.OrderType.DINE_IN,
+            status=Order.Status.DRAFT,
+            created_by=request.user,
+        )
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # -------------------------------------------------
+    # ✅ SEND TO KITCHEN (DRAFT → PLACED)
+    # -------------------------------------------------
+
+    @action(detail=True, methods=["post"])
+    def send_to_kitchen(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status != Order.Status.DRAFT:
+            return Response(
+                {"error": "Only draft orders can be sent to kitchen."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order.transition_to(Order.Status.PLACED, actor=request.user)
+
+        broadcast_order_update(order)
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data)
+
+    # -------------------------------------------------
+    # ✅ KITCHEN: START PREPARING (PLACED → IN_PROGRESS)
+    # -------------------------------------------------
+
+    @action(detail=True, methods=["post"])
+    def start_preparing(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status != Order.Status.PLACED:
+            return Response(
+                {"error": "Only placed orders can start preparation."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order.transition_to(Order.Status.IN_PROGRESS, actor=request.user)
+
+        broadcast_order_update(order)
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data)
+
+    # -------------------------------------------------
+    # ✅ KITCHEN: MARK READY (IN_PROGRESS → READY)
+    # -------------------------------------------------
+
+    @action(detail=True, methods=["post"])
+    def mark_ready(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status != Order.Status.IN_PROGRESS:
+            return Response(
+                {"error": "Order must be in progress."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order.transition_to(Order.Status.READY, actor=request.user)
+
+        broadcast_order_update(order)
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data)
+
+    # -------------------------------------------------
+    # ✅ PICKUP: MARK SERVED (READY → SERVED)
+    # -------------------------------------------------
+
+    @action(detail=True, methods=["post"])
+    def mark_served(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status != Order.Status.READY:
+            return Response(
+                {"error": "Order must be ready first."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order.transition_to(Order.Status.SERVED, actor=request.user)
+
+        broadcast_order_update(order)
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data)
+
+    # -------------------------------------------------
+    # ✅ MANAGER: MARK PAID (PAYMENT ONLY)
+    # -------------------------------------------------
+
+    @action(detail=True, methods=["post"])
+    def mark_paid(self, request, pk=None):
+        order = self.get_object()
+
+        if order.payment_status == Order.PaymentStatus.PAID:
+            return Response(
+                {"error": "Order already paid."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        order.mark_as_paid(actor=request.user)
+
+        broadcast_order_update(order)
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data)
+
+    # -------------------------------------------------
+    # ✅ MANAGER: COMPLETE ORDER (SERVED + PAID → COMPLETED)
+    # -------------------------------------------------
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        order = self.get_object()
+
+        try:
+            order = order.complete_order(actor=request.user)
+        except PermissionDenied as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        broadcast_order_update(order)
+
+        serializer = self.get_serializer(order)
+        return Response(serializer.data)
+    
+    
+    # -------------------------------------------------
+    # ✅ KITCHEN DASHBOARD LIST (PLACED + IN_PROGRESS)
+    # -------------------------------------------------
+
+    @action(detail=False, methods=["get"])
+    def kitchen(self, request):
+        restaurant = getattr(request.user, "restaurant", None)
+        if not restaurant:
+            return Response([], status=200)
+
+        orders = Order.objects.filter(
+            restaurant=restaurant,
+            status__in=[
+                Order.Status.PLACED,
+                Order.Status.IN_PROGRESS
+            ]
+        ).order_by("created_at")
+
+        serializer = self.get_serializer(orders, many=True)
+        return Response(serializer.data)
+
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [IsAuthenticated]
@@ -1444,6 +1660,20 @@ class OrderItemViewSet(viewsets.ModelViewSet):
         return OrderItem.objects.filter(
             order__restaurant=self.request.user.restaurant
         )
+
+    def perform_create(self, serializer):
+        order_id = self.request.data.get("order")
+
+        if not order_id:
+            raise ValidationError({"order": "Order ID is required."})
+
+        order = get_object_or_404(
+            Order,
+            id=order_id,
+            restaurant=self.request.user.restaurant,
+        )
+
+        serializer.save(order=order)
 
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1488,108 +1718,31 @@ class ManagerCategoryViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         menu = serializer.validated_data["menu"]
 
-        # Tenant isolation check
-        if not menu.restaurant.users.filter(
-            id=self.request.user.id
-        ).exists():
+        if menu.restaurant != self.request.user.restaurant:
             raise PermissionDenied("Invalid menu for this restaurant.")
 
         serializer.save()
 
-class ProductCreateView(LoginRequiredMixin, CreateView):
-    model = Product
-    form_class = ProductForm
-    template_name = "core/admin/product_form.html"
-    success_url = reverse_lazy("core:manage_products")
-
-    def get_user_restaurant(self):
-        return Restaurant.objects.filter(
-            users=self.request.user
-        ).first()
-
-    def get_form_kwargs(self):
-        kwargs = super().get_form_kwargs()
-
-        restaurant = self.get_user_restaurant()
-        if not restaurant:
-            raise PermissionDenied("No restaurant assigned.")
-
-        kwargs["restaurant"] = restaurant
-        return kwargs
-    
     
 # ==============================================================
 # ================== PRODUCT UPDATE ============================
 # ==============================================================
 
-class ProductUpdateView(LoginRequiredMixin, UpdateView):
-    model = Product
-    template_name = "core/admin/edit_product.html"
-    fields = ["name", "base_price", "description", "is_available", "category"]
 
-    def get_queryset(self):
-        # ✅ Correct tenant chain
-        return Product.objects.filter(
-            category__menu__restaurant=self.request.user.restaurant
-        )
-
-    def get_form(self, form_class=None):
-        form = super().get_form(form_class)
-
-        # ✅ Correct category filtering
-        form.fields["category"].queryset = Category.objects.filter(
-            menu__restaurant=self.request.user.restaurant
-        )
-
-        return form
-
-    def get_success_url(self):
-        return reverse_lazy("core:product_list")
-    
     
 # ==============================================================
 # ================== PRODUCT DELETE ============================
 # ==============================================================
 
-class ProductDeleteView(LoginRequiredMixin, DeleteView):
-    model = Product
-    template_name = "core/admin/delete_product.html"
 
-    def get_queryset(self):
-        return Product.objects.filter(
-            category__menu__restaurant=self.request.user.restaurant
-        )
-
-    def get_success_url(self):
-        return reverse_lazy("core:product_list")
     
-    
-    
-class ProductListView(
-    LoginRequiredMixin,
-    SubscriptionRequiredMixin,
-    RestaurantScopedMixin,
-    ListView
-):
-    model = Product
-    template_name = "core/admin/products.html"
-    context_object_name = "products"
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-
-        return (
-            qs
-            .select_related("category", "category__menu")
-            .order_by("name")
-        )
         
 class ManagerProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [
         IsAuthenticated,
         IsOwnerOrManager,
-        HasActiveSubscription,   # ✅ ADD THIS
     ]
 
     def get_queryset(self):
@@ -1613,7 +1766,6 @@ class ManagerMenuViewSet(viewsets.ModelViewSet):
     permission_classes = [
         IsAuthenticated,
         IsOwnerOrManager,
-        HasActiveSubscription,   # ✅ ADD THIS
     ]
 
     def get_queryset(self):
@@ -2762,7 +2914,34 @@ class TableOverviewView(LoginRequiredMixin, TemplateView):
 
         return context
     
-    
+class TableViewSet(viewsets.ModelViewSet):
+    serializer_class = TableSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Table.objects.filter(
+            restaurant=self.request.user.restaurant
+        )
+
+    @action(detail=True, methods=["post"])
+    def generate_qr(self, request, pk=None):
+        table = self.get_object()
+
+        qr_url = f"http://127.0.0.1:3000/menu/{table.id}"
+
+        qr = qrcode.make(qr_url)
+        buffer = BytesIO()
+        qr.save(buffer, format="PNG")
+
+        file_name = f"table_{table.id}_qr.png"
+
+        table.qr_code.save(
+            file_name,
+            ContentFile(buffer.getvalue()),
+            save=True
+        )
+
+        return Response({"message": "QR generated successfully"})
     
 @login_required
 def dashboard_table_open(request, table_id):

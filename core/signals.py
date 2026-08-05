@@ -1,28 +1,20 @@
-from decimal import Decimal
-
-from django.db.models.signals import post_save, post_delete, m2m_changed
-from django.contrib.auth.signals import user_logged_in, user_logged_out
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from django.db.models import Sum
-from django.utils import timezone
-from django.template.loader import render_to_string
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 from .models import (
     Order,
     OrderItem,
-    Attendance,
-    Restaurant,
-    Menu,
-    Category,
     KitchenTicket,
 )
+from .serializers import OrderSerializer, KitchenTicketSerializer
 
 
-# ==============================
-# ✅ ORDER BROADCASTING
-# ==============================
+# =====================================================
+# ✅ ORDER BROADCASTING (React / DRF Aligned)
+# =====================================================
+
 @receiver(post_save, sender=Order)
 def broadcast_order_update(sender, instance, created, update_fields=None, **kwargs):
 
@@ -30,18 +22,12 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
     if not channel_layer:
         return
 
-    from django.template.loader import render_to_string
-    from .serializers import OrderSerializer
-
-    # ✅ Only react to creation OR status change
+    # ✅ Only trigger on creation or status change
     if not created and update_fields is not None:
         if "status" not in update_fields:
             return
 
-    # ==============================
-    # ✅ SEND TO RESTAURANT DASHBOARD
-    # ==============================
-
+    # ✅ Reload order with relations for full serialization
     order_obj = (
         Order.objects
         .select_related("restaurant", "table", "created_by")
@@ -55,65 +41,59 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
 
     order_data = OrderSerializer(order_obj).data
 
-    async_to_sync(channel_layer.group_send)(
-        f"restaurant_{instance.restaurant_id}",
-        {
-            "type": "order_update",
-            "data": {
-                "type": "order_update",
-                "order": order_data,
-            },
+    # ✅ Universal message format
+    message = {
+        "type": "order_status_update",  # transport layer
+        "data": {
+            "event": "ORDER_STATUS_UPDATED",
+            "order": order_data,
         },
-    )
+    }
 
-    # ==============================
-    # ✅ KITCHEN DISPLAY LOGIC
-    # ==============================
+    restaurant_id = instance.restaurant_id
 
-    kitchen_group = f"kitchen_{instance.restaurant_id}"
+    # ✅ Broadcast to all relevant groups
+    groups = [
+        f"restaurant_{restaurant_id}",
+        f"pos_{restaurant_id}",
+        f"kitchen_{restaurant_id}",
+        f"display_{restaurant_id}",
+    ]
 
-    # ✅ ORDER ENTERS KITCHEN FLOW
+    if instance.table_id:
+        groups.append(f"table_{instance.table_id}")
+
+    for group in groups:
+        async_to_sync(channel_layer.group_send)(group, message)
+
+    # =====================================================
+    # ✅ KITCHEN TICKET FLOW (JSON ONLY — No Templates)
+    # =====================================================
+
+    kitchen_group = f"kitchen_{restaurant_id}"
+
+    # ✅ Order enters kitchen flow
     if instance.status in [
         Order.Status.PLACED,
         Order.Status.IN_PROGRESS,
     ]:
 
-        ticket, ticket_created = KitchenTicket.objects.get_or_create(
-            order=instance
+        ticket, _ = KitchenTicket.objects.get_or_create(order=instance)
+
+        ticket_data = KitchenTicketSerializer(ticket).data
+
+        async_to_sync(channel_layer.group_send)(
+            kitchen_group,
+            {
+                "type": "order_status_update",
+                "data": {
+                    "event": "KITCHEN_TICKET_UPDATED",
+                    "ticket": ticket_data,
+                },
+            },
         )
 
-        if ticket_created:
-            ticket_html = render_to_string(
-                "core/partials/kds_ticket.html",
-                {"ticket": ticket}
-            )
-
-            async_to_sync(channel_layer.group_send)(
-                kitchen_group,
-                {
-                    "type": "kitchen_update",
-                    "data": {
-                        "type": "update_ticket",
-                        "ticket_id": ticket.id,
-                        "ticket_html": ticket_html,
-                    },
-                },
-            )
-
-        else:
-            async_to_sync(channel_layer.group_send)(
-                kitchen_group,
-                {
-                    "type": "status_update",
-                    "data": {
-                        "type": "status_update",
-                        "ticket_id": ticket.id,
-                        "new_status": ticket.status,
-                    },
-                },
-            )
-
-    # ✅ ORDER COMPLETED OR CANCELLED
+    # ✅ Order completed or cancelled
     elif instance.status in [
         Order.Status.COMPLETED,
         Order.Status.CANCELED,
@@ -124,9 +104,9 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
             async_to_sync(channel_layer.group_send)(
                 kitchen_group,
                 {
-                    "type": "kitchen_update",
+                    "type": "order_status_update",
                     "data": {
-                        "type": "remove_ticket",
+                        "event": "KITCHEN_TICKET_REMOVED",
                         "ticket_id": ticket.id,
                     },
                 },
@@ -138,49 +118,19 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
             pass
 
 
+# =====================================================
+# ✅ ORDER ITEM CHANGES → UPDATE KITCHEN (JSON ONLY)
+# =====================================================
 
-
-    # ==============================
-    # ✅ POS SCREENS
-    # ==============================
-
-    async_to_sync(channel_layer.group_send)(
-        f"pos_{instance.restaurant_id}",
-        {
-            "type": "order_status_update",
-            "data": {
-                "type": "order_update",
-                "order": order_data,
-            },
-        },
-    )
-
-    # ==============================
-    # ✅ TABLE SCREEN
-    # ==============================
-
-    if instance.table_id:
-        async_to_sync(channel_layer.group_send)(
-            f"table_{instance.table_id}",
-            {
-                "type": "order_update",
-                "data": {
-                    "type": "order_update",
-                    "order": order_data,
-                },
-            },
-        )
-        
-        
 @receiver([post_save, post_delete], sender=OrderItem)
 def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
 
     order = instance.order
 
-    # Only update active kitchen orders
+    # ✅ Only update active kitchen orders
     if order.status not in [
-        order.Status.PLACED,
-        order.Status.IN_PROGRESS,
+        Order.Status.PLACED,
+        Order.Status.IN_PROGRESS,
     ]:
         return
 
@@ -190,21 +140,20 @@ def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
         return
 
     channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+
     kitchen_group = f"kitchen_{order.restaurant_id}"
 
-    ticket_html = render_to_string(
-        "core/partials/kds_ticket.html",
-        {"ticket": ticket}
-    )
+    ticket_data = KitchenTicketSerializer(ticket).data
 
     async_to_sync(channel_layer.group_send)(
         kitchen_group,
         {
-            "type": "kitchen_update",
+            "type": "order_status_update",
             "data": {
-                "type": "new_ticket",
-                "ticket_id": ticket.id,
-                "ticket_html": ticket_html,
+                "event": "KITCHEN_TICKET_UPDATED",
+                "ticket": ticket_data,
             },
         },
     )
