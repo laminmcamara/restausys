@@ -1,47 +1,104 @@
+// modifierService.js
+import { useAuth } from "../hooks/useAuth"; // Import the custom hook
+
 const API = "http://127.0.0.1:8000/api/v1/manager";
 
-const parseError = async (res, fallbackMessage) => {
-  const data = await res.json().catch(() => null);
+export const createModifierOption = async (payload, accessToken) => {
+    const res = await authFetch(`${API}/modifier-options/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+    });
 
-  if (data?.detail) return data.detail;
-  if (data?.error) return data.error;
-
-  if (typeof data === "object" && data !== null) {
-    const firstKey = Object.keys(data)[0];
-
-    if (firstKey) {
-      const value = data[firstKey];
-
-      if (Array.isArray(value)) {
-        return `${firstKey}: ${value.join(", ")}`;
-      }
-
-      return `${firstKey}: ${value}`;
+    if (!res) {
+        throw new Error("No response from server");
     }
-  }
 
-  return fallbackMessage;
+    if (!res.ok) {
+        throw new Error(await parseError(res, "Failed to create modifier option"));
+    }
+
+    return res.json();
 };
 
-const authFetch = async (url, options = {}, accessToken) => {
-  return fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-  });
+export const updateModifierOption = async (id, payload, accessToken) => {
+    const res = await authFetch(`${API}/modifier-options/${id}/`, {
+        method: "PATCH",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res) {
+        throw new Error("No response from server");
+    }
+
+    if (!res.ok) {
+        throw new Error(await parseError(res, "Failed to update modifier option"));
+    }
+
+    return res.json();
+};
+
+export const deleteModifierOption = async (id, accessToken) => {
+    const res = await authFetch(`${API}/modifier-options/${id}/`, {
+        method: "DELETE",
+        headers: {
+            "Authorization": `Bearer ${accessToken}`,
+        },
+    });
+
+    if (!res) {
+        throw new Error("No response from server");
+    }
+
+    if (!res.ok) {
+        throw new Error(await parseError(res, "Failed to delete modifier option"));
+    }
+
+    return res.status === 204 ? null : res.json().catch(() => null);
 };
 
 export const fetchModifierGroups = async (accessToken) => {
-  const res = await authFetch(`${API}/modifier-groups/`, {}, accessToken);
+    const res = await authFetch(`${API}/modifier-groups/`, {
+        method: "GET",
+        headers: {
+            "Authorization": `Bearer ${accessToken}`,
+        },
+    });
 
-  if (!res) return [];
+    if (!res) {
+        throw new Error("No response from server");
+    }
 
-  if (!res.ok) {
-    throw new Error(await parseError(res, "Failed to fetch modifier groups"));
-  }
+    if (!res.ok) {
+        throw new Error(await parseError(res, "Failed to fetch modifier groups"));
+    }
 
-  return res.json();
+    return res.json();
+};
+
+// New function to delete a modifier group
+export const deleteModifierGroup = async (id, accessToken) => {
+    const res = await authFetch(`${API}/modifier-groups/${id}/`, {
+        method: "DELETE",
+        headers: {
+            "Authorization": `Bearer ${accessToken}`,
+        },
+    });
+
+    if (!res) {
+        throw new Error("No response from server");
+    }
+
+    if (!res.ok) {
+        throw new Error(await parseError(res, "Failed to delete modifier group"));
+    }
+
+    return res.status === 204 ? null : res.json().catch(() => null);
 };

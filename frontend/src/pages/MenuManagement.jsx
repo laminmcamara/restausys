@@ -126,7 +126,10 @@ export default function Products() {
     }
 
     const data = await response.json();
-    setModifierGroups(data);
+
+    console.log("Modifier groups loaded in Products:", data);
+
+    setModifierGroups(Array.isArray(data) ? data : data.results || []);
   };
 
   const handleCreate = async (e) => {
@@ -156,7 +159,7 @@ export default function Products() {
         body: JSON.stringify({
           name: name.trim(),
           base_price: parseFloat(basePrice),
-          category: Number(selectedCategory),
+          category: selectedCategory,
           modifier_group_ids: selectedGroups,
         }),
       });
@@ -228,7 +231,7 @@ export default function Products() {
 
     const groupIds =
       product.modifier_groups?.map((group) =>
-        typeof group === "object" ? group.id : group
+        String(typeof group === "object" ? group.id : group)
       ) || [];
 
     setEditingGroups(groupIds);
@@ -268,7 +271,7 @@ export default function Products() {
         body: JSON.stringify({
           name: editingName.trim(),
           base_price: parseFloat(editingBasePrice),
-          category: Number(editingCategory),
+          category: editingCategory,
           modifier_group_ids: editingGroups,
         }),
       });
@@ -291,21 +294,25 @@ export default function Products() {
   };
 
   const toggleGroup = (id) => {
+    const groupId = String(id);
+
     setSelectedGroups((prev) =>
-      prev.includes(id)
-        ? prev.filter((groupId) => groupId !== id)
-        : [...prev, id]
+      prev.includes(groupId)
+        ? prev.filter((existingId) => existingId !== groupId)
+        : [...prev, groupId]
     );
   };
 
   const toggleEditingGroup = (id) => {
+    const groupId = String(id);
+
     setEditingGroups((prev) =>
-      prev.includes(id)
-        ? prev.filter((groupId) => groupId !== id)
-        : [...prev, id]
+      prev.includes(groupId)
+        ? prev.filter((existingId) => existingId !== groupId)
+        : [...prev, groupId]
     );
   };
-
+  
   if (loading) {
     return (
       <div className="p-8">
@@ -382,7 +389,7 @@ export default function Products() {
                   className="block">
                   <input
                     type="checkbox"
-                    checked={selectedGroups.includes(group.id)}
+                    checked={selectedGroups.includes(String(group.id))}
                     onChange={() => toggleGroup(group.id)}
                     className="mr-2"
                   />
@@ -468,10 +475,10 @@ export default function Products() {
                             key={group.id}
                             className="block">
                             <input
-                              type="checkbox"
-                              checked={editingGroups.includes(group.id)}
-                              onChange={() => toggleEditingGroup(group.id)}
-                              className="mr-2"
+                                type="checkbox"
+                                checked={editingGroups.includes(String(group.id))}
+                                onChange={() => toggleEditingGroup(group.id)}
+                                className="mr-2"
                             />
                             {group.name}
                           </label>

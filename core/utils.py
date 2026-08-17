@@ -7,6 +7,10 @@ import logging
 from babel.numbers import format_currency as babel_format
 from decimal import Decimal, InvalidOperation
 from .models import Order, DailyReport
+from django.utils import timezone
+from core.models import Subscription, Restaurant, Menu
+
+ 
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +206,6 @@ def format_currency(amount, restaurant=None):
         locale=locale
     )
     
-    
-from django.utils import timezone
-from core.models import Subscription
-
 
 def has_active_subscription(restaurant):
     subscription = Subscription.objects.filter(
@@ -223,3 +223,41 @@ def has_active_subscription(restaurant):
             return True
 
     return False
+
+
+def get_accessible_restaurants(user):
+    """
+    Return restaurants the user can access.
+
+    Superusers can access all restaurants.
+    Normal users can access restaurants owned by their company.
+    """
+
+    if user.is_superuser:
+        return Restaurant.objects.all()
+
+    return Restaurant.objects.filter(
+        company__owner=user,
+        company__active=True,
+    )
+
+
+def get_active_menu_for_user(user):
+    """
+    Return active menu for the user.
+
+    Superusers fall back to any active menu.
+    Normal users only get active menu from owned company restaurants.
+    """
+
+    if user.is_superuser:
+        return Menu.objects.filter(
+            is_active=True,
+            restaurant__company__active=True,
+        ).first()
+
+    return Menu.objects.filter(
+        restaurant__company__owner=user,
+        restaurant__company__active=True,
+        is_active=True,
+    ).first()

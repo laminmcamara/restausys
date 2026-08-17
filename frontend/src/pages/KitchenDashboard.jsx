@@ -7,16 +7,20 @@ import {
   Flame,
   PackageCheck,
   AlertTriangle,
+  Receipt,
+  FileText,
 } from "lucide-react";
 import api from "../services/api";
+import PrintPreviewModal from "../components/printing/PrintPreviewModal";
 
 const ORDER_STATUSES = {
   DRAFT: "DRAFT",
   PLACED: "PLACED",
   IN_PROGRESS: "IN_PROGRESS",
   READY: "READY",
+  SERVED: "SERVED",
   COMPLETED: "COMPLETED",
-  CANCELLED: "CANCELLED",
+  CANCELED: "CANCELED",
 };
 
 const TYPE_FILTERS = ["all", "dine_in", "takeout", "delivery"];
@@ -28,11 +32,15 @@ export default function KitchenDashboard() {
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [error, setError] = useState("");
 
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printOrder, setPrintOrder] = useState(null);
+  const [printType, setPrintType] = useState("receipt");
+
   const fetchOrders = async () => {
     try {
       setError("");
 
-      const res = await api.get("/orders/");
+      const res = await api.get("/v1/orders/");
       console.log("KITCHEN ORDERS RESPONSE:", res.data);
 
       const data = Array.isArray(res.data)
@@ -55,6 +63,12 @@ export default function KitchenDashboard() {
 
     return () => clearInterval(interval);
   }, []);
+
+  const openPrintPreview = (order, type) => {
+    setPrintOrder(order);
+    setPrintType(type);
+    setPrintModalOpen(true);
+  };
 
   const visibleOrders = useMemo(() => {
     return orders
@@ -109,7 +123,7 @@ export default function KitchenDashboard() {
       setUpdatingOrderId(order.id);
       setError("");
 
-      await api.patch(`/orders/${order.id}/`, {
+      await api.patch(`/v1/orders/${order.id}/`, {
         status: nextStatus,
       });
 
@@ -130,7 +144,7 @@ export default function KitchenDashboard() {
       setUpdatingOrderId(null);
     }
   };
-
+  
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-gray-500">
@@ -154,7 +168,7 @@ export default function KitchenDashboard() {
             </h1>
           </div>
 
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="mt-1 text-sm text-gray-500">
             Manage live orders from new to ready.
           </p>
         </div>
@@ -236,6 +250,7 @@ export default function KitchenDashboard() {
           onAction={(order) =>
             handleUpdateStatus(order, ORDER_STATUSES.IN_PROGRESS)
           }
+          onPrint={openPrintPreview}
           updatingOrderId={updatingOrderId}
         />
 
@@ -248,6 +263,7 @@ export default function KitchenDashboard() {
           actionLabel="Mark Ready"
           actionIcon={<CheckCircle size={16} />}
           onAction={(order) => handleUpdateStatus(order, ORDER_STATUSES.READY)}
+          onPrint={openPrintPreview}
           updatingOrderId={updatingOrderId}
         />
 
@@ -257,14 +273,20 @@ export default function KitchenDashboard() {
           color="green"
           orders={readyOrders}
           emptyText="No ready orders"
-          actionLabel="Complete"
-          actionIcon={<PackageCheck size={16} />}
-          onAction={(order) =>
-            handleUpdateStatus(order, ORDER_STATUSES.COMPLETED)
-          }
+          actionLabel={null}
+          actionIcon={null}
+          onAction={null}
+          onPrint={openPrintPreview}
           updatingOrderId={updatingOrderId}
         />
       </div>
+
+      <PrintPreviewModal
+        open={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        order={printOrder}
+        type={printType}
+      />
     </div>
   );
 }
@@ -302,6 +324,7 @@ function KitchenColumn({
   actionLabel,
   actionIcon,
   onAction,
+  onPrint,
   updatingOrderId,
 }) {
   const colorClasses = {
@@ -320,7 +343,7 @@ function KitchenColumn({
   };
 
   return (
-    <section className="rounded-2xl border border-gray-200 bg-gray-50 overflow-hidden">
+    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
       <div className={`border-b px-4 py-4 ${colorClasses[color].header}`}>
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -335,7 +358,7 @@ function KitchenColumn({
         </div>
       </div>
 
-      <div className="space-y-4 p-4 min-h-screen">
+      <div className="min-h-screen space-y-4 p-4">
         {orders.length === 0 ? (
           <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white text-sm text-gray-400">
             {emptyText}
@@ -347,7 +370,8 @@ function KitchenColumn({
               order={order}
               actionLabel={actionLabel}
               actionIcon={actionIcon}
-              onAction={() => onAction(order)}
+              onAction={onAction ? () => onAction(order) : null}
+              onPrint={onPrint}
               isUpdating={updatingOrderId === order.id}
             />
           ))
@@ -362,6 +386,7 @@ function KitchenOrderCard({
   actionLabel,
   actionIcon,
   onAction,
+  onPrint,
   isUpdating,
 }) {
   const orderNumber = order.display_id || String(order.id).slice(0, 8);
@@ -478,19 +503,40 @@ function KitchenOrderCard({
       <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3 text-sm">
         <span className="text-gray-500">Total</span>
         <span className="font-bold text-gray-900">
-          ${Number(order.total_price || 0).toFixed(2)}
+          ${Number(order.total_price || order.total || 0).toFixed(2)}
         </span>
       </div>
 
+      {/* Print Buttons */}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => onPrint(order, "bill")}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50">
+          <FileText size={16} />
+          Bill
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onPrint(order, "receipt")}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50">
+          <Receipt size={16} />
+          Receipt
+        </button>
+      </div>
+
       {/* Action */}
-      <button
-        type="button"
-        onClick={onAction}
-        disabled={isUpdating}
-        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-3 text-sm font-bold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60">
-        {actionIcon}
-        {isUpdating ? "Updating..." : actionLabel}
-      </button>
+      {onAction && actionLabel && (
+        <button
+          type="button"
+          onClick={onAction}
+          disabled={isUpdating}
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-3 text-sm font-bold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60">
+          {actionIcon}
+          {isUpdating ? "Updating..." : actionLabel}
+        </button>
+      )}
     </article>
   );
 }
@@ -498,7 +544,11 @@ function KitchenOrderCard({
 /* ================= Helpers ================= */
 
 function normalizeStatus(status) {
-  return String(status || "").toUpperCase();
+  const normalized = String(status || "").toUpperCase();
+
+  if (normalized === "CANCELLED") return "CANCELED";
+
+  return normalized;
 }
 
 function normalizeItems(order) {
@@ -584,7 +634,7 @@ function isRecentKitchenOrder(order) {
 
   const ageHours = (Date.now() - createdTime) / (1000 * 60 * 60);
 
-  // For testing, 72 hours keeps your Aug 2 orders visible on Aug 4.
+  // For testing, 72 hours keeps recent test orders visible.
   // In production, change this to 24.
   return ageHours <= 72;
 }

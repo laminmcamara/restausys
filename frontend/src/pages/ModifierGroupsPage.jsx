@@ -2,23 +2,31 @@ import React, { useEffect, useState } from "react";
 import ModifierGroupForm from "../components/modifiers/ModifierGroupForm";
 import ModifierGroupList from "../components/modifiers/ModifierGroupList";
 import { fetchModifierGroups } from "../services/modifierService";
+import { useAuth } from "../hooks/useAuth";
 
-const ModifierGroupsPage = () => {
+
+
+const ModifierGroups = () => {
+  const { accessToken, refreshAccessToken, logout } = useAuth();
+
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
-  const token = localStorage.getItem("access");
 
   const loadGroups = async () => {
+    if (!accessToken) return;
+
+    setLoading(true);
+
     try {
       const data = await fetchModifierGroups(
         accessToken,
         refreshAccessToken,
         logout
       );
-      
-      setGroups(data);
+
+      setGroups(Array.isArray(data) ? data : data.results || []);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to load modifier groups:", err);
     } finally {
       setLoading(false);
     }
@@ -26,7 +34,7 @@ const ModifierGroupsPage = () => {
 
   useEffect(() => {
     loadGroups();
-  }, []);
+  }, [accessToken]);
 
   if (loading) return <p>Loading modifier groups...</p>;
 
@@ -35,17 +43,17 @@ const ModifierGroupsPage = () => {
       <h1 className="text-2xl font-semibold mb-6">Modifier Groups</h1>
 
       <ModifierGroupForm
-        token={token}
+        token={accessToken}
         onSuccess={loadGroups}
       />
 
       <ModifierGroupList
         groups={groups}
-        token={token}
+        token={accessToken}
         onRefresh={loadGroups}
       />
     </div>
   );
 };
 
-export default ModifierGroupsPage;
+export default ModifierGroups;

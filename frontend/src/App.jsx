@@ -3,9 +3,11 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { useAuth } from "./hooks/useAuth";
 
+import HomePage from "./pages/HomePage";
 import Login from "./pages/Login";
 import DashboardLayout from "./layout/DashboardLayout";
 import PickupDisplay from "./pages/PickupDisplay";
+import OnboardingPage from "./pages/OnboardingPage";
 
 function ProtectedRoute({ children }) {
   const { accessToken, authLoading } = useAuth();
@@ -30,9 +32,22 @@ function App() {
   return (
     <AuthProvider>
       <Routes>
+        {/* Public homepage */}
         <Route
           path="/"
+          element={<HomePage />}
+        />
+
+        {/* Public login page */}
+        <Route
+          path="/login"
           element={<Login />}
+        />
+
+        {/* Public onboarding page */}
+        <Route
+          path="/onboarding"
+          element={<OnboardingPage />}
         />
 
         {/* Public pickup display */}
@@ -51,6 +66,17 @@ function App() {
           }
         />
 
+        {/* Manager area - protected */}
+        <Route
+          path="/manager/*"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Fallback */}
         <Route
           path="*"
           element={

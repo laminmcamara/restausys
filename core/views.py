@@ -7,8 +7,10 @@ from django.http import HttpResponseForbidden
 from django.contrib.auth.views import LoginView, LogoutView
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+import qrcode
 
-
+from io import BytesIO
+from .utils import get_accessible_restaurants
 from django.contrib.auth import logout
 from django.contrib import messages
 from django.contrib.auth import views as auth_views
@@ -20,6 +22,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.http import Http404
 from django.urls import reverse_lazy
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.views import View
 from .forms import StaffCreateForm
 from django.views.decorators.http import require_POST, require_GET
@@ -37,8 +40,7 @@ from core.mixins import (
 )
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.template.loader import render_to_string
-from django.db.models import Sum, Count, Prefetch, Exists, OuterRef, Subquery, DecimalField  
-
+from django.db.models import Sum, Count, Avg, Prefetch, Exists, OuterRef, Subquery, DecimalField
 from django.db.models.functions import TruncDate, TruncHour, Coalesce
 from core.utils import has_active_subscription
 
@@ -71,17 +73,26 @@ from django.views.generic import UpdateView
 from core.tenant import TenantModelViewSet
 from .forms import ProductForm
 from functools import wraps
-
+from rest_framework import viewsets, permissions
+from .models import Printer, PrintJob
+from .serializers import PrinterSerializer, PrintJobSerializer
+from core.services.printer_service import create_kitchen_print_job
 # CORE IMPORTS
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift, Subscription
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift, Subscription, Customer
 
 )
 from .serializers import (
     OrderSerializer, OrderItemSerializer,
     CategorySerializer, ProductSerializer,
-    TableSerializer, PaymentSerializer, CustomUserSerializer, MenuSerializer, ModifierOptionSerializer,  ModifierGroupSerializer, SubscriptionSerializer, MenuSerializer 
+    TableSerializer, PaymentSerializer, CustomUserSerializer, MenuSerializer, ModifierOptionSerializer,  ModifierGroupSerializer, SubscriptionSerializer, MenuSerializer, SettingsSerializer, StaffUserSerializer,
+    StaffCreateSerializer,
+    StaffUpdateSerializer,
+    CustomerSerializer,
+    InventoryItemSerializer,
+    DiscountSerializer,
+ 
 )
 from .permissions import IsStaffOfRestaurant, HasActiveSubscription
 from django.contrib.auth import get_user_model
@@ -91,6 +102,7 @@ from asgiref.sync import async_to_sync
 from django.db.models.functions import ExtractHour
 from django.db import transaction
 import stripe
+from django.core.files.base import ContentFile
 
 from django.contrib.auth import login
 from .forms import RestaurantRegistrationForm
@@ -209,6 +221,26 @@ class MeView(APIView):
     def get(self, request):
         serializer = CustomUserSerializer(request.user)
         return Response(serializer.data)
+    
+    
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def api_home(request):
+    return Response({
+        "message": "Restaurant Management API",
+        "status": "ok",
+        "version": "v1",
+        "endpoints": {
+            "auth": {
+                "token": "/api/token/",
+                "refresh": "/api/token/refresh/",
+                "me": "/api/me/",
+            },
+            "api": "/api/v1/",
+            "public_menus": "/api/v1/public/<restaurant_id>/menus/",
+            "subscription": "/api/subscription/",
+        }
+    })
     
 # ======================================================================
 # POS DASHBOARD (ROLE-DRIVEN + PROTECTED)
@@ -1331,7 +1363,37 @@ class TableViewSet(TenantModelViewSet):
     permission_classes = [IsAuthenticated, IsStaffOfRestaurant]
 
     def get_queryset(self):
-        restaurant = self.request.user.restaurant
+        restaurants = get_accessible_restaurants(self.request.user)
+        user = self.request.user
+
+        if user.is_superuser:
+            restaurant_id = self.request.query_params.get("restaurant")
+
+            tables = Table.objects.all()
+
+            if restaurant_id:
+                tables = tables.filter(restaurant_id=restaurant_id)
+
+            active_session_qs = TableSession.objects.filter(
+                table=OuterRef("pk"),
+                is_active=True
+            )
+
+            return (
+                tables
+                .annotate(
+                    has_active_session=Exists(active_session_qs),
+                    active_session_id=Subquery(
+                        active_session_qs.values("id")[:1]
+                    )
+                )
+                .order_by("restaurant_id", "table_number")
+            )
+
+        restaurant = getattr(user, "restaurant", None)
+
+        if restaurant is None:
+            return Table.objects.none()
 
         active_session_qs = TableSession.objects.filter(
             table=OuterRef("pk"),
@@ -1350,7 +1412,28 @@ class TableViewSet(TenantModelViewSet):
             )
             .order_by("table_number")
         )
-        
+
+    @action(detail=True, methods=["post"])
+    def generate_qr(self, request, pk=None):
+        table = self.get_object()
+
+        qr_url = f"http://127.0.0.1:3000/menu/{table.id}"
+
+        qr = qrcode.make(qr_url)
+        buffer = BytesIO()
+        qr.save(buffer, format="PNG")
+
+        file_name = f"table_{table.id}_qr.png"
+
+        table.qr_code.save(
+            file_name,
+            ContentFile(buffer.getvalue()),
+            save=True
+        )
+
+        return Response({"message": "QR generated successfully"})
+    
+    
 # TODO: Remove when staff dashboard fully API-driven      
 class TableCreateView(LoginRequiredMixin, CreateView):
     model = Table
@@ -1423,35 +1506,67 @@ class OrderViewSet(TenantModelViewSet):
     # -------------------------------------------------
 
     def get_queryset(self):
-        restaurant = getattr(self.request.user, "restaurant", None)
-        if not restaurant:
+        restaurants = get_accessible_restaurants(self.request.user)
+        user = self.request.user
+
+        qs = Order.objects.select_related(
+            "restaurant",
+            "table",
+            "session",
+            "created_by",
+        ).prefetch_related(
+            "items",
+            "items__product",
+            "items__modifiers",
+        ).order_by("-created_at")
+
+        if user.is_superuser:
+            return qs
+
+        restaurant = getattr(user, "restaurant", None)
+
+        if restaurant is None:
             return Order.objects.none()
 
-        return Order.objects.filter(restaurant=restaurant)
+        return qs.filter(restaurant=restaurant)
 
     # -------------------------------------------------
     # ✅ CREATE ORDER
     # -------------------------------------------------
 
     def perform_create(self, serializer):
-        restaurant = getattr(self.request.user, "restaurant", None)
-        if not restaurant:
-            raise PermissionDenied("No restaurant assigned.")
+        user = self.request.user
+
+        if user.is_superuser:
+            table = serializer.validated_data.get("table")
+            restaurant = serializer.validated_data.get("restaurant", None)
+
+            if restaurant is None and table is not None:
+                restaurant = table.restaurant
+
+            if restaurant is None:
+                raise PermissionDenied("Restaurant or table required for superuser.")
+        else:
+            restaurant = getattr(user, "restaurant", None)
+
+            if not restaurant:
+                raise PermissionDenied("No restaurant assigned.")
 
         order = serializer.save(
             restaurant=restaurant,
-            created_by=self.request.user
+            created_by=user
         )
 
         broadcast_order_update(order)
-
+        
+        
     # -------------------------------------------------
     # ✅ OPEN OR CREATE DRAFT ORDER
     # -------------------------------------------------
 
     @action(detail=False, methods=["post"])
     def open_or_create(self, request):
-        table_id = request.data.get("table_id")
+        table_id = request.data.get("table_id") or request.data.get("table")
 
         if not table_id:
             return Response(
@@ -1459,21 +1574,32 @@ class OrderViewSet(TenantModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        restaurant = getattr(request.user, "restaurant", None)
-        if not restaurant:
-            return Response(
-                {"error": "No restaurant assigned."},
-                status=status.HTTP_403_FORBIDDEN
+        user = request.user
+
+        if user.is_superuser:
+            # For superuser, derive the restaurant from the selected table.
+            table = get_object_or_404(
+                Table.objects.select_related("restaurant"),
+                id=table_id,
+            )
+            restaurant = table.restaurant
+        else:
+            restaurant = getattr(user, "restaurant", None)
+
+            if not restaurant:
+                return Response(
+                    {"error": "No restaurant assigned."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Tenant safety: non-superusers can only open orders for their own restaurant tables.
+            table = get_object_or_404(
+                Table,
+                id=table_id,
+                restaurant=restaurant
             )
 
-        # Ensure table belongs to this restaurant
-        table = get_object_or_404(
-            Table,
-            id=table_id,
-            restaurant=restaurant
-        )
-
-        # Check existing draft
+        # Check existing draft order for this table
         order = Order.objects.filter(
             table=table,
             restaurant=restaurant,
@@ -1484,11 +1610,14 @@ class OrderViewSet(TenantModelViewSet):
             serializer = self.get_serializer(order)
             return Response(serializer.data)
 
-        # Ensure active session
+        # Ensure active table session
         session, _ = TableSession.objects.get_or_create(
             table=table,
             restaurant=restaurant,
             is_active=True,
+            defaults={
+                "opened_by": user,
+            } if any(f.name == "opened_by" for f in TableSession._meta.fields) else {}
         )
 
         # Create new draft order
@@ -1498,17 +1627,18 @@ class OrderViewSet(TenantModelViewSet):
             session=session,
             order_type=Order.OrderType.DINE_IN,
             status=Order.Status.DRAFT,
-            created_by=request.user,
+            created_by=user,
         )
 
         serializer = self.get_serializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     # -------------------------------------------------
-    # ✅ SEND TO KITCHEN (DRAFT → PLACED)
+    # ✅ SEND TO KITCHEN (DRAFT → PLACED + CREATE PRINT JOB)
     # -------------------------------------------------
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def send_to_kitchen(self, request, pk=None):
         order = self.get_object()
 
@@ -1518,12 +1648,28 @@ class OrderViewSet(TenantModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        order.transition_to(Order.Status.PLACED, actor=request.user)
+        # Recalculate saved backend totals before sending to kitchen
+        order.calculate_totals()
+        order.refresh_from_db()
 
+        # Move order from DRAFT to PLACED
+        order.transition_to(Order.Status.PLACED, actor=request.user)
+        order.refresh_from_db()
+
+        # Create kitchen print job
+        print_job = create_kitchen_print_job(order)
+
+        # Broadcast update to POS/Kitchen dashboards
         broadcast_order_update(order)
 
         serializer = self.get_serializer(order)
-        return Response(serializer.data)
+        data = serializer.data
+
+        # Optional extra info for frontend/debugging
+        data["print_job_id"] = print_job.id
+        data["printer"] = str(print_job.printer) if print_job.printer else None
+
+        return Response(data)
 
     # -------------------------------------------------
     # ✅ KITCHEN: START PREPARING (PLACED → IN_PROGRESS)
@@ -1608,6 +1754,76 @@ class OrderViewSet(TenantModelViewSet):
 
         serializer = self.get_serializer(order)
         return Response(serializer.data)
+    
+    
+class MarkOrderPaidView(APIView):
+    """
+    POST /api/v1/orders/<order_id>/mark-paid/
+
+    Marks an order as paid and creates/updates the Payment record.
+
+    Request body:
+    {
+        "payment_method": "cash"
+    }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        restaurant = get_user_restaurant(request.user)
+        if not restaurant:
+            return Response(
+                {"detail": "No restaurant associated with your account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            order = Order.objects.get(id=order_id, restaurant=restaurant)
+        except Order.DoesNotExist:
+            return Response(
+                {"detail": "Order not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        payment_method = request.data.get("payment_method", "cash")
+
+        # Validate payment method
+        valid_methods = ["cash", "card", "mobile", "online"]
+        if payment_method not in valid_methods:
+            return Response(
+                {"detail": f"Invalid payment method. Use: {', '.join(valid_methods)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Import your existing Payment model
+        from .models import Payment
+
+        # Create or update the payment record
+        payment, created = Payment.objects.get_or_create(
+            order=order,
+            restaurant=restaurant,
+            defaults={
+                "amount": order.total,
+                "payment_method": payment_method,
+                "status": "paid",  # Adjust to match your Payment status choices
+            },
+        )
+
+        if not created:
+            payment.status = "paid"  # Adjust to match your Payment status choices
+            payment.payment_method = payment_method
+            payment.save()
+
+        # Update order status if your Order model has a status field
+        if hasattr(order, "status"):
+            order.status = "paid"  # Adjust to match your order status choices
+            order.save()
+
+        return Response(
+            {"detail": "Order marked as paid.", "order_id": order.id, "payment_method": payment_method},
+            status=status.HTTP_200_OK,
+        )
 
     # -------------------------------------------------
     # ✅ MANAGER: COMPLETE ORDER (SERVED + PAID → COMPLETED)
@@ -1629,8 +1845,7 @@ class OrderViewSet(TenantModelViewSet):
 
         serializer = self.get_serializer(order)
         return Response(serializer.data)
-    
-    
+
     # -------------------------------------------------
     # ✅ KITCHEN DASHBOARD LIST (PLACED + IN_PROGRESS)
     # -------------------------------------------------
@@ -1639,7 +1854,7 @@ class OrderViewSet(TenantModelViewSet):
     def kitchen(self, request):
         restaurant = getattr(request.user, "restaurant", None)
         if not restaurant:
-            return Response([], status=200)
+            return Response([], status=status.HTTP_200_OK)
 
         orders = Order.objects.filter(
             restaurant=restaurant,
@@ -1651,43 +1866,102 @@ class OrderViewSet(TenantModelViewSet):
 
         serializer = self.get_serializer(orders, many=True)
         return Response(serializer.data)
-
+    
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return OrderItem.objects.filter(
-            order__restaurant=self.request.user.restaurant
-        )
+        user = self.request.user
+
+        qs = OrderItem.objects.select_related(
+            "order",
+            "order__restaurant",
+            "product",
+        ).prefetch_related("modifiers")
+
+        if user.is_superuser:
+            return qs
+
+        restaurant = getattr(user, "restaurant", None)
+
+        if restaurant is None:
+            return OrderItem.objects.none()
+
+        return qs.filter(order__restaurant=restaurant)
 
     def perform_create(self, serializer):
+        user = self.request.user
         order_id = self.request.data.get("order")
 
         if not order_id:
             raise ValidationError({"order": "Order ID is required."})
 
-        order = get_object_or_404(
-            Order,
-            id=order_id,
-            restaurant=self.request.user.restaurant,
-        )
+        if user.is_superuser:
+            order = get_object_or_404(
+                Order,
+                id=order_id,
+            )
+        else:
+            restaurant = getattr(user, "restaurant", None)
 
-        serializer.save(order=order)
+            if restaurant is None:
+                raise PermissionDenied("No restaurant assigned.")
 
+            order = get_object_or_404(
+                Order,
+                id=order_id,
+                restaurant=restaurant,
+            )
 
+        item = serializer.save(order=order)
+
+        order.calculate_totals()
+
+    def perform_update(self, serializer):
+        item = serializer.save()
+
+        # Recalculate order totals after changing quantity/item fields
+        item.order.calculate_totals()
+
+    def perform_destroy(self, instance):
+        order = instance.order
+        instance.delete()
+
+        # Recalculate order totals after removing an item
+        order.calculate_totals()
+        
+        
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return (
+        user = self.request.user
+
+        qs = (
             Category.objects
-            .filter(menu__restaurant=self.request.user.restaurant)
-            .select_related("menu", "parent")
+            .filter(
+                is_active=True,
+                menu__is_active=True,
+                menu__restaurant__company__active=True,
+            )
+            .select_related(
+                "menu",
+                "parent",
+                "menu__restaurant",
+                "menu__restaurant__company",
+            )
             .prefetch_related("products")
+            .order_by("display_order", "name")
         )
-        
+
+        if user.is_superuser:
+            return qs
+
+        return qs.filter(
+            menu__restaurant__company__owner=user
+        )
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
@@ -1696,39 +1970,62 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ["name"]
 
     def get_queryset(self):
-        return (
-        Product.objects
-        .filter(
-            category__menu__restaurant=self.request.user.restaurant,
-            is_available=True
+        user = self.request.user
+
+        qs = (
+            Product.objects
+            .filter(
+                is_available=True,
+                category__is_active=True,
+                category__menu__is_active=True,
+            )
+            .select_related("category", "category__menu")
+            .prefetch_related("modifier_groups__options")
+            .order_by("category__display_order", "display_order", "name")
         )
-        .select_related("category", "category__menu")
-        .prefetch_related("modifier_groups__options")
-        )
+
+        if user.is_superuser:
+            return qs
+
+        restaurant = getattr(user, "restaurant", None)
+
+        if restaurant is None:
+            return Product.objects.none()
+
+        return qs.filter(category__menu__restaurant=restaurant)
+    
 
 class ManagerCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         return Category.objects.filter(
             menu__restaurant=self.request.user.restaurant
-        )
+        ).order_by("display_order", "name")
 
     def perform_create(self, serializer):
-        menu = serializer.validated_data["menu"]
+        restaurant = self.request.user.restaurant
 
-        if menu.restaurant != self.request.user.restaurant:
-            raise PermissionDenied("Invalid menu for this restaurant.")
+        menu = serializer.validated_data.get("menu")
 
-        serializer.save()
+        if menu:
+            if menu.restaurant != restaurant:
+                raise PermissionDenied(
+                    "You cannot add categories to another restaurant's menu."
+                )
+        else:
+            menu = Menu.objects.filter(
+                restaurant=restaurant
+            ).first()
 
-    
-# ==============================================================
-# ================== PRODUCT UPDATE ============================
-# ==============================================================
+            if not menu:
+                menu = Menu.objects.create(
+                    restaurant=restaurant,
+                    name="Default Menu"
+                )
 
-
+        serializer.save(menu=menu)
     
 # ==============================================================
 # ================== PRODUCT DELETE ============================
@@ -1836,23 +2133,27 @@ class PosMenuViewSet(viewsets.ReadOnlyModelViewSet):
     ]
 
     def get_queryset(self):
-        restaurant = self.request.user.restaurant
+        user = self.request.user
 
-        return (
+        qs = (
             Menu.objects
-            .filter(
-                restaurant=restaurant,
-                is_active=True
-            )
+            .filter(is_active=True)
             .prefetch_related(
                 "categories",
                 "categories__products",
             )
         )
-        
-        
-from rest_framework.exceptions import PermissionDenied
 
+        if user.is_superuser:
+            return qs
+
+        restaurant = getattr(user, "restaurant", None)
+
+        if restaurant is None:
+            return Menu.objects.none()
+
+        return qs.filter(restaurant=restaurant)
+    
 class ManagerModifierGroupViewSet(viewsets.ModelViewSet):
     serializer_class = ModifierGroupSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrManager]
@@ -1933,17 +2234,26 @@ class PosDataView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        restaurant = request.user.restaurant
+        user = request.user
 
-        orders = Order.objects.filter(
-            restaurant=restaurant,
-            status__in=["pending", "preparing"]
-        ).order_by("-created_at")
+        if user.is_superuser:
+            orders = Order.objects.filter(
+                status__in=["pending", "preparing"]
+            ).order_by("-created_at")
+        else:
+            restaurant = getattr(user, "restaurant", None)
+
+            if restaurant is None:
+                return Response([])
+
+            orders = Order.objects.filter(
+                restaurant=restaurant,
+                status__in=["pending", "preparing"]
+            ).order_by("-created_at")
 
         serializer = OrderSerializer(orders, many=True)
 
         return Response(serializer.data)
-
 
 @login_required
 def order_receipt(request, pk):
@@ -2008,21 +2318,24 @@ def complete_order(request, pk):
 @require_POST
 @transaction.atomic
 def send_to_kitchen(request, pk):
-
     order = get_object_or_404(
         Order.objects.select_for_update(),
         pk=pk,
         restaurant=request.user.restaurant
     )
 
+    if order.status != Order.Status.DRAFT:
+        return redirect("core:pos", order_id=order.pk)
+
+    order.calculate_totals()
+    order.refresh_from_db()
+
     order.transition_to(Order.Status.PLACED, actor=request.user)
+    order.refresh_from_db()
+
+    create_kitchen_print_job(order)
 
     return redirect("core:pos", order_id=order.pk)
-
-
-# kitchen/views.py
-
-
 
 
 @login_required
@@ -2414,17 +2727,20 @@ def mock_activate_subscription(request):
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated])
 def settings_api(request):
-
     restaurant = getattr(request.user, "restaurant", None)
 
     if not restaurant:
         raise PermissionDenied("SaaS admin cannot edit restaurant settings.")
 
+    if hasattr(request.user, "role"):
+        if request.user.role not in ["OWNER", "MANAGER"]:
+            raise PermissionDenied("Only owners and managers can edit restaurant settings.")
+
     settings_obj, _ = Settings.objects.get_or_create(
         restaurant=restaurant,
         defaults={
             "restaurant_display_name": restaurant.name,
-        }
+        },
     )
 
     if request.method == "GET":
@@ -2435,7 +2751,7 @@ def settings_api(request):
         serializer = SettingsSerializer(
             settings_obj,
             data=request.data,
-            partial=True
+            partial=True,
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -2914,35 +3230,7 @@ class TableOverviewView(LoginRequiredMixin, TemplateView):
 
         return context
     
-class TableViewSet(viewsets.ModelViewSet):
-    serializer_class = TableSerializer
-    permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return Table.objects.filter(
-            restaurant=self.request.user.restaurant
-        )
-
-    @action(detail=True, methods=["post"])
-    def generate_qr(self, request, pk=None):
-        table = self.get_object()
-
-        qr_url = f"http://127.0.0.1:3000/menu/{table.id}"
-
-        qr = qrcode.make(qr_url)
-        buffer = BytesIO()
-        qr.save(buffer, format="PNG")
-
-        file_name = f"table_{table.id}_qr.png"
-
-        table.qr_code.save(
-            file_name,
-            ContentFile(buffer.getvalue()),
-            save=True
-        )
-
-        return Response({"message": "QR generated successfully"})
-    
 @login_required
 def dashboard_table_open(request, table_id):
 
@@ -3426,35 +3714,107 @@ def shift_z_report_print(request, shift_id):
     
 
 
-@login_required
-def create_staff(request):
-    if not request.user.can_manage_staff:
-        raise PermissionDenied("You are not allowed to create staff.")
-    
+def get_request_restaurant(request):
+    restaurant = getattr(request.user, "restaurant", None)
+
+    if restaurant:
+        return restaurant
+
+    raise PermissionDenied("No restaurant is linked to this account.")
+
+
+def ensure_can_manage_staff(request):
+    if not getattr(request.user, "can_manage_staff", False):
+        raise PermissionDenied("You do not have permission to manage staff.")
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def staff_list_create_api(request):
+    restaurant = get_request_restaurant(request)
+
+    if request.method == "GET":
+        staff = User.objects.filter(
+            restaurant=restaurant
+        ).exclude(
+            role=User.Roles.CUSTOMER
+        ).order_by("first_name", "last_name", "email")
+
+        serializer = StaffUserSerializer(
+            staff,
+            many=True,
+            context={"request": request},
+        )
+        return Response(serializer.data)
+
     if request.method == "POST":
-        form = StaffCreateForm(request.POST, current_user=request.user)
-        if form.is_valid():
-            form.save(restaurant=request.user.restaurant)
-            return redirect("staff_list")
-    else:
-        form = StaffCreateForm(current_user=request.user)
+        ensure_can_manage_staff(request)
 
-    return render(request, "core/create_staff.html", {"form": form})
+        serializer = StaffCreateSerializer(
+            data=request.data,
+            context={"restaurant": restaurant},
+        )
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
 
-@login_required
-def staff_list(request):
-    if not request.user.can_manage_staff:
-        raise PermissionDenied()
+        response_serializer = StaffUserSerializer(
+            user,
+            context={"request": request},
+        )
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    
+    
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def staff_detail_api(request, pk):
+    restaurant = get_request_restaurant(request)
 
-    staff = User.objects.filter(
-        restaurant=request.user.restaurant,
-        is_superuser=False,
-        is_platform_owner=False
-    )
-    return render(request, "core/staff_list.html", {
-        "staff": staff
-    })
+    try:
+        staff_user = User.objects.get(
+            pk=pk,
+            restaurant=restaurant,
+        )
+    except User.DoesNotExist:
+        raise NotFound("Staff user not found.")
 
+    if staff_user.role == User.Roles.CUSTOMER:
+        raise NotFound("Staff user not found.")
+
+    if request.method == "GET":
+        serializer = StaffUserSerializer(
+            staff_user,
+            context={"request": request},
+        )
+        return Response(serializer.data)
+
+    ensure_can_manage_staff(request)
+
+    if request.method == "PATCH":
+        serializer = StaffUpdateSerializer(
+            staff_user,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        updated_user = serializer.save()
+
+        response_serializer = StaffUserSerializer(
+            updated_user,
+            context={"request": request},
+        )
+        return Response(response_serializer.data)
+
+    if request.method == "DELETE":
+        if staff_user.id == request.user.id:
+            raise PermissionDenied("You cannot deactivate your own account.")
+
+        staff_user.is_active = False
+        staff_user.save()
+
+        return Response(
+            {"detail": "Staff account deactivated."},
+            status=status.HTTP_200_OK,
+        )
 
 @login_required
 def manage_products(request):
@@ -3914,3 +4274,383 @@ def register_restaurant(request):
 
 def subscription_expired(request):
     return render(request, "core/subscription_expired.html")
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@transaction.atomic
+def register_restaurant_api(request):
+    form = RestaurantRegistrationForm(request.data)
+
+    if not form.is_valid():
+        return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    email = form.cleaned_data["email"]
+    password = form.cleaned_data["password"]
+    restaurant_name = form.cleaned_data["restaurant_name"]
+
+    # 1. Create Company
+    company = Company.objects.create(
+        name=restaurant_name
+    )
+
+    # 2. Create Restaurant
+    restaurant = Restaurant.objects.create(
+        company=company,
+        name=restaurant_name,
+        address_line_1="Not Provided",
+        city="Not Provided",
+        country="Not Provided",
+        timezone="UTC",
+        currency="USD",
+    )
+
+    # 3. Create User
+    user = CustomUser(
+        username=email,
+        email=email,
+        role=CustomUser.Roles.MANAGER,
+        restaurant=restaurant,
+    )
+    user.set_password(password)
+    user.save()
+
+    # 4. Create Trial Subscription
+    subscription = Subscription.objects.create(
+        restaurant=restaurant,
+        plan_name="Trial",
+        end_date=now().date() + timedelta(days=14)
+    )
+
+    # 5. Create JWT tokens
+    refresh = RefreshToken.for_user(user)
+
+    return Response(
+        {
+            "message": "Registration successful.",
+            "company": {
+                "id": company.id,
+                "name": company.name,
+            },
+            "restaurant": {
+                "id": restaurant.id,
+                "name": restaurant.name,
+            },
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role,
+            },
+            "subscription": {
+                "id": subscription.id,
+                "plan_name": subscription.plan_name,
+                "end_date": subscription.end_date,
+            },
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def reports_summary(request):
+    from .models import Order, OrderItem, Table
+
+    restaurants = get_accessible_restaurants(request.user)
+
+    today = timezone.localdate()
+
+    default_start = today - timedelta(days=6)
+    start_date = parse_date(request.GET.get("start_date", "")) or default_start
+    end_date = parse_date(request.GET.get("end_date", "")) or today
+
+    month_start = today.replace(day=1)
+
+    selected_orders = Order.objects.filter(
+        restaurant__in=restaurants,
+        created_at__date__gte=start_date,
+        created_at__date__lte=end_date,
+    )
+
+    selected_completed_orders = selected_orders.filter(status__iexact="completed")
+
+    monthly_orders_queryset = Order.objects.filter(
+        restaurant__in=restaurants,
+        created_at__date__gte=month_start,
+        created_at__date__lte=today,
+    )
+
+    monthly_completed_orders = monthly_orders_queryset.filter(status__iexact="completed")
+
+    weekly_sales = selected_completed_orders.aggregate(
+        total=Sum("total")
+    )["total"] or 0
+
+    weekly_orders = selected_orders.count()
+
+    monthly_sales = monthly_completed_orders.aggregate(
+        total=Sum("total")
+    )["total"] or 0
+
+    monthly_orders = monthly_orders_queryset.count()
+
+    average_order_value = selected_completed_orders.aggregate(
+        avg=Avg("total")
+    )["avg"] or 0
+
+    active_tables = Table.objects.filter(
+        restaurant__in=restaurants,
+        status__in=["occupied", "reserved"],
+    ).count()
+
+    sales_by_day_queryset = (
+        selected_completed_orders
+        .annotate(day=TruncDate("created_at"))
+        .values("day")
+        .annotate(sales=Sum("total"))
+        .order_by("day")
+    )
+
+    sales_by_day = [
+        {
+            "date": item["day"].strftime("%a"),
+            "sales": float(item["sales"] or 0),
+        }
+        for item in sales_by_day_queryset
+    ]
+
+    orders_by_status_queryset = (
+        selected_orders
+        .values("status")
+        .annotate(value=Count("id"))
+        .order_by("status")
+    )
+
+    orders_by_status = [
+        {
+            "name": item["status"].capitalize() if item["status"] else "Unknown",
+            "value": item["value"],
+        }
+        for item in orders_by_status_queryset
+    ]
+
+    top_items_queryset = (
+        OrderItem.objects
+        .filter(order__in=selected_completed_orders)
+        .values("product__name")
+        .annotate(
+            quantity=Sum("quantity"),
+            revenue=Sum("final_price"),
+        )
+        .order_by("-quantity")[:10]
+    )
+
+    top_items = [
+        {
+            "name": item["product__name"] or "Unknown Item",
+            "quantity": item["quantity"] or 0,
+            "revenue": float(item["revenue"] or 0),
+        }
+        for item in top_items_queryset
+    ]
+    
+    recent_orders_queryset = (
+        selected_orders
+        .select_related("table")
+        .order_by("-created_at")[:10]
+    )
+
+    recent_orders = [
+        {
+            "id": order.id,
+            "table": str(order.table) if order.table else "Takeaway",
+            "status": order.status,
+            "total": float(order.total or 0),
+            "created_at": timezone.localtime(order.created_at).strftime("%Y-%m-%d %H:%M"),
+        }
+        for order in recent_orders_queryset
+    ]
+
+    return Response({
+        "summary": {
+            "weekly_sales": float(weekly_sales),
+            "monthly_sales": float(monthly_sales),
+            "weekly_orders": weekly_orders,
+            "monthly_orders": monthly_orders,
+            "average_order_value": float(average_order_value),
+            "active_tables": active_tables,
+        },
+        "sales_by_day": sales_by_day,
+        "orders_by_status": orders_by_status,
+        "top_items": top_items,
+        "staff_performance": [],
+        "recent_orders": recent_orders,
+    })
+
+class PrinterViewSet(viewsets.ModelViewSet):
+    queryset = Printer.objects.all()
+    serializer_class = PrinterSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Printer.objects.all()
+
+        printer_type = self.request.query_params.get("printer_type")
+        is_active = self.request.query_params.get("is_active")
+
+        if printer_type:
+            queryset = queryset.filter(printer_type=printer_type.upper())
+
+        if is_active is not None:
+            if is_active.lower() in ["true", "1", "yes"]:
+                queryset = queryset.filter(is_active=True)
+            elif is_active.lower() in ["false", "0", "no"]:
+                queryset = queryset.filter(is_active=False)
+
+        return queryset
+
+
+class PrintJobViewSet(viewsets.ModelViewSet):
+    queryset = PrintJob.objects.select_related("order", "printer").all()
+    serializer_class = PrintJobSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = PrintJob.objects.select_related("order", "printer").all()
+
+        status_value = self.request.query_params.get("status")
+        job_type = self.request.query_params.get("job_type")
+        order_id = self.request.query_params.get("order")
+
+        if status_value:
+            queryset = queryset.filter(status=status_value.upper())
+
+        if job_type:
+            queryset = queryset.filter(job_type=job_type.upper())
+
+        if order_id:
+            queryset = queryset.filter(order_id=order_id)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        job_type = serializer.validated_data.get("job_type")
+        printer = serializer.validated_data.get("printer")
+
+        if printer is None:
+            printer = get_default_printer(job_type)
+
+        serializer.save(printer=printer)
+        
+        
+# ===================================================================
+# CUSTOMER VIEWSET
+# ===================================================================
+class CustomerViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for restaurant customers.
+    """
+
+    serializer_class = CustomerSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        restaurant = get_user_restaurant(self.request.user)
+        if not restaurant:
+            return Customer.objects.none()
+        return Customer.objects.filter(restaurant=restaurant)
+
+    def perform_create(self, serializer):
+        restaurant = get_user_restaurant(self.request.user)
+        serializer.save(restaurant=restaurant)
+
+
+# ===================================================================
+# INVENTORY VIEWSET
+# ===================================================================
+
+def get_user_restaurant(user):
+    return user.restaurant
+
+class InventoryViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for inventory items. Includes a custom action to get
+    only low-stock items.
+    """
+
+    serializer_class = InventoryItemSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        restaurant = get_user_restaurant(self.request.user)
+        if not restaurant:
+            return InventoryItem.objects.none()
+        queryset = InventoryItem.objects.filter(restaurant=restaurant)
+
+        # Filter low stock items
+        low_stock = self.request.query_params.get("low_stock")
+        if low_stock == "true":
+            from django.db.models import F
+            queryset = queryset.filter(quantity__lte=F("low_stock_threshold"))
+
+        return queryset
+
+    def perform_create(self, serializer):
+        restaurant = get_user_restaurant(self.request.user)
+        serializer.save(restaurant=restaurant)
+
+    @action(detail=False, methods=["get"])
+    def low_stock(self, request):
+        """Return only items at or below their low stock threshold."""
+        restaurant = get_user_restaurant(request.user)
+        if not restaurant:
+            return Response([])
+        from django.db.models import F
+        items = InventoryItem.objects.filter(
+            restaurant=restaurant,
+            quantity__lte=F("low_stock_threshold"),
+        )
+        serializer = self.get_serializer(items, many=True)
+        return Response(serializer.data)
+
+
+# ===================================================================
+# DISCOUNT VIEWSET
+# ===================================================================
+class DiscountViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for discounts and promo codes.
+    Includes toggle action to activate/deactivate quickly.
+    """
+
+    serializer_class = DiscountSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        restaurant = get_user_restaurant(self.request.user)
+        if not restaurant:
+            return Discount.objects.none()
+        queryset = Discount.objects.filter(restaurant=restaurant)
+
+        # Filter active only
+        active = self.request.query_params.get("active")
+        if active == "true":
+            queryset = queryset.filter(is_active=True)
+        elif active == "false":
+            queryset = queryset.filter(is_active=False)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        restaurant = get_user_restaurant(self.request.user)
+        serializer.save(restaurant=restaurant)
+
+    @action(detail=True, methods=["patch"])
+    def toggle(self, request):
+        """Toggle is_active status."""
+        discount = self.get_object()
+        discount.is_active = not discount.is_active
+        discount.save()
+        serializer = self.get_serializer(discount)
+        return Response(serializer.data)

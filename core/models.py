@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.utils.text import slugify
 import secrets
+import uuid
 
 from django.db.models.functions import Coalesce
 
@@ -49,6 +50,15 @@ class OrderManager(models.Manager):
 
 class Company(TimeStampedModel):
     """Parent company or franchise group."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="companies",
+        null=True,
+        blank=True,
+    )
+
     name = models.CharField(max_length=150, unique=True)
     registration_number = models.CharField(max_length=100, blank=True)
     headquarters = models.CharField(max_length=255, blank=True)
@@ -285,7 +295,12 @@ class Attendance(models.Model):
                 raise ValidationError("Employee already has an active attendance record.")
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        if self.is_default:
+            Printer.objects.filter(
+                printer_type=self.printer_type,
+                is_default=True,
+            ).exclude(pk=self.pk).update(is_default=False)
+
         super().save(*args, **kwargs)
 
     # =====================================================
@@ -328,12 +343,14 @@ class Customer(TimeStampedModel):
 def generate_display_key():
     return secrets.token_hex(16)
 
+
+
 class Restaurant(TimeStampedModel):
 
     class RestaurantStatus(models.TextChoices):
-        OPEN = 'OPEN', 'Open'
-        CLOSED = 'CLOSED', 'Closed'
-        HOLIDAY = 'HOLIDAY', 'Holiday Hours'
+        OPEN = "OPEN", "Open"
+        CLOSED = "CLOSED", "Closed"
+        HOLIDAY = "HOLIDAY", "Holiday Hours"
 
     CURRENCY_CHOICES = [
         ("USD", "US Dollar ($)"),
@@ -365,42 +382,61 @@ class Restaurant(TimeStampedModel):
     company = models.ForeignKey(
         "core.Company",
         on_delete=models.CASCADE,
-        related_name='restaurants'
+        related_name="restaurants",
     )
 
     name = models.CharField(max_length=100)
+
     display_key = models.CharField(
         max_length=64,
         unique=True,
-        default=generate_display_key
+        default=generate_display_key,
     )
-    
+
     address_line_1 = models.CharField(max_length=255, blank=True)
     address_line_2 = models.CharField(max_length=255, blank=True)
     city = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=60, blank=True)
 
-    timezone = models.CharField(max_length=64, default="UTC")
-    currency = models.CharField(max_length=6, default="USD")
+    timezone = models.CharField(
+        max_length=64,
+        default="UTC",
+        help_text="IANA timezone name, e.g. UTC, Europe/London, Africa/Banjul",
+    )
+
+    currency = models.CharField(
+        max_length=6,
+        choices=CURRENCY_CHOICES,
+        default="USD",
+    )
+
     locale = models.CharField(
         max_length=10,
         default="en_US",
-        help_text="Locale for formatting (e.g., en_US, de_DE, fr_FR)"
+        help_text="Locale for formatting, e.g. en_US, de_DE, fr_FR",
     )
 
-    logo = models.ImageField(upload_to="restaurants/logos/", null=True, blank=True)
-    phone_number = models.CharField(max_length=20, blank=True)
+    logo = models.ImageField(
+        upload_to="restaurants/logos/",
+        null=True,
+        blank=True,
+    )
+
+    phone_number = models.CharField(
+        max_length=20,
+        blank=True,
+    )
 
     status = models.CharField(
         max_length=10,
         choices=RestaurantStatus.choices,
-        default=RestaurantStatus.OPEN
+        default=RestaurantStatus.OPEN,
     )
 
     display_token = models.UUIDField(
         default=uuid.uuid4,
         unique=True,
-        editable=False
+        editable=False,
     )
 
     slug = models.SlugField(unique=True)
@@ -409,30 +445,62 @@ class Restaurant(TimeStampedModel):
     # SUBSCRIPTION LOGIC
     # =====================================================
 
-    from django.utils import timezone
-
-
     @property
     def subscription_valid(self):
-        try:
-            subscription = self.subscription
-        except Subscription.DoesNotExist:
+        """
+        Returns True if the restaurant currently has access.
+
+        Access is valid when the related Subscription exists and is either:
+        - trialing with time remaining
+        - active with time remaining
+        """
+        subscription = getattr(self, "subscription", None)
+
+        if not subscription:
             return False
 
-        if not subscription.is_active:
-            return False
-
-        today = timezone.now().date()
-        return subscription.end_date >= today
+        subscription.expire_if_needed()
+        return subscription.is_active()
 
     @property
     def subscription_days_remaining(self):
-        if not self.subscription_valid:
+        """
+        Returns the number of days remaining in the current subscription period.
+        Returns 0 if no subscription exists or the subscription is expired.
+        """
+        subscription = getattr(self, "subscription", None)
+
+        if not subscription:
             return 0
 
-        today = timezone.now().date()
-        delta = self.subscription.end_date - today
-        return max(delta.days, 0)
+        subscription.expire_if_needed()
+        return subscription.days_remaining
+
+    @property
+    def subscription_status(self):
+        """
+        Useful for templates, serializers, and admin display.
+        """
+        subscription = getattr(self, "subscription", None)
+
+        if not subscription:
+            return "no_subscription"
+
+        subscription.expire_if_needed()
+        return subscription.status
+
+    @property
+    def subscription_period_end(self):
+        """
+        Returns the current access expiry date.
+        """
+        subscription = getattr(self, "subscription", None)
+
+        if not subscription:
+            return None
+
+        subscription.expire_if_needed()
+        return subscription.current_period_end
 
     @property
     def profile_complete(self):
@@ -445,14 +513,21 @@ class Restaurant(TimeStampedModel):
     def save(self, *args, **kwargs):
         if not self.slug:
             base_slug = slugify(self.name)
+
+            if not base_slug:
+                base_slug = "restaurant"
+
             self.slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.name} ({self.company.name})"
+        company_name = self.company.name if self.company_id else "No Company"
+        return f"{self.name} ({company_name})"
 
     class Meta:
-        unique_together = ('company', 'name')
+        unique_together = ("company", "name")
+        
 
 class Table(models.Model):
 
@@ -812,8 +887,10 @@ class InventoryItem(models.Model):
     )
 
     # ✅ Cached low stock flag (for fast dashboards)
-    is_low_stock = models.BooleanField(default=False)
+    low_stock_threshold = models.IntegerField(default=0)  # Example definition
 
+    is_low_stock = models.BooleanField(default=False)
+    
     last_updated = models.DateTimeField(auto_now=True)
     active = models.BooleanField(default=True)
 
@@ -1222,7 +1299,6 @@ class Order(TimeStampedModel):
         choices=PaymentStatus.choices,
         default=PaymentStatus.UNPAID
     )
-
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -1230,7 +1306,7 @@ class Order(TimeStampedModel):
         blank=True,
         related_name="orders_created"
     )
-
+    
     notes = models.TextField(blank=True, null=True)
 
     # -------------------------------------------------
@@ -1251,18 +1327,18 @@ class Order(TimeStampedModel):
     
     
     def short_id(self):
-        return str(self.id)[:8]
-    
+        return f"ORD-{str(self.id)[:6].upper()}"
     
     def calculate_totals(self):
         """
         Recalculate order subtotal and total safely.
         """
 
-        subtotal = self.items.aggregate(
-            total=Sum("final_price")
-        )["total"] or Decimal("0.00")
+        subtotal = Decimal("0.00")
 
+        for item in self.items.all():
+           subtotal += Decimal(str(item.final_price or 0))
+        
         # ✅ Ensure all monetary fields are Decimal
         tax = self.tax or Decimal("0.00")
         service_charge = self.service_charge or Decimal("0.00")
@@ -2039,6 +2115,10 @@ class Settings(models.Model):
     restaurant_display_name = models.CharField(max_length=150)
     currency_symbol = models.CharField(max_length=5, default="$")
     timezone = models.CharField(max_length=50, default="UTC")
+    restaurant_display_name = models.CharField(max_length=150)
+    business_email = models.EmailField(blank=True, null=True)
+    business_phone = models.CharField(max_length=30, blank=True, null=True)
+    business_address = models.TextField(blank=True, null=True)
 
     # Tax & Charges
     tax_percentage = models.DecimalField(
@@ -2064,8 +2144,9 @@ class Settings(models.Model):
 
     # Receipt
     show_logo_on_receipt = models.BooleanField(default=True)
+    receipt_header_text = models.CharField(max_length=255, blank=True, null=True)
     receipt_footer_text = models.CharField(max_length=255, blank=True, null=True)
-
+    
     # Inventory
     stock_alerts_enabled = models.BooleanField(default=True)
     auto_deduct_inventory = models.BooleanField(default=True)
@@ -2088,7 +2169,22 @@ class Settings(models.Model):
         choices=THEME_CHOICES,
         default="system",
     )
+    
+    ORDER_TYPE_CHOICES = [
+        ("DINE_IN", "Dine In"),
+        ("TAKEAWAY", "Takeaway"),
+        ("DELIVERY", "Delivery"),
+    ]
 
+    default_order_type = models.CharField(
+        max_length=20,
+        choices=ORDER_TYPE_CHOICES,
+        default="DINE_IN",
+    )
+
+    require_table_for_dine_in = models.BooleanField(default=True)
+    auto_print_kitchen_tickets = models.BooleanField(default=True)
+    
     items_per_page = models.PositiveIntegerField(default=20)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2231,9 +2327,17 @@ class WaiterCall(TimeStampedModel):
 class Plan(models.Model):
 
     name = models.CharField(max_length=100, unique=True)
-    stripe_price_id = models.CharField(max_length=150, unique=True)
 
-    monthly_price = models.DecimalField(max_digits=10, decimal_places=2)
+    code = models.SlugField(
+        max_length=100,
+        unique=True,
+        help_text="Internal plan code, e.g. starter, pro, enterprise",
+    )
+
+    monthly_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+    )
 
     max_users = models.PositiveIntegerField(default=5)
     max_tables = models.PositiveIntegerField(default=20)
@@ -2245,24 +2349,25 @@ class Plan(models.Model):
 
     def __str__(self):
         return self.name
+
     class Meta:
         ordering = ["monthly_price"]
-
-from django.db import models
-from django.utils import timezone
-
-
+        
 class Subscription(models.Model):
 
-    STATUS_CHOICES = [
-        ("trialing", "Trialing"),
-        ("active", "Active"),
-        ("past_due", "Past Due"),
-        ("canceled", "Canceled"),
-        ("unpaid", "Unpaid"),
-        ("incomplete", "Incomplete"),
-        ("incomplete_expired", "Incomplete Expired"),
-    ]
+    class SubscriptionStatus(models.TextChoices):
+        TRIALING = "trialing", "Trialing"
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Expired"
+        SUSPENDED = "suspended", "Suspended"
+        CANCELED = "canceled", "Canceled"
+
+    class OfflinePaymentMethod(models.TextChoices):
+        CASH = "cash", "Cash"
+        BANK_TRANSFER = "bank_transfer", "Bank Transfer"
+        MOBILE_MONEY = "mobile_money", "Mobile Money"
+        CHEQUE = "cheque", "Cheque"
+        OTHER = "other", "Other Offline Agreement"
 
     restaurant = models.OneToOneField(
         "core.Restaurant",
@@ -2277,32 +2382,87 @@ class Subscription(models.Model):
         null=True,
         blank=True,
     )
-    
-    stripe_customer_id = models.CharField(
-        max_length=150,
-        blank=True,
-        null=True
-    )
-
-    stripe_subscription_id = models.CharField(
-        max_length=150,
-        blank=True,
-        null=True
-    )
 
     status = models.CharField(
         max_length=30,
-        choices=STATUS_CHOICES,
-        default="trialing"
+        choices=SubscriptionStatus.choices,
+        default=SubscriptionStatus.TRIALING,
     )
 
+    # Original free trial period.
+    # These should be set once and not reset during reactivation.
+    trial_start = models.DateTimeField(blank=True, null=True)
+    trial_end = models.DateTimeField(blank=True, null=True)
+
+    # Current access period.
+    # During trial:
+    # current_period_start = trial_start
+    # current_period_end = trial_end
+    #
+    # During paid/offline subscription:
+    # current_period_start = manual activation date
+    # current_period_end = manual expiry date
     current_period_start = models.DateTimeField(blank=True, null=True)
     current_period_end = models.DateTimeField(blank=True, null=True)
 
-    cancel_at_period_end = models.BooleanField(default=False)
+    offline_payment_method = models.CharField(
+        max_length=30,
+        choices=OfflinePaymentMethod.choices,
+        blank=True,
+        null=True,
+    )
+
+    offline_payment_reference = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        help_text="Cash receipt number, transfer reference, or offline agreement reference."
+    )
+
+    offline_payment_notes = models.TextField(
+        blank=True,
+        help_text="Notes about cash payment or offline agreement."
+    )
+
+    last_reactivated_at = models.DateTimeField(blank=True, null=True)
+
+    reactivated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="reactivated_subscriptions"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    TRIAL_DAYS = 14
+
+    # ===============================
+    # Setup Logic
+    # ===============================
+
+    def save(self, *args, **kwargs):
+        """
+        Automatically set trial dates once.
+        Trial dates are preserved and never reset by reactivation.
+        """
+        now = timezone.now()
+
+        if not self.trial_start:
+            self.trial_start = now
+
+        if not self.trial_end:
+            self.trial_end = self.trial_start + timedelta(days=self.TRIAL_DAYS)
+
+        if not self.current_period_start:
+            self.current_period_start = self.trial_start
+
+        if not self.current_period_end:
+            self.current_period_end = self.trial_end
+
+        super().save(*args, **kwargs)
 
     # ===============================
     # Business Logic
@@ -2310,9 +2470,12 @@ class Subscription(models.Model):
 
     def is_active(self):
         """
-        Returns True if subscription is currently valid.
+        Returns True if the restaurant currently has system access.
         """
-        if self.status not in ["active", "trialing"]:
+        if self.status not in [
+            self.SubscriptionStatus.ACTIVE,
+            self.SubscriptionStatus.TRIALING,
+        ]:
             return False
 
         if self.current_period_end and self.current_period_end < timezone.now():
@@ -2321,23 +2484,388 @@ class Subscription(models.Model):
         return True
 
     def is_trial(self):
-        return self.status == "trialing"
+        return self.status == self.SubscriptionStatus.TRIALING
 
-    def is_past_due(self):
-        return self.status == "past_due"
+    def is_expired(self):
+        return self.status == self.SubscriptionStatus.EXPIRED
+
+    @property
+    def days_remaining(self):
+        if not self.is_active():
+            return 0
+
+        if not self.current_period_end:
+            return 0
+
+        remaining = self.current_period_end - timezone.now()
+        return max(remaining.days, 0)
+
+    def expire_if_needed(self):
+        """
+        Expire the subscription automatically if trial or active period has ended.
+        """
+        if self.status in [
+            self.SubscriptionStatus.TRIALING,
+            self.SubscriptionStatus.ACTIVE,
+        ]:
+            if self.current_period_end and self.current_period_end < timezone.now():
+                self.status = self.SubscriptionStatus.EXPIRED
+                self.save(update_fields=["status", "updated_at"])
+
+    def reactivate_offline(
+        self,
+        user=None,
+        days=30,
+        payment_method=OfflinePaymentMethod.CASH,
+        reference="",
+        notes=""
+    ):
+        """
+        Reactivate subscription manually after offline payment/agreement.
+
+        This does NOT reset:
+        - trial_start
+        - trial_end
+
+        It only changes the paid/current subscription period.
+        """
+        now = timezone.now()
+
+        self.status = self.SubscriptionStatus.ACTIVE
+        self.current_period_start = now
+        self.current_period_end = now + timedelta(days=days)
+
+        self.offline_payment_method = payment_method
+        self.offline_payment_reference = reference
+        self.offline_payment_notes = notes
+
+        self.last_reactivated_at = now
+        self.reactivated_by = user
+
+        self.save(update_fields=[
+            "status",
+            "current_period_start",
+            "current_period_end",
+            "offline_payment_method",
+            "offline_payment_reference",
+            "offline_payment_notes",
+            "last_reactivated_at",
+            "reactivated_by",
+            "updated_at",
+        ])
+
+    def suspend(self):
+        self.status = self.SubscriptionStatus.SUSPENDED
+        self.save(update_fields=["status", "updated_at"])
+
+    def cancel(self):
+        self.status = self.SubscriptionStatus.CANCELED
+        self.save(update_fields=["status", "updated_at"])
 
     def can_use_inventory(self):
+        if not self.plan:
+            return False
+
         return self.is_active() and self.plan.allow_inventory
 
     def can_use_analytics(self):
+        if not self.plan:
+            return False
+
         return self.is_active() and self.plan.allow_analytics
 
     def __str__(self):
-        return f"{self.restaurant.name} - {self.plan.name}"
+        plan_name = self.plan.name if self.plan else "No Plan"
+        restaurant_name = self.restaurant.name if self.restaurant else "No Restaurant"
+        return f"{restaurant_name} - {plan_name}"
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["stripe_subscription_id"]),
-            models.Index(fields=["stripe_customer_id"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["current_period_end"]),
         ]
+        
+        
+class Printer(TimeStampedModel):
+
+    class PrinterRole(models.TextChoices):
+        KITCHEN = "KITCHEN", "Kitchen Printer"
+        CASHIER = "CASHIER", "Cashier/POS Printer"
+
+    class ConnectionType(models.TextChoices):
+        NETWORK = "NETWORK", "Network/IP"
+        USB = "USB", "USB"
+        SYSTEM = "SYSTEM", "System Printer"
+
+    restaurant = models.ForeignKey(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="printers",
+  
+    )
+
+    name = models.CharField(max_length=100)
+
+    role = models.CharField(
+        max_length=20,
+        choices=PrinterRole.choices,
+    )
+
+    connection_type = models.CharField(
+        max_length=20,
+        choices=ConnectionType.choices,
+        default=ConnectionType.NETWORK,
+    )
+
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="Required for network/IP printers.",
+    )
+
+    port = models.PositiveIntegerField(
+        default=9100,
+        help_text="Default ESC/POS network printer port is usually 9100.",
+    )
+
+    usb_vendor_id = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Optional USB vendor ID.",
+    )
+
+    usb_product_id = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Optional USB product ID.",
+    )
+
+    system_name = models.CharField(
+        max_length=150,
+        blank=True,
+        help_text="Operating system printer name, if using system printing.",
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    last_seen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    def __str__(self):
+        restaurant_name = self.restaurant.name if self.restaurant else "No restaurant"
+        return f"{self.name} - {self.get_role_display()} - {restaurant_name}"
+    
+    class Meta:
+        ordering = ["restaurant", "role", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["restaurant", "name"],
+                name="unique_printer_name_per_restaurant",
+            ),
+            models.UniqueConstraint(
+                fields=["restaurant", "role"],
+                name="unique_printer_role_per_restaurant",
+            ),
+        ]
+        
+        
+class PrintJob(TimeStampedModel):
+
+    class PrintJobType(models.TextChoices):
+        KITCHEN_ORDER = "KITCHEN_ORDER", "Kitchen Order"
+        RECEIPT = "RECEIPT", "Receipt"
+
+    class PrintJobStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        PROCESSING = "PROCESSING", "Processing"
+        PRINTED = "PRINTED", "Printed"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    restaurant = models.ForeignKey(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="print_jobs",
+    )
+
+    printer = models.ForeignKey(
+        "core.Printer",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="print_jobs",
+    )
+
+    job_type = models.CharField(
+        max_length=30,
+        choices=PrintJobType.choices,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=PrintJobStatus.choices,
+        default=PrintJobStatus.PENDING,
+    )
+
+    title = models.CharField(max_length=150, blank=True)
+
+    payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured print data such as order items, totals, table, and waiter.",
+    )
+
+    raw_text = models.TextField(
+        blank=True,
+        help_text="Formatted text to send directly to printer.",
+    )
+
+    copies = models.PositiveIntegerField(default=1)
+
+    attempts = models.PositiveIntegerField(default=0)
+
+    max_attempts = models.PositiveIntegerField(default=3)
+
+    error_message = models.TextField(blank=True)
+
+    printed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    def get_target_printer_role(self):
+        if self.job_type == self.PrintJobType.KITCHEN_ORDER:
+            return Printer.PrinterRole.KITCHEN
+
+        if self.job_type == self.PrintJobType.RECEIPT:
+            return Printer.PrinterRole.CASHIER
+
+        return None
+
+    def save(self, *args, **kwargs):
+        if not self.printer_id and self.restaurant_id:
+            target_role = self.get_target_printer_role()
+
+            if target_role:
+                printer = Printer.objects.filter(
+                    restaurant_id=self.restaurant_id,
+                    role=target_role,
+                    is_active=True,
+                ).first()
+
+                if printer:
+                    self.printer = printer
+
+        super().save(*args, **kwargs)
+
+    def mark_processing(self):
+        self.status = self.PrintJobStatus.PROCESSING
+        self.attempts += 1
+        self.save(update_fields=["status", "attempts", "updated_at"])
+
+    def mark_printed(self):
+        from django.utils import timezone
+
+        self.status = self.PrintJobStatus.PRINTED
+        self.printed_at = timezone.now()
+        self.error_message = ""
+        self.save(update_fields=["status", "printed_at", "error_message", "updated_at"])
+
+    def mark_failed(self, error_message=""):
+        self.status = self.PrintJobStatus.FAILED
+        self.error_message = error_message
+        self.save(update_fields=["status", "error_message", "updated_at"])
+
+    def can_retry(self):
+        return (
+            self.status == self.PrintJobStatus.FAILED
+            and self.attempts < self.max_attempts
+        )
+
+    def __str__(self):
+        restaurant_name = self.restaurant.name if self.restaurant else "No restaurant"
+        return f"{self.get_job_type_display()} - {self.status} - {restaurant_name}"
+    
+    class Meta:
+        ordering = ["-created_at"]
+        
+# ===================================================================
+# DISCOUNT MODEL
+# ===================================================================
+class Discount(models.Model):
+    """
+    Promo codes and discounts — percentage or fixed amount.
+    Supports validity windows, usage limits, and minimum order amounts.
+    """
+
+    class DiscountType(models.TextChoices):
+        PERCENTAGE = "percentage", "Percentage"
+        FIXED = "fixed", "Fixed Amount"
+
+    restaurant = models.ForeignKey(
+        "core.Restaurant",
+        on_delete=models.CASCADE,
+        related_name="discounts",
+    )
+    name = models.CharField(max_length=150)
+    code = models.CharField(max_length=50, unique=True)
+    discount_type = models.CharField(
+        max_length=20,
+        choices=DiscountType.choices,
+        default=DiscountType.PERCENTAGE,
+    )
+    value = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Percentage (e.g. 20 for 20%) or fixed amount (e.g. 5.00).",
+    )
+    is_active = models.BooleanField(default=True)
+    valid_from = models.DateField(null=True, blank=True)
+    valid_to = models.DateField(null=True, blank=True)
+    min_order_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+    )
+    max_discount_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text="Cap for percentage discounts. 0 = no cap.",
+    )
+    usage_limit = models.PositiveIntegerField(
+        default=0,
+        help_text="Max times this code can be used. 0 = unlimited.",
+    )
+    times_used = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+    @property
+    def is_expired(self):
+        if not self.valid_to:
+            return False
+        from datetime import date
+        return date.today() > self.valid_to
+
+    @property
+    def is_valid(self):
+        from datetime import date
+        if not self.is_active:
+            return False
+        if self.is_expired:
+            return False
+        if self.usage_limit > 0 and self.times_used >= self.usage_limit:
+            return False
+        if self.valid_from and date.today() < self.valid_from:
+            return False
+        return True

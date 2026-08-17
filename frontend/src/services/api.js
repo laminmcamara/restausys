@@ -1,6 +1,7 @@
+// frontend/src/services/api.js
 import axios from "axios";
 
-const BASE_URL = "http://127.0.0.1:8000/api/v1";
+const BASE_URL = "http://127.0.0.1:8000/api";
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -8,15 +9,24 @@ const api = axios.create({
 
 /* ================= REQUEST INTERCEPTOR ================= */
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("accessToken");
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("accessToken");
 
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+    console.log("API REQUEST:", {
+      url: `${config.baseURL || ""}${config.url || ""}`,
+      method: config.method,
+      hasToken: Boolean(token),
+    });
 
-  return config;
-});
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 /* ================= RESPONSE INTERCEPTOR ================= */
 
@@ -25,13 +35,17 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // If access token expired
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    console.error("API ERROR:", {
+      url: `${originalRequest?.baseURL || ""}${originalRequest?.url || ""}`,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
 
       const refreshToken = localStorage.getItem("refreshToken");
 
-      // No refresh token → logout
       if (!refreshToken) {
         localStorage.clear();
         window.location.href = "/";
@@ -39,23 +53,24 @@ api.interceptors.response.use(
       }
 
       try {
-        // Request new access token
-        const response = await axios.post(
-          "http://127.0.0.1:8000/api/token/refresh/",
-          { refresh: refreshToken }
-        );
+        const response = await axios.post(`${BASE_URL}/token/refresh/`, {
+          refresh: refreshToken,
+        });
 
         const newAccess = response.data.access;
 
-        // Save new token
         localStorage.setItem("accessToken", newAccess);
 
-        // Update header and retry original request
+        originalRequest.headers = originalRequest.headers || {};
         originalRequest.headers.Authorization = `Bearer ${newAccess}`;
 
         return api(originalRequest);
       } catch (refreshError) {
-        // Refresh failed → force logout
+        console.error(
+          "TOKEN REFRESH FAILED:",
+          refreshError.response?.data || refreshError.message
+        );
+
         localStorage.clear();
         window.location.href = "/";
         return Promise.reject(refreshError);

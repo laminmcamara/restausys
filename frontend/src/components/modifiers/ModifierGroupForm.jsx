@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { createModifierGroup } from "../../services/modifierService";
-
+import { createModifierOption } from "../../services/modifierService";
 const ModifierGroupForm = ({ token, onSuccess }) => {
   const [name, setName] = useState("");
   const [selectionType, setSelectionType] = useState("SINGLE");

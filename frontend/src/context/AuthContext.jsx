@@ -99,6 +99,27 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // New function to fetch with authorization
+  const authFetch = async (url, options = {}) => {
+    const headers = {
+      ...options.headers,
+      Authorization: `Bearer ${accessToken}`, // Include the access token
+    };
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    return response;
+  };
+
+  // New function to parse error messages
+  const parseError = async (response, defaultMessage) => {
+    const errorData = await response.json();
+    return errorData.message || defaultMessage;
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -108,6 +129,8 @@ export function AuthProvider({ children }) {
         isAuthenticated: Boolean(accessToken),
         login,
         logout,
+        authFetch, // Exporting authFetch
+        parseError, // Exporting parseError
       }}>
       {children}
     </AuthContext.Provider>

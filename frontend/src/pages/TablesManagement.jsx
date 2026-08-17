@@ -28,7 +28,7 @@ export default function TablesManagement() {
 
   const fetchTables = async () => {
     try {
-      const res = await api.get("/tables/");
+      const res = await api.get("/v1/tables/");
       setTables(res.data.results || res.data);
     } catch (err) {
       console.error("Error fetching tables:", err);
@@ -61,7 +61,7 @@ export default function TablesManagement() {
           capacity: parseInt(capacity),
         });
       } else {
-        await api.post("/tables/", {
+        await api.post("/v1/tables/", {
           table_number: tableNumber,
           capacity: parseInt(capacity),
         });
