@@ -1,0 +1,37 @@
+{
+  "nav": {
+    "home": "ہوم",
+    "pos": "POS",
+    "orders": "آرڈرز",
+    "reports": "رپورٹس"
+  },
+  "profile": {
+    "viewProfile": "پروفائل دیکھیں",
+    "tutorials": "ویڈیو ٹیوٹوریلز",
+    "help": "مدد اور سپورٹ",
+    "apiKeys": "API اور کیز",
+    "billing": "بلنگ",
+    "activity": "سرگرمی لاگ"
+  },
+  "footer": {
+    "system": "سسٹم",
+    "fileManagement": "فائل مینجمنٹ",
+    "settings": "ترتیبات",
+    "developers": "ڈیولپرز",
+    "apiDocs": "API اور ڈیولپرز",
+    "support": "سپورٹ",
+    "contactSupport": "سپورٹ سے رابطہ کریں",
+    "legal": "قانونی",
+    "privacy": "پرائیویسی پالیسی",
+    "terms": "سروس کی شرائط"
+  },
+  "languages": {
+    "en": "انگریزی",
+    "es": "ہسپانوی",
+    "zh": "چینی",
+    "fr": "فرانسیسی",
+    "tr": "ترک",
+    "ur": "اردو",
+    "ar": "عربی"
+  }
+}

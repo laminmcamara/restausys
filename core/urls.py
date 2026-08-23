@@ -7,11 +7,9 @@ from rest_framework_simplejwt.views import (
 
 from .views import *
 from .views_webhooks import stripe_webhook
-from .views import register_restaurant_api, reports_summary, settings_api, staff_list_create_api, staff_detail_api 
-from .views import (
-    CustomerViewSet, PaymentViewSet,
-    InventoryViewSet, DiscountViewSet, MarkOrderPaidView,
-)
+from .views import (register_restaurant_api, reports_summary, settings_api, staff_list_create_api, staff_detail_api, CustomerViewSet, PaymentViewSet,
+    InventoryViewSet, DiscountViewSet, MarkOrderPaidView, ChangePasswordView)
+
 app_name = "core"
 
 # ============================================================
@@ -37,11 +35,13 @@ router.register(r"manager/modifier-options", ManagerModifierOptionViewSet, basen
 router.register(r"manager/customers", CustomerViewSet, basename="manager-customers")
 router.register(r"manager/inventory", InventoryViewSet, basename="manager-inventory")
 router.register(r"manager/discounts", DiscountViewSet, basename="manager-discounts")
+
 # ============================================================
 # URL PATTERNS
 # ============================================================
 
 urlpatterns = [
+    path('api/v1/', include(router.urls)),
 
     # ========================================================
     # HOME PAGE
@@ -61,16 +61,18 @@ urlpatterns = [
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
+    path('api/v1/', include(router.urls)),
     # ========================================================
     # USER INFO
     # ========================================================
     path("api/me/", MeView.as_view(), name="me"),
+    path("api/v1/change-password/", ChangePasswordView.as_view(), name="change-password"),
     
     # ========================================================
     # SUBSCRIPTION
     # ========================================================
     path("api/v1/subscription/", subscription_detail),
-    path("api/subscription/create-checkout/", create_checkout_session),
+    path("api/v1/subscription/create-checkout/", create_checkout_session),
 
     # ========================================================
     # STRIPE WEBHOOK
@@ -96,10 +98,11 @@ urlpatterns = [
     # ========================================================
     # MAIN API ROUTER
     # ========================================================
-    path("api/v1/", include(router.urls)),
     
     path("api/v1/settings/", settings_api, name="settings-api"),
-    path("api/v1/staff/", staff_list_create_api, name="staff-list-create-api"),
-    path("api/v1/staff/<int:pk>/", staff_detail_api, name="staff-detail-api"),
+    path("api/v1/manager/staff/", staff_list_create_api, name="staff-list-create-api"),
+    path("api/v1/manager/staff/<int:pk>/", staff_detail_api, name="staff-detail-api"),
     path("api/v1/orders/<int:order_id>/mark-paid/", MarkOrderPaidView.as_view(), name="mark-order-paid"),
+    
+    
 ]

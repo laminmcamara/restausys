@@ -40,9 +40,24 @@ import InventoryPage from "../pages/InventoryPage";
 import DiscountsPage from "../pages/DiscountsPage";
 import Reports from "../pages/Reports";
 import SettingsPage from "../pages/SettingsPage";
+import ProfilePage from "../pages/ProfilePage";
+import TutorialsPage from "../pages/TutorialsPage";
+import HelpPage from "../pages/HelpPage";
+import FilesPage from "../pages/FilesPage";
+import DevelopersPage from "../pages/DevelopersPage";
+import BillingPage from "../pages/BillingPage";
+import ActivityPage from "../pages/ActivityPage";
+import PrivacyPage from "../pages/PrivacyPage";
+import TermsPage from "../pages/TermsPage";
+
+// New components
+import LanguageSwitcher from "../components/LanguageSwitcher";
+import RightSidebar from "../components/RightSidebar";
+import DashboardFooter from "../components/DashboardFooter";
 
 export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [controlPanelOpen, setControlPanelOpen] = useState(true);
   const [restaurantMenuOpen, setRestaurantMenuOpen] = useState(false);
 
   const { user, logout } = useAuth();
@@ -54,7 +69,7 @@ export default function DashboardLayout() {
 
   return (
     <div className="flex h-screen bg-slate-100">
-      {/* ================= SIDEBAR ================= */}
+      {/* ================= LEFT SIDEBAR ================= */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 shadow-2xl transform transition-transform duration-300
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
@@ -83,83 +98,43 @@ export default function DashboardLayout() {
         </div>
 
         {/* Navigation */}
-        <nav className="p-3 space-y-1 overflow-y-auto">
-          <SidebarLink
-            to="/dashboard"
-            end
-            icon={<LayoutDashboard size={18} />}
-            label="Home"
-          />
-          <SidebarLink
-            to="/dashboard/pos"
-            icon={<CreditCard size={18} />}
-            label="POS"
-          />
-          <SidebarLink
-            to="/dashboard/orders"
-            icon={<Receipt size={18} />}
-            label="Orders"
-          />
-          <SidebarLink
-            to="/dashboard/products"
-            icon={<UtensilsCrossed size={18} />}
-            label="Products"
-          />
-          <SidebarLink
-            to="/dashboard/categories"
-            icon={<Folder size={18} />}
-            label="Categories"
-          />
-          <SidebarLink
-            to="/dashboard/modifiers"
-            icon={<SlidersHorizontal size={18} />}
-            label="Modifiers"
-          />
-          <SidebarLink
-            to="/dashboard/tables"
-            icon={<Armchair size={18} />}
-            label="Tables"
-          />
-          <SidebarLink
-            to="/dashboard/kitchen"
-            icon={<ChefHat size={18} />}
-            label="Kitchen"
-          />
-          <SidebarLink
-            to="/dashboard/staff"
-            icon={<UserCog size={18} />}
-            label="Staff"
-          />
+        <nav className="p-3 space-y-1 overflow-y-auto bg-slate-900 w-64 h-screen">
+          {/* SECTION 1: Day-to-day operations */}
+          <div className="space-y-1">
+            <SidebarLink
+              to="/dashboard"
+              end
+              icon={<LayoutDashboard size={18} />}
+              label="Home"
+            />
+            <SidebarLink
+              to="/dashboard/pos"
+              icon={<CreditCard size={18} />}
+              label="POS"
+            />
+            <SidebarLink
+              to="/dashboard/orders"
+              icon={<Receipt size={18} />}
+              label="Orders"
+            />
+            <SidebarLink
+              to="/dashboard/tables"
+              icon={<Armchair size={18} />}
+              label="Tables"
+            />
+            <SidebarLink
+              to="/dashboard/kitchen"
+              icon={<ChefHat size={18} />}
+              label="Kitchen"
+            />
+            <SidebarLink
+              to="/dashboard/payments"
+              icon={<CircleDollarSign size={18} />}
+              label="Payments"
+            />
+          </div>
 
-          <SidebarLink
-            to="/dashboard/customers"
-            icon={<Users size={18} />}
-            label="Customers"
-          />
-
-          <SidebarLink
-            to="/dashboard/payments"
-            icon={<CircleDollarSign size={18} />}
-            label="Payments"
-          />
-
-          <SidebarLink
-            to="/dashboard/inventory"
-            icon={<Boxes size={18} />}
-            label="Inventory"
-          />
-
-          <SidebarLink
-            to="/dashboard/discounts"
-            icon={<Tag size={18} />}
-            label="Discounts"
-          />
-          <SidebarLink
-            to="/dashboard/reports"
-            icon={<BarChart3 size={18} />}
-            label="Reports"
-          />
-
+          {/* SECTION 2: External/Public Displays */}
           {restaurantId && (
             <a
               href={`/display/${restaurantId}`}
@@ -171,15 +146,81 @@ export default function DashboardLayout() {
             </a>
           )}
 
+          {/* SECTION 3: Analytics */}
           <SidebarLink
-            to="/dashboard/settings"
-            icon={<Settings size={18} />}
-            label="Settings"
+            to="/dashboard/reports"
+            icon={<BarChart3 size={18} />}
+            label="Reports"
           />
+
+          <div className="my-2 border-t border-slate-800" />
+
+          {/* SECTION 4: Control Panel */}
+          <button
+            type="button"
+            onClick={() => setControlPanelOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-slate-200 hover:bg-slate-800 transition">
+            <span className="flex items-center space-x-3">
+              <SlidersHorizontal size={18} />
+              <span className="font-medium">Control Panel</span>
+            </span>
+
+            <ChevronDown
+              size={18}
+              className={`transition-transform duration-200 ${
+                controlPanelOpen ? "rotate-180" : "rotate-0"
+              }`}
+            />
+          </button>
+
+          {controlPanelOpen && (
+            <div className="mt-1 space-y-1 pl-2 border-l border-slate-700 ml-4">
+              <SidebarLink
+                to="/dashboard/products"
+                icon={<UtensilsCrossed size={18} />}
+                label="Products"
+              />
+              <SidebarLink
+                to="/dashboard/categories"
+                icon={<Folder size={18} />}
+                label="Categories"
+              />
+              <SidebarLink
+                to="/dashboard/modifiers"
+                icon={<SlidersHorizontal size={18} />}
+                label="Modifiers"
+              />
+              <SidebarLink
+                to="/dashboard/inventory"
+                icon={<Boxes size={18} />}
+                label="Inventory"
+              />
+              <SidebarLink
+                to="/dashboard/discounts"
+                icon={<Tag size={18} />}
+                label="Discounts"
+              />
+              <SidebarLink
+                to="/dashboard/staff"
+                icon={<UserCog size={18} />}
+                label="Staff"
+              />
+              <SidebarLink
+                to="/dashboard/customers"
+                icon={<Users size={18} />}
+                label="Customers"
+              />
+              <SidebarLink
+                to="/dashboard/settings"
+                icon={<Settings size={18} />}
+                label="Settings"
+              />
+            </div>
+          )}
         </nav>
       </aside>
 
-      {/* ================= MAIN ================= */}
+      {/* ================= MAIN AREA + RIGHT SIDEBAR ================= */}
       <div className="flex-1 flex flex-col">
         {/* Topbar */}
         <header className="h-16 bg-white shadow-sm flex items-center justify-between px-6 border-b border-slate-200">
@@ -252,6 +293,9 @@ export default function DashboardLayout() {
           </div>
 
           <div className="flex items-center space-x-4">
+            {/* Language Switcher */}
+            <LanguageSwitcher />
+
             <span className="text-sm font-medium text-slate-600 hidden sm:block">
               {userName}
             </span>
@@ -270,102 +314,139 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        {/* Content */}
-        <main className="flex-1 p-6 overflow-y-auto">
-          <div className="bg-white p-6 rounded-xl shadow-sm">
-            <Routes>
-              <Route
-                index
-                element={<Dashboard />}
-              />
-              <Route
-                path="pos"
-                element={<POS />}
-              />
-              <Route
-                path="pos/:orderId"
-                element={<POS />}
-              />
-              <Route
-                path="restaurant/floor-plan"
-                element={<FloorPlan />}
-              />
-              <Route
-                path="restaurant/dine-in"
-                element={<POS orderType="dine-in" />}
-              />
-              <Route
-                path="restaurant/dine-in/:tableId"
-                element={<POS orderType="dine-in" />}
-              />
-              <Route
-                path="restaurant/take-out"
-                element={<POS orderType="take-out" />}
-              />
-              <Route
-                path="orders"
-                element={<Orders />}
-              />
-              <Route
-                path="products"
-                element={<Products />}
-              />
-              <Route
-                path="categories"
-                element={<Categories />}
-              />
-              <Route
-                path="modifiers"
-                element={<ModifierGroups />}
-              />
-              <Route
-                path="tables"
-                element={<Tables />}
-              />
-              <Route
-                path="kitchen"
-                element={<Kitchen />}
-              />
-              <Route
-                path="staff"
-                element={<StaffPage />}
-              />
-              <Route
-                path="customers"
-                element={<CustomersPage />}
-              />
-              <Route
-                path="payments"
-                element={<PaymentsPage />}
-              />
-              <Route
-                path="inventory"
-                element={<InventoryPage />}
-              />
-              <Route
-                path="discounts"
-                element={<DiscountsPage />}
-              />
-              <Route
-                path="reports"
-                element={<Reports />}
-              />
-              <Route
-                path="settings"
-                element={<SettingsPage />}
-              />
-              <Route
-                path="*"
-                element={
-                  <Navigate
-                    to="/dashboard"
-                    replace
-                  />
-                }
-              />
-            </Routes>
-          </div>
-        </main>
+        {/* Content + Right Sidebar */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Main content */}
+          <main className="flex-1 p-6 overflow-y-auto">
+            <div className="bg-white p-6 rounded-xl shadow-sm min-h-full flex flex-col">
+              <Routes>
+                <Route
+                  index
+                  element={<Dashboard />}
+                />
+                <Route
+                  path="pos"
+                  element={<POS />}
+                />
+                <Route
+                  path="pos/:orderId"
+                  element={<POS />}
+                />
+                <Route
+                  path="restaurant/floor-plan"
+                  element={<FloorPlan />}
+                />
+                <Route
+                  path="restaurant/dine-in"
+                  element={<POS orderType="dine-in" />}
+                />
+                <Route
+                  path="restaurant/dine-in/:tableId"
+                  element={<POS orderType="dine-in" />}
+                />
+                <Route
+                  path="restaurant/take-out"
+                  element={<POS orderType="take-out" />}
+                />
+                <Route
+                  path="orders"
+                  element={<Orders />}
+                />
+                <Route
+                  path="products"
+                  element={<Products />}
+                />
+                <Route
+                  path="categories"
+                  element={<Categories />}
+                />
+                <Route
+                  path="modifiers"
+                  element={<ModifierGroups />}
+                />
+                <Route
+                  path="tables"
+                  element={<Tables />}
+                />
+                <Route
+                  path="kitchen"
+                  element={<Kitchen />}
+                />
+                <Route
+                  path="staff"
+                  element={<StaffPage />}
+                />
+                <Route
+                  path="customers"
+                  element={<CustomersPage />}
+                />
+                <Route
+                  path="payments"
+                  element={<PaymentsPage />}
+                />
+                <Route
+                  path="inventory"
+                  element={<InventoryPage />}
+                />
+                <Route
+                  path="discounts"
+                  element={<DiscountsPage />}
+                />
+                <Route
+                  path="reports"
+                  element={<Reports />}
+                />
+                <Route
+                  path="settings"
+                  element={<SettingsPage />}
+                />
+                
+                <Route
+                  path="settings/profile"
+                  element={<ProfilePage />}
+                />
+                <Route
+                  path="tutorials"
+                  element={<TutorialsPage />}
+                />
+                <Route
+                  path="help"
+                  element={<HelpPage />}
+                />
+                <Route
+                  path="files"
+                  element={<FilesPage />}
+                />
+                <Route
+                  path="developers"
+                  element={<DevelopersPage />}
+                />
+                <Route
+                  path="billing"
+                  element={<BillingPage />}
+                />
+                <Route
+                  path="activity"
+                  element={<ActivityPage />}
+                />
+                <Route
+                  path="privacy"
+                  element={<PrivacyPage />}
+                />
+                <Route
+                  path="terms"
+                  element={<TermsPage />}
+                />
+              </Routes>
+
+              {/* Footer inside main content */}
+              <DashboardFooter />
+            </div>
+          </main>
+
+          {/* Right Sidebar */}
+          <RightSidebar />
+        </div>
       </div>
     </div>
   );
@@ -389,3 +470,13 @@ function SidebarLink({ to, icon, label, end = false }) {
     </NavLink>
   );
 }
+
+<Route
+  path="*"
+  element={
+    <Navigate
+      to="/dashboard"
+      replace
+    />
+  }
+/>;

@@ -1,0 +1,37 @@
+{
+  "nav": {
+    "home": "Accueil",
+    "pos": "Caisse",
+    "orders": "Commandes",
+    "reports": "Rapports"
+  },
+  "profile": {
+    "viewProfile": "Voir le profil",
+    "tutorials": "Tutoriels vidéo",
+    "help": "Aide et support",
+    "apiKeys": "API et clés",
+    "billing": "Facturation",
+    "activity": "Journal d'activité"
+  },
+  "footer": {
+    "system": "Système",
+    "fileManagement": "Gestion des fichiers",
+    "settings": "Paramètres",
+    "developers": "Développeurs",
+    "apiDocs": "API et développeurs",
+    "support": "Support",
+    "contactSupport": "Contacter le support",
+    "legal": "Mentions légales",
+    "privacy": "Politique de confidentialité",
+    "terms": "Conditions d'utilisation"
+  },
+  "languages": {
+    "en": "Anglais",
+    "es": "Espagnol",
+    "zh": "Chinois",
+    "fr": "Français",
+    "tr": "Turc",
+    "ur": "Ourdou",
+    "ar": "Arabe"
+  }
+}

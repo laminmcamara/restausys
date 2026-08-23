@@ -1,0 +1,38 @@
+{
+  "nav": {
+    "home": "Home",
+    "pos": "POS",
+    "orders": "Orders",
+    "reports": "Reports"
+  },
+  "profile": {
+    "viewProfile": "View Profile",
+    "tutorials": "Video Tutorials",
+    "help": "Help & Support",
+    "apiKeys": "API & Keys",
+    "billing": "Billing",
+    "activity": "Activity Log"
+  },
+  "footer": {
+    "system": "System",
+    "fileManagement": "File Management",
+    "settings": "Settings",
+    "developers": "Developers",
+    "apiDocs": "API & Developers",
+    "support": "Support",
+    "contactSupport": "Contact Support",
+    "legal": "Legal",
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service"
+  },
+  
+  "languages": {
+    "en": "English",
+    "es": "Spanish",
+    "zh": "Chinese",
+    "fr": "French",
+    "tr": "Turkish",
+    "ur": "Urdu",
+    "ar": "Arabic"
+  }
+}

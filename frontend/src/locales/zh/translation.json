@@ -1,0 +1,37 @@
+{
+  "nav": {
+    "home": "主页",
+    "pos": "收银",
+    "orders": "订单",
+    "reports": "报告"
+  },
+  "profile": {
+    "viewProfile": "查看资料",
+    "tutorials": "视频教程",
+    "help": "帮助与支持",
+    "apiKeys": "API 和密钥",
+    "billing": "账单",
+    "activity": "活动日志"
+  },
+  "footer": {
+    "system": "系统",
+    "fileManagement": "文件管理",
+    "settings": "设置",
+    "developers": "开发者",
+    "apiDocs": "API 与开发者",
+    "support": "支持",
+    "contactSupport": "联系支持",
+    "legal": "法律",
+    "privacy": "隐私政策",
+    "terms": "服务条款"
+  },
+  "languages": {
+    "en": "英语",
+    "es": "西班牙语",
+    "zh": "中文",
+    "fr": "法语",
+    "tr": "土耳其语",
+    "ur": "乌尔都语",
+    "ar": "阿拉伯语"
+  }
+}

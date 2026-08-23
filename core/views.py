@@ -92,6 +92,7 @@ from .serializers import (
     CustomerSerializer,
     InventoryItemSerializer,
     DiscountSerializer,
+    ChangePasswordSerializer,
  
 )
 from .permissions import IsStaffOfRestaurant, HasActiveSubscription
@@ -221,6 +222,38 @@ class MeView(APIView):
     def get(self, request):
         serializer = CustomUserSerializer(request.user)
         return Response(serializer.data)
+
+    def patch(self, request):
+        serializer = CustomUserSerializer(
+            request.user,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    
+    
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response(
+                {"detail": "Current password is incorrect"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save()
+        update_session_auth_hash(request, user)
+
+        return Response({"detail": "Password changed successfully"})
     
     
 @api_view(["GET"])
@@ -4548,23 +4581,20 @@ class PrintJobViewSet(viewsets.ModelViewSet):
 # CUSTOMER VIEWSET
 # ===================================================================
 class CustomerViewSet(viewsets.ModelViewSet):
-    """
-    CRUD for restaurant customers.
-    """
-
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        # Now 'restaurant' is a valid keyword!
         restaurant = get_user_restaurant(self.request.user)
         if not restaurant:
             return Customer.objects.none()
         return Customer.objects.filter(restaurant=restaurant)
 
     def perform_create(self, serializer):
+        # Automatically assign the customer to the manager's restaurant
         restaurant = get_user_restaurant(self.request.user)
         serializer.save(restaurant=restaurant)
-
 
 # ===================================================================
 # INVENTORY VIEWSET

@@ -1,7 +1,12 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+
 import { AuthProvider } from "./context/AuthContext";
 import { useAuth } from "./hooks/useAuth";
+import { useRTL } from "./hooks/useRTL";
+
+// i18n
+import "./i18n"; // <-- ensures i18next is initialized before rendering
 
 import HomePage from "./pages/HomePage";
 import Login from "./pages/Login";
@@ -11,6 +16,8 @@ import OnboardingPage from "./pages/OnboardingPage";
 
 function ProtectedRoute({ children }) {
   const { accessToken, authLoading } = useAuth();
+  
+  console.log("ProtectedRoute", { authLoading, hasToken: !!accessToken });
 
   if (authLoading) {
     return <div className="p-8 text-gray-600">Checking authentication...</div>;
@@ -29,6 +36,9 @@ function ProtectedRoute({ children }) {
 }
 
 function App() {
+  // Initialize RTL handling based on current language
+  useRTL();
+
   return (
     <AuthProvider>
       <Routes>

@@ -1,0 +1,37 @@
+{
+  "nav": {
+    "home": "Ana Sayfa",
+    "pos": "POS",
+    "orders": "Siparişler",
+    "reports": "Raporlar"
+  },
+  "profile": {
+    "viewProfile": "Profili Görüntüle",
+    "tutorials": "Video Eğitimler",
+    "help": "Yardım ve Destek",
+    "apiKeys": "API ve Anahtarlar",
+    "billing": "Faturalandırma",
+    "activity": "Aktivite Günlüğü"
+  },
+  "footer": {
+    "system": "Sistem",
+    "fileManagement": "Dosya Yönetimi",
+    "settings": "Ayarlar",
+    "developers": "Geliştiriciler",
+    "apiDocs": "API ve Geliştiriciler",
+    "support": "Destek",
+    "contactSupport": "Destek ile İletişime Geç",
+    "legal": "Yasal",
+    "privacy": "Gizlilik Politikası",
+    "terms": "Hizmet Koşulları"
+  },
+  "languages": {
+    "en": "İngilizce",
+    "es": "İspanyolca",
+    "zh": "Çince",
+    "fr": "Fransızca",
+    "tr": "Türkçe",
+    "ur": "Urduca",
+    "ar": "Arapça"
+  }
+}

@@ -2,6 +2,7 @@
 
 from django.db import transaction
 from rest_framework import serializers
+from django.db.models import Sum 
 
 from .models import (
     CustomUser,
@@ -23,6 +24,20 @@ from .models import (
     Printer,
     PrintJob,
 )
+
+LANGUAGE_CHOICES = [
+    ("en", "English"),
+    ("es", "Español"),
+    ("zh", "中文"),
+    ("fr", "Français"),
+    ("tr", "Türkçe"),
+    ("ur", "اردو"),
+    ("ar", "العربية"),
+]
+
+
+language = serializers.ChoiceField(choices=LANGUAGE_CHOICES, required=False)
+
 
 # ==============================================================================
 # ✅ USER
@@ -66,6 +81,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = [
             "id",
+            "language",
             "username",
             "first_name",
             "last_name",
@@ -101,7 +117,11 @@ class CustomUserSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         full_name = f"{obj.first_name} {obj.last_name}".strip()
         return full_name or obj.email or obj.username
-    
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+
 class StaffUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
 
@@ -119,6 +139,7 @@ class StaffUserSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = [
             "id",
+            "language",
             "username",
             "email",
             "first_name",
@@ -210,6 +231,7 @@ class StaffUpdateSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "phone_number",
+            "language",
             "role",
             "is_active",
         ]
@@ -795,37 +817,29 @@ User = get_user_model()
 # ===================================================================
 # CUSTOMER SERIALIZER
 # ===================================================================
+
 class CustomerSerializer(serializers.ModelSerializer):
     """
     Includes computed fields for total_orders and total_spent.
     These are read-only and calculated on the fly.
     """
-
     total_orders = serializers.SerializerMethodField()
     total_spent = serializers.SerializerMethodField()
 
     class Meta:
         model = Customer
-        fields = [
-            "id",
-            "restaurant",
-            "name",
-            "phone",
-            "email",
-            "address",
-            "notes",
-            "total_orders",
-            "total_spent",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = '__all__'
+        read_only_fields = ('restaurant',) 
 
     def get_total_orders(self, obj):
-        return obj.total_orders
+        # This counts the number of orders linked to this customer
+        # Note: 'orders' is the related_name on the Order -> Customer ForeignKey
+        return obj.orders.count()
 
     def get_total_spent(self, obj):
-        return str(obj.total_spent)
+        # This sums the 'total_amount' field from all orders linked to this customer
+        result = obj.orders.aggregate(total=Sum('total_amount'))['total']
+        return str(result) if result else "0.00"
 
 
 # ===================================================================
