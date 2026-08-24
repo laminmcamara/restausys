@@ -1,13 +1,44 @@
 {
+  "common": {
+    "restaurant": "Restaurante",
+    "user": "Usuario",
+    "smartPosSystem": "Sistema POS inteligente",
+    "toggleNavigation": "Alternar navegación",
+    "logout": "Cerrar sesión"
+  },
   "nav": {
     "home": "Inicio",
     "pos": "TPV",
     "orders": "Pedidos",
     "reports": "Informes"
   },
+  "sidebar": {
+    "home": "Inicio",
+    "pos": "TPV",
+    "orders": "Pedidos",
+    "tables": "Mesas",
+    "kitchen": "Cocina",
+    "payments": "Pagos",
+    "pickupDisplay": "Pantalla de recogida",
+    "reports": "Informes",
+    "controlPanel": "Panel de control",
+    "products": "Productos",
+    "categories": "Categorías",
+    "modifiers": "Modificadores",
+    "inventory": "Inventario",
+    "discounts": "Descuentos",
+    "staff": "Personal",
+    "customers": "Clientes",
+    "settings": "Configuración"
+  },
+  "restaurant": {
+    "floorPlan": "Plano del restaurante",
+    "dineIn": "Comer en el restaurante",
+    "takeOut": "Para llevar"
+  },
   "profile": {
     "viewProfile": "Ver perfil",
-    "tutorials": "Tutoriales en video",
+    "tutorials": "Tutoriales en vídeo",
     "help": "Ayuda y soporte",
     "apiKeys": "API y claves",
     "billing": "Facturación",
@@ -20,10 +51,10 @@
     "developers": "Desarrolladores",
     "apiDocs": "API y desarrolladores",
     "support": "Soporte",
-    "contactSupport": "Contactar soporte",
+    "contactSupport": "Contactar con soporte",
     "legal": "Legal",
     "privacy": "Política de privacidad",
-    "terms": "Términos de servicio"
+    "terms": "Términos del servicio"
   },
   "languages": {
     "en": "Inglés",

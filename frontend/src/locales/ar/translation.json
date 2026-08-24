@@ -1,27 +1,58 @@
 {
+  "common": {
+    "restaurant": "مطعم",
+    "user": "مستخدم",
+    "smartPosSystem": "نظام نقاط بيع ذكي",
+    "toggleNavigation": "تبديل التنقل",
+    "logout": "تسجيل الخروج"
+  },
   "nav": {
     "home": "الرئيسية",
-    "pos": "نقطة البيع",
+    "pos": "نقاط البيع",
     "orders": "الطلبات",
     "reports": "التقارير"
+  },
+  "sidebar": {
+    "home": "الرئيسية",
+    "pos": "نقاط البيع",
+    "orders": "الطلبات",
+    "tables": "الطاولات",
+    "kitchen": "المطبخ",
+    "payments": "المدفوعات",
+    "pickupDisplay": "شاشة الاستلام",
+    "reports": "التقارير",
+    "controlPanel": "لوحة التحكم",
+    "products": "المنتجات",
+    "categories": "الفئات",
+    "modifiers": "الإضافات",
+    "inventory": "المخزون",
+    "discounts": "الخصومات",
+    "staff": "الموظفون",
+    "customers": "العملاء",
+    "settings": "الإعدادات"
+  },
+  "restaurant": {
+    "floorPlan": "مخطط المطعم",
+    "dineIn": "تناول الطعام داخل المطعم",
+    "takeOut": "طلبات خارجية"
   },
   "profile": {
     "viewProfile": "عرض الملف الشخصي",
     "tutorials": "دروس الفيديو",
     "help": "المساعدة والدعم",
-    "apiKeys": "API والمفاتيح",
-    "billing": "الفواتير",
-    "activity": "سجل النشاطات"
+    "apiKeys": "واجهات API والمفاتيح",
+    "billing": "الفوترة",
+    "activity": "سجل النشاط"
   },
   "footer": {
     "system": "النظام",
     "fileManagement": "إدارة الملفات",
     "settings": "الإعدادات",
     "developers": "المطورون",
-    "apiDocs": "API والمطورون",
+    "apiDocs": "واجهات API والمطورون",
     "support": "الدعم",
     "contactSupport": "اتصل بالدعم",
-    "legal": "قانوني",
+    "legal": "معلومات قانونية",
     "privacy": "سياسة الخصوصية",
     "terms": "شروط الخدمة"
   },

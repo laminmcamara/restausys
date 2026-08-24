@@ -1,15 +1,46 @@
 {
+  "common": {
+    "restaurant": "餐厅",
+    "user": "用户",
+    "smartPosSystem": "智能 POS 系统",
+    "toggleNavigation": "切换导航",
+    "logout": "退出登录"
+  },
   "nav": {
-    "home": "主页",
-    "pos": "收银",
+    "home": "首页",
+    "pos": "POS",
     "orders": "订单",
-    "reports": "报告"
+    "reports": "报表"
+  },
+  "sidebar": {
+    "home": "首页",
+    "pos": "POS",
+    "orders": "订单",
+    "tables": "餐桌",
+    "kitchen": "厨房",
+    "payments": "付款",
+    "pickupDisplay": "取餐显示屏",
+    "reports": "报表",
+    "controlPanel": "控制面板",
+    "products": "产品",
+    "categories": "分类",
+    "modifiers": "修改项",
+    "inventory": "库存",
+    "discounts": "折扣",
+    "staff": "员工",
+    "customers": "客户",
+    "settings": "设置"
+  },
+  "restaurant": {
+    "floorPlan": "餐厅布局",
+    "dineIn": "堂食",
+    "takeOut": "外带"
   },
   "profile": {
-    "viewProfile": "查看资料",
+    "viewProfile": "查看个人资料",
     "tutorials": "视频教程",
     "help": "帮助与支持",
-    "apiKeys": "API 和密钥",
+    "apiKeys": "API 与密钥",
     "billing": "账单",
     "activity": "活动日志"
   },
@@ -21,7 +52,7 @@
     "apiDocs": "API 与开发者",
     "support": "支持",
     "contactSupport": "联系支持",
-    "legal": "法律",
+    "legal": "法律信息",
     "privacy": "隐私政策",
     "terms": "服务条款"
   },

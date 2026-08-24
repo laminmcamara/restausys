@@ -1,9 +1,40 @@
 {
+  "common": {
+    "restaurant": "Restaurant",
+    "user": "Utilisateur",
+    "smartPosSystem": "Système POS intelligent",
+    "toggleNavigation": "Afficher ou masquer la navigation",
+    "logout": "Se déconnecter"
+  },
   "nav": {
     "home": "Accueil",
-    "pos": "Caisse",
+    "pos": "POS",
     "orders": "Commandes",
     "reports": "Rapports"
+  },
+  "sidebar": {
+    "home": "Accueil",
+    "pos": "POS",
+    "orders": "Commandes",
+    "tables": "Tables",
+    "kitchen": "Cuisine",
+    "payments": "Paiements",
+    "pickupDisplay": "Écran de retrait",
+    "reports": "Rapports",
+    "controlPanel": "Panneau de contrôle",
+    "products": "Produits",
+    "categories": "Catégories",
+    "modifiers": "Modificateurs",
+    "inventory": "Inventaire",
+    "discounts": "Réductions",
+    "staff": "Personnel",
+    "customers": "Clients",
+    "settings": "Paramètres"
+  },
+  "restaurant": {
+    "floorPlan": "Plan de salle",
+    "dineIn": "Sur place",
+    "takeOut": "À emporter"
   },
   "profile": {
     "viewProfile": "Voir le profil",
@@ -19,8 +50,8 @@
     "settings": "Paramètres",
     "developers": "Développeurs",
     "apiDocs": "API et développeurs",
-    "support": "Support",
-    "contactSupport": "Contacter le support",
+    "support": "Assistance",
+    "contactSupport": "Contacter l'assistance",
     "legal": "Mentions légales",
     "privacy": "Politique de confidentialité",
     "terms": "Conditions d'utilisation"

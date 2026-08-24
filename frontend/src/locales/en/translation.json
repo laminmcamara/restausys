@@ -1,9 +1,40 @@
 {
+  "common": {
+    "restaurant": "Restaurant",
+    "user": "User",
+    "smartPosSystem": "Smart POS System",
+    "toggleNavigation": "Toggle navigation",
+    "logout": "Logout"
+  },
   "nav": {
     "home": "Home",
     "pos": "POS",
     "orders": "Orders",
     "reports": "Reports"
+  },
+  "sidebar": {
+    "home": "Home",
+    "pos": "POS",
+    "orders": "Orders",
+    "tables": "Tables",
+    "kitchen": "Kitchen",
+    "payments": "Payments",
+    "pickupDisplay": "Pickup Display",
+    "reports": "Reports",
+    "controlPanel": "Control Panel",
+    "products": "Products",
+    "categories": "Categories",
+    "modifiers": "Modifiers",
+    "inventory": "Inventory",
+    "discounts": "Discounts",
+    "staff": "Staff",
+    "customers": "Customers",
+    "settings": "Settings"
+  },
+  "restaurant": {
+    "floorPlan": "Floor Plan",
+    "dineIn": "Dine-in",
+    "takeOut": "Take-out"
   },
   "profile": {
     "viewProfile": "View Profile",
@@ -25,7 +56,6 @@
     "privacy": "Privacy Policy",
     "terms": "Terms of Service"
   },
-  
   "languages": {
     "en": "English",
     "es": "Spanish",

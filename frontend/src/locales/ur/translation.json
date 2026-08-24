@@ -1,9 +1,40 @@
 {
+  "common": {
+    "restaurant": "ریستوران",
+    "user": "صارف",
+    "smartPosSystem": "اسمارٹ POS سسٹم",
+    "toggleNavigation": "نیویگیشن تبدیل کریں",
+    "logout": "لاگ آؤٹ"
+  },
   "nav": {
     "home": "ہوم",
     "pos": "POS",
     "orders": "آرڈرز",
     "reports": "رپورٹس"
+  },
+  "sidebar": {
+    "home": "ہوم",
+    "pos": "POS",
+    "orders": "آرڈرز",
+    "tables": "میزیں",
+    "kitchen": "کچن",
+    "payments": "ادائیگیاں",
+    "pickupDisplay": "پک اپ ڈسپلے",
+    "reports": "رپورٹس",
+    "controlPanel": "کنٹرول پینل",
+    "products": "مصنوعات",
+    "categories": "زمرے",
+    "modifiers": "ترمیم کنندگان",
+    "inventory": "انوینٹری",
+    "discounts": "رعایتیں",
+    "staff": "عملہ",
+    "customers": "صارفین",
+    "settings": "ترتیبات"
+  },
+  "restaurant": {
+    "floorPlan": "فلور پلان",
+    "dineIn": "ریستوران میں کھانا",
+    "takeOut": "ٹیک اوے"
   },
   "profile": {
     "viewProfile": "پروفائل دیکھیں",
@@ -21,7 +52,7 @@
     "apiDocs": "API اور ڈیولپرز",
     "support": "سپورٹ",
     "contactSupport": "سپورٹ سے رابطہ کریں",
-    "legal": "قانونی",
+    "legal": "قانونی معلومات",
     "privacy": "پرائیویسی پالیسی",
     "terms": "سروس کی شرائط"
   },
@@ -30,7 +61,7 @@
     "es": "ہسپانوی",
     "zh": "چینی",
     "fr": "فرانسیسی",
-    "tr": "ترک",
+    "tr": "ترکی",
     "ur": "اردو",
     "ar": "عربی"
   }

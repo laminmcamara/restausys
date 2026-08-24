@@ -17,7 +17,7 @@ export default function DashboardFooter() {
               <NavLink
                 to="/dashboard/files"
                 className="flex items-center space-x-2 text-slate-600 hover:text-amber-700">
-                <Folder size={16} />
+                <Folder size={24} />
                 <span>{t("footer.fileManagement")}</span>
               </NavLink>
             </li>
@@ -25,7 +25,7 @@ export default function DashboardFooter() {
               <NavLink
                 to="/dashboard/settings"
                 className="flex items-center space-x-2 text-slate-600 hover:text-amber-700">
-                <Settings size={16} />
+                <Settings size={24} />
                 <span>{t("footer.settings")}</span>
               </NavLink>
             </li>
@@ -41,7 +41,7 @@ export default function DashboardFooter() {
               <NavLink
                 to="/dashboard/developers"
                 className="flex items-center space-x-2 text-slate-600 hover:text-amber-700">
-                <KeyRound size={16} />
+                <KeyRound size={24} />
                 <span>{t("footer.apiDocs")}</span>
               </NavLink>
             </li>
@@ -57,7 +57,7 @@ export default function DashboardFooter() {
               <NavLink
                 to="/dashboard/help"
                 className="flex items-center space-x-2 text-slate-600 hover:text-amber-700">
-                <LifeBuoy size={16} />
+                <LifeBuoy size={24} />
                 <span>{t("footer.contactSupport")}</span>
               </NavLink>
             </li>

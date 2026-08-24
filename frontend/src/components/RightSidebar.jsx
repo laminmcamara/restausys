@@ -36,7 +36,7 @@ export default function RightSidebar() {
         <NavLink
           to="/dashboard/settings/profile"
           className="mt-3 inline-flex items-center space-x-2 text-xs font-medium text-amber-700 hover:text-amber-800">
-          <User size={14} />
+          <User size={24} />
           <span>{t("profile.viewProfile")}</span>
         </NavLink>
       </div>
@@ -46,35 +46,35 @@ export default function RightSidebar() {
         <NavLink
           to="/dashboard/tutorials"
           className="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700">
-          <BookOpen size={18} />
+          <BookOpen size={24} />
           <span className="text-sm font-medium">{t("profile.tutorials")}</span>
         </NavLink>
 
         <NavLink
           to="/dashboard/help"
           className="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700">
-          <HelpCircle size={18} />
+          <HelpCircle size={24} />
           <span className="text-sm font-medium">{t("profile.help")}</span>
         </NavLink>
 
         <NavLink
           to="/dashboard/developers"
           className="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700">
-          <KeyRound size={18} />
+          <KeyRound size={24} />
           <span className="text-sm font-medium">{t("profile.apiKeys")}</span>
         </NavLink>
 
         <NavLink
           to="/dashboard/billing"
           className="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700">
-          <CreditCard size={18} />
+          <CreditCard size={24} />
           <span className="text-sm font-medium">{t("profile.billing")}</span>
         </NavLink>
 
         <NavLink
           to="/dashboard/activity"
           className="flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700">
-          <Activity size={18} />
+          <Activity size={24} />
           <span className="text-sm font-medium">{t("profile.activity")}</span>
         </NavLink>
       </div>

@@ -1,17 +1,48 @@
 {
+  "common": {
+    "restaurant": "Restoran",
+    "user": "Kullanıcı",
+    "smartPosSystem": "Akıllı POS Sistemi",
+    "toggleNavigation": "Gezinmeyi aç veya kapat",
+    "logout": "Çıkış yap"
+  },
   "nav": {
     "home": "Ana Sayfa",
     "pos": "POS",
     "orders": "Siparişler",
     "reports": "Raporlar"
   },
+  "sidebar": {
+    "home": "Ana Sayfa",
+    "pos": "POS",
+    "orders": "Siparişler",
+    "tables": "Masalar",
+    "kitchen": "Mutfak",
+    "payments": "Ödemeler",
+    "pickupDisplay": "Teslim Alma Ekranı",
+    "reports": "Raporlar",
+    "controlPanel": "Kontrol Paneli",
+    "products": "Ürünler",
+    "categories": "Kategoriler",
+    "modifiers": "Ek seçenekler",
+    "inventory": "Envanter",
+    "discounts": "İndirimler",
+    "staff": "Personel",
+    "customers": "Müşteriler",
+    "settings": "Ayarlar"
+  },
+  "restaurant": {
+    "floorPlan": "Salon Planı",
+    "dineIn": "Restoranda",
+    "takeOut": "Paket Servis"
+  },
   "profile": {
     "viewProfile": "Profili Görüntüle",
-    "tutorials": "Video Eğitimler",
+    "tutorials": "Video Eğitimleri",
     "help": "Yardım ve Destek",
     "apiKeys": "API ve Anahtarlar",
     "billing": "Faturalandırma",
-    "activity": "Aktivite Günlüğü"
+    "activity": "Etkinlik Günlüğü"
   },
   "footer": {
     "system": "Sistem",
@@ -20,10 +51,10 @@
     "developers": "Geliştiriciler",
     "apiDocs": "API ve Geliştiriciler",
     "support": "Destek",
-    "contactSupport": "Destek ile İletişime Geç",
+    "contactSupport": "Destek Ekibiyle İletişim",
     "legal": "Yasal",
     "privacy": "Gizlilik Politikası",
-    "terms": "Hizmet Koşulları"
+    "terms": "Kullanım Koşulları"
   },
   "languages": {
     "en": "İngilizce",
