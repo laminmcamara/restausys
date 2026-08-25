@@ -48,7 +48,7 @@ export default function InventoryPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/manager/inventory/`, {
+      const res = await fetch(`${API_BASE_URL}/manager/inventory/`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error("Failed to load inventory");
@@ -101,8 +101,8 @@ export default function InventoryPage() {
     setFieldErrors({});
 
     const url = editingId
-      ? `${API_BASE_URL}/api/v1/manager/inventory/${editingId}/`
-      : `${API_BASE_URL}/api/v1/manager/inventory/`;
+      ? `${API_BASE_URL}/manager/inventory/${editingId}/`
+      : `${API_BASE_URL}/manager/inventory/`;
 
     const method = editingId ? "PATCH" : "POST";
 
@@ -144,7 +144,7 @@ export default function InventoryPage() {
         : parseFloat(item.quantity || 0) - qty;
 
     try {
-      await fetch(`${API_BASE_URL}/api/v1/manager/inventory/${item.id}/`, {
+      await fetch(`${API_BASE_URL}/manager/inventory/${item.id}/`, {
         method: "PATCH",
         headers: getAuthHeaders(),
         body: JSON.stringify({ quantity: newQty }),
@@ -160,7 +160,7 @@ export default function InventoryPage() {
   async function handleDelete(id) {
     if (!confirm("Delete this inventory item?")) return;
     try {
-      await fetch(`${API_BASE_URL}/api/v1/manager/inventory/${id}/`, {
+      await fetch(`${API_BASE_URL}/manager/inventory/${id}/`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });

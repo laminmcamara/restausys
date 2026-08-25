@@ -165,7 +165,7 @@ export default function Orders() {
   const updateStatus = async (orderId, newStatus) => {
     try {
       const response = await authFetch(
-        `${API_BASE}/api/v1/orders/${orderId}/`,
+        `${API_BASE}/orders/${orderId}/`,
         {
           method: "PATCH",
           body: JSON.stringify({ status: newStatus }),

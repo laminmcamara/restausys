@@ -31,7 +31,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const tableId = btn.dataset.id;
 
-        fetch(`/api/v1/tables/${tableId}/regenerate-qr/`, {
+        fetch(`/tables/${tableId}/regenerate-qr/`, {
             method: "POST",
             headers: {
                 "X-CSRFToken": csrftoken,

@@ -47,7 +47,7 @@ export default function DiscountsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/manager/discounts/`, {
+      const res = await fetch(`${API_BASE_URL}/manager/discounts/`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error("Failed to load discounts");
@@ -106,8 +106,8 @@ export default function DiscountsPage() {
     setFieldErrors({});
 
     const url = editingId
-      ? `${API_BASE_URL}/api/v1/manager/discounts/${editingId}/`
-      : `${API_BASE_URL}/api/v1/manager/discounts/`;
+      ? `${API_BASE_URL}/manager/discounts/${editingId}/`
+      : `${API_BASE_URL}/manager/discounts/`;
 
     const method = editingId ? "PATCH" : "POST";
 
@@ -141,7 +141,7 @@ export default function DiscountsPage() {
 
   async function handleToggle(id, currentActive) {
     try {
-      await fetch(`${API_BASE_URL}/api/v1/manager/discounts/${id}/`, {
+      await fetch(`${API_BASE_URL}/manager/discounts/${id}/`, {
         method: "PATCH",
         headers: getAuthHeaders(),
         body: JSON.stringify({ is_active: !currentActive }),
@@ -155,7 +155,7 @@ export default function DiscountsPage() {
   async function handleDelete(id) {
     if (!confirm("Delete this discount?")) return;
     try {
-      await fetch(`${API_BASE_URL}/api/v1/manager/discounts/${id}/`, {
+      await fetch(`${API_BASE_URL}/manager/discounts/${id}/`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });

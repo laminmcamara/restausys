@@ -28,9 +28,9 @@ document.addEventListener("DOMContentLoaded", function () {
     // =========================================================================
     // API ENDPOINTS
     // =========================================================================
-    const CATEGORIES_API = "/api/v1/categories/";
-    const MENU_API = "/api/v1/products/";
-    const PLACE_ORDER_API = "/api/v1/pos-save-order/";
+    const CATEGORIES_API = "/categories/";
+    const MENU_API = "/products/";
+    const PLACE_ORDER_API = "/pos-save-order/";
 
     // =========================================================================
     // CSRF

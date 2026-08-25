@@ -48,7 +48,7 @@ export default function StaffPage() {
     can_manage_settings: false,
   });
 
-  const STAFF_API = `${API_BASE_URL}/api/v1/manager/staff/`;
+  const STAFF_API = `${API_BASE_URL}/manager/staff/`;
 
   const fetchStaff = useCallback(async () => {
     setLoading(true);

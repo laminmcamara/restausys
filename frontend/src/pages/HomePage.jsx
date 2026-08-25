@@ -41,7 +41,7 @@ export default function HomePage() {
     setLoginError("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/token/`, {
+      const response = await fetch(`${API_BASE_URL}/token/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

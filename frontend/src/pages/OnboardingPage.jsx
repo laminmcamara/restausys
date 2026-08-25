@@ -8,7 +8,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-
+import restaurantBackground from "../assets/beepos-restaurant-bg.jpg";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -81,7 +81,7 @@ function OnboardingPage() {
 
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/v1/restaurants/register/`,
+        `${API_BASE_URL}/restaurants/register/`,
         {
           method: "POST",
           headers: {

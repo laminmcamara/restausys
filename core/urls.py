@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import (
 from .views import *
 from .views_webhooks import stripe_webhook
 from .views import (register_restaurant_api, reports_summary, settings_api, staff_list_create_api, staff_detail_api, CustomerViewSet, PaymentViewSet,
-    InventoryViewSet, DiscountViewSet, MarkOrderPaidView, ChangePasswordView)
+    InventoryViewSet, DiscountViewSet, MarkOrderPaidView, ChangePasswordView, PlaceOrderAPIView)
 
 app_name = "core"
 
@@ -41,6 +41,10 @@ router.register(r"manager/discounts", DiscountViewSet, basename="manager-discoun
 # ============================================================
 
 urlpatterns = [
+    
+    path('api/v1/orders/place/', PlaceOrderAPIView.as_view(), name='place-order'),
+
+    
     path('api/v1/', include(router.urls)),
 
     # ========================================================
@@ -61,12 +65,11 @@ urlpatterns = [
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
-    path('api/v1/', include(router.urls)),
     # ========================================================
     # USER INFO
     # ========================================================
     path("api/me/", MeView.as_view(), name="me"),
-    path("api/v1/change-password/", ChangePasswordView.as_view(), name="change-password"),
+    path("api/change-password/", ChangePasswordView.as_view(), name="change-password"),
     
     # ========================================================
     # SUBSCRIPTION
@@ -87,6 +90,8 @@ urlpatterns = [
         PublicMenuViewSet.as_view({"get": "list"}),
         name="public-menus",
     ),
+    
+
 
     path(
         "api/v1/public/<uuid:restaurant_id>/menus/<uuid:pk>/",

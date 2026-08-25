@@ -6,6 +6,7 @@ const LANGUAGES = [
   { code: "en", label: "English" },
   { code: "es", label: "Español" },
   { code: "zh", label: "中文" },
+  { code: "zh-HK", label: "粵語 (繁體)" },
   { code: "fr", label: "Français" },
   { code: "tr", label: "Türkçe" },
   { code: "ur", label: "اردو" },
@@ -21,7 +22,7 @@ const TIMEZONES = [
   "America/Los_Angeles",
 ];
 
-const BASE_URL = "/api/v1";
+const BASE_URL = "/api";
 
 export default function ProfilePage() {
   const { user, accessToken } = useAuth();
@@ -43,7 +44,7 @@ export default function ProfilePage() {
     confirm: "",
   });
 
-  // Load profile from /api/v1/me/
+  // Load profile from /api/me/
   useEffect(() => {
     let cancelled = false;
 
@@ -112,7 +113,7 @@ export default function ProfilePage() {
       return;
     }
     try {
-      const res = await fetch(`${BASE_URL}/change-password/`, {
+      const res = await fetch(`${BASE_URL}/change-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

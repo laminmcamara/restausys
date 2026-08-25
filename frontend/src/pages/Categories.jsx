@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { useAuth } from "../hooks/useAuth";
+import api from "../services/api";
 
 export default function Categories() {
-  const { accessToken } = useAuth();
-
   const [categories, setCategories] = useState([]);
   const [activeMenu, setActiveMenu] = useState(null);
 
@@ -15,90 +13,40 @@ export default function Categories() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const MENUS_URL = "http://127.0.0.1:8000/api/v1/manager/menus/";
-  const CATEGORIES_URL = "http://127.0.0.1:8000/api/v1/manager/categories/";
-
   useEffect(() => {
-    if (accessToken) {
-      loadPageData();
-    }
-  }, [accessToken]);
-
-  const authFetch = async (url, options = {}) => {
-    return fetch(url, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-    });
-  };
-
-  const parseError = async (response, fallbackMessage) => {
-    const data = await response.json().catch(() => null);
-
-    if (data?.detail) return data.detail;
-    if (data?.error) return data.error;
-
-    if (typeof data === "object" && data !== null) {
-      const firstKey = Object.keys(data)[0];
-
-      if (firstKey) {
-        const value = data[firstKey];
-
-        if (Array.isArray(value)) {
-          return `${firstKey}: ${value.join(", ")}`;
-        }
-
-        return `${firstKey}: ${value}`;
-      }
-    }
-
-    return fallbackMessage;
-  };
+    loadPageData();
+  }, []);
 
   const loadPageData = async () => {
     setLoading(true);
     setError("");
-
     try {
-      await Promise.all([fetchActiveMenu(), fetchCategories()]);
+      // Fetch menus and categories using the centralized API service
+      const [menusRes, categoriesRes] = await Promise.all([
+        api.get("/manager/menus/"),
+        api.get("/manager/categories/"),
+      ]);
+
+      const menus = menusRes.data.results || menusRes.data;
+      const active = menus.find((menu) => menu.is_active);
+
+      setActiveMenu(active || null);
+      setCategories(categoriesRes.data.results || categoriesRes.data);
     } catch (err) {
-      setError(err.message || "Failed to load categories.");
+      console.error("Load Error:", err);
+      setError(err.response?.data?.detail || "Failed to load categories.");
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchActiveMenu = async () => {
-    const response = await authFetch(MENUS_URL);
-
-    if (!response) return;
-
-    if (!response.ok) {
-      throw new Error(await parseError(response, "Failed to fetch menus."));
-    }
-
-    const data = await response.json();
-    const active = data.find((menu) => menu.is_active);
-
-    setActiveMenu(active || null);
-  };
-
   const fetchCategories = async () => {
-    const response = await authFetch(CATEGORIES_URL);
-
-    if (!response) return;
-
-    if (!response.ok) {
-      throw new Error(
-        await parseError(response, "Failed to fetch categories.")
-      );
+    try {
+      const res = await api.get("/manager/categories/");
+      setCategories(res.data.results || res.data);
+    } catch (err) {
+      setError("Failed to refresh categories list.");
     }
-
-    const data = await response.json();
-    setCategories(data);
   };
 
   const handleCreate = async (e) => {
@@ -120,40 +68,22 @@ export default function Categories() {
     setError("");
 
     try {
-      const response = await authFetch(CATEGORIES_URL, {
-        method: "POST",
-        body: JSON.stringify({
-          name: name.trim(),
-          menu: activeMenu.id,
-        }),
+      await api.post("/manager/categories/", {
+        name: name.trim(),
+        menu: activeMenu.id,
       });
-
-      if (!response) return;
-
-      if (!response.ok) {
-        throw new Error(
-          await parseError(response, "Failed to create category.")
-        );
-      }
 
       setName("");
       await fetchCategories();
     } catch (err) {
-      setError(err.message || "Failed to create category.");
+      setError(
+        err.response?.data?.name?.[0] ||
+          err.response?.data?.detail ||
+          "Failed to create category."
+      );
     } finally {
       setSaving(false);
     }
-  };
-
-  const startEditing = (category) => {
-    setEditingId(category.id);
-    setEditingName(category.name);
-    setError("");
-  };
-
-  const cancelEditing = () => {
-    setEditingId(null);
-    setEditingName("");
   };
 
   const handleUpdate = async (categoryId) => {
@@ -166,68 +96,39 @@ export default function Categories() {
     setError("");
 
     try {
-      const response = await authFetch(`${CATEGORIES_URL}${categoryId}/`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: editingName.trim(),
-        }),
+      await api.patch(`/manager/categories/${categoryId}/`, {
+        name: editingName.trim(),
       });
-
-      if (!response) return;
-
-      if (!response.ok) {
-        throw new Error(
-          await parseError(response, "Failed to update category.")
-        );
-      }
 
       setEditingId(null);
       setEditingName("");
       await fetchCategories();
     } catch (err) {
-      setError(err.message || "Failed to update category.");
+      setError(err.response?.data?.detail || "Failed to update category.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (categoryId) => {
-    const confirmed = window.confirm(
-      "Are you sure you want to delete this category?"
-    );
-
-    if (!confirmed) return;
+    if (!window.confirm("Are you sure you want to delete this category?"))
+      return;
 
     setSaving(true);
     setError("");
 
     try {
-      const response = await authFetch(`${CATEGORIES_URL}${categoryId}/`, {
-        method: "DELETE",
-      });
-
-      if (!response) return;
-
-      if (!response.ok) {
-        throw new Error(
-          await parseError(response, "Failed to delete category.")
-        );
-      }
-
+      await api.delete(`/manager/categories/${categoryId}/`);
       await fetchCategories();
     } catch (err) {
-      setError(err.message || "Failed to delete category.");
+      setError(err.response?.data?.detail || "Failed to delete category.");
     } finally {
       setSaving(false);
     }
   };
 
   if (loading) {
-    return (
-      <div className="p-8">
-        <div className="text-gray-600">Loading categories...</div>
-      </div>
-    );
+    return <div className="p-8 text-gray-600">Loading categories...</div>;
   }
 
   return (
@@ -245,13 +146,12 @@ export default function Categories() {
         </div>
       )}
 
-      {!activeMenu && (
+      {!activeMenu ? (
         <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded font-medium">
-          No active menu found. Please create and activate a menu first.
+          No active menu found. Please create and activate a menu first in Menu
+          Management.
         </div>
-      )}
-
-      {activeMenu && (
+      ) : (
         <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded">
           Active menu: <span className="font-semibold">{activeMenu.name}</span>
         </div>
@@ -268,11 +168,10 @@ export default function Categories() {
           className="border p-2 rounded w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           required
         />
-
         <button
           type="submit"
           disabled={!activeMenu || saving}
-          className={`px-4 py-2 rounded text-white ${
+          className={`px-4 py-2 rounded text-white font-medium ${
             !activeMenu || saving
               ? "bg-gray-400 cursor-not-allowed"
               : "bg-blue-600 hover:bg-blue-700"
@@ -290,7 +189,7 @@ export default function Categories() {
           categories.map((cat) => (
             <div
               key={cat.id}
-              className="border p-3 rounded flex items-center justify-between gap-4">
+              className="border p-3 rounded flex items-center justify-between gap-4 bg-white shadow-sm">
               {editingId === cat.id ? (
                 <>
                   <input
@@ -300,43 +199,35 @@ export default function Categories() {
                     className="border p-2 rounded w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                     autoFocus
                   />
-
                   <div className="flex gap-2">
                     <button
-                      type="button"
                       onClick={() => handleUpdate(cat.id)}
                       disabled={saving}
-                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded disabled:bg-gray-400">
+                      className="bg-green-600 text-white px-3 py-2 rounded text-sm">
                       Save
                     </button>
-
                     <button
-                      type="button"
-                      onClick={cancelEditing}
-                      disabled={saving}
-                      className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded disabled:bg-gray-400">
+                      onClick={() => setEditingId(null)}
+                      className="bg-gray-500 text-white px-3 py-2 rounded text-sm">
                       Cancel
                     </button>
                   </div>
                 </>
               ) : (
                 <>
-                  <span className="font-medium">{cat.name}</span>
-
+                  <span className="font-medium text-gray-800">{cat.name}</span>
                   <div className="flex gap-2">
                     <button
-                      type="button"
-                      onClick={() => startEditing(cat)}
-                      disabled={saving}
-                      className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded disabled:bg-gray-400">
+                      onClick={() => {
+                        setEditingId(cat.id);
+                        setEditingName(cat.name);
+                      }}
+                      className="text-blue-600 hover:underline text-sm font-medium">
                       Edit
                     </button>
-
                     <button
-                      type="button"
                       onClick={() => handleDelete(cat.id)}
-                      disabled={saving}
-                      className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded disabled:bg-gray-400">
+                      className="text-red-600 hover:underline text-sm font-medium">
                       Delete
                     </button>
                   </div>

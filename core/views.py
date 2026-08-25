@@ -78,9 +78,11 @@ from .models import Printer, PrintJob
 from .serializers import PrinterSerializer, PrintJobSerializer
 from core.services.printer_service import create_kitchen_print_job
 # CORE IMPORTS
+from rest_framework_simplejwt.tokens import RefreshToken
+
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift, Subscription, Customer
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift, Subscription, Customer, Plan
 
 )
 from .serializers import (
@@ -1304,90 +1306,106 @@ def table_checkout(request, token):
     })
     
     
-@require_POST
-@transaction.atomic
-def place_table_order(request, token):
+
+class PlaceOrderAPIView(APIView):
     """
-    Production-safe QR order placement.
+    API View to handle order placement from the POS.
+    It manages Table Sessions, Order Items, and Modifiers in a single transaction.
     """
+    permission_classes = [permissions.IsAuthenticated]
 
-    if not validate_qr_session(request, token):
-        return render(request, "customer/session_expired.html")
+    @transaction.atomic
+    def post(self, request):
+        data = request.data
+        table_id = data.get("table_id")
+        items = data.get("items", [])
 
-    table = get_object_or_404(
-        Table.objects.select_related("restaurant"),
-        access_token=token,
-        is_active=True
-    )
-
-    cart = request.session.get("cart", {})
-
-    if not cart:
-        return redirect("core:public-table-menu", token=token)
-
-    MAX_QTY_PER_ITEM = 50
-
-    # ✅ Create draft order
-    order = Order.create_for_table(
-        table=table,
-        created_by=None
-    )
-
-    # ✅ Lock order row
-    order = Order.objects.select_for_update().get(id=order.id)
-
-    if order.status != Order.Status.DRAFT:
-        return render(request, "customer/session_expired.html")
-
-    order.items.all().delete()
-
-    total_items = 0
-
-    for variant_id, qty in cart.items():
-
-        try:
-            qty = int(qty)
-        except (TypeError, ValueError):
-            continue
-
-        if qty <= 0 or qty > MAX_QTY_PER_ITEM:
-            continue
-
-        try:
-            variant = ProductVariant.objects.select_related("product").get(
-                id=variant_id,
-                product__category__menu__restaurant=table.restaurant,
-                product__is_available=True
+        if not items:
+            return Response(
+                {"error": "Cannot place an empty order."}, 
+                status=status.HTTP_400_BAD_REQUEST
             )
-        except ProductVariant.DoesNotExist:
-            continue
 
-        OrderItem.objects.create(
-            order=order,
-            product=variant.product,
-            variant=variant,
-            quantity=qty
-        )
+        try:
+            # 1. Verify Table and Restaurant ownership
+            # Ensures a user from Restaurant A cannot place an order for Restaurant B
+            table = Table.objects.select_for_update().get(
+                id=table_id, 
+                restaurant=request.user.restaurant
+            )
 
-        total_items += 1
+            # 2. Get or Create an Active Session
+            # Orders must be linked to a session (NOT NULL constraint fix)
+            session = TableSession.objects.filter(
+                table=table, 
+                is_active=True,
+                restaurant=request.user.restaurant
+            ).first()
 
-    if total_items == 0:
-        return redirect("core:public-table-menu", token=token)
+            if not session:
+                session = TableSession.objects.create(
+                    table=table,
+                    restaurant=request.user.restaurant,
+                    is_active=True,
+                    opened_by=request.user
+                )
+                # Update table status to occupied
+                table.status = "OCCUPIED"
+                table.save(update_fields=['status'])
 
-    # ✅ Use official state transition
-    order.transition_to(Order.Status.PLACED, actor=None)
+            # 3. Create the Order
+            order = Order.objects.create(
+                restaurant=request.user.restaurant,
+                table=table,
+                session=session,
+                status="PLACED",
+                created_by=request.user,
+                payment_status="PENDING"
+            )
 
-    # ✅ Clear cart
-    request.session["cart"] = {}
-    request.session.modified = True
+            # 4. Process Order Items
+            for item_data in items:
+                product_id = item_data.get('product_id')
+                quantity = int(item_data.get('quantity', 1))
+                modifier_ids = item_data.get('modifier_option_ids', [])
+                
+                # Create the OrderItem
+                # Note: final_price is set to 0 initially, then updated by recalculate_price
+                order_item = OrderItem.objects.create(
+                    order=order,
+                    product_id=product_id,
+                    quantity=quantity,
+                    status="QUEUED"
+                )
 
-    return redirect(
-        "core:table-order-status",
-        token=token,
-        order_id=order.id
-    )
-    
-    
+                # Link Many-to-Many Modifiers
+                if modifier_ids:
+                    order_item.modifiers.set(modifier_ids)
+
+                # Trigger the model logic to calculate price based on product + modifiers
+                # This ensures the 'final_price' snapshot is saved correctly
+                order_item.recalculate_price()
+
+            # 5. Finalize Order Totals
+            # This triggers the Order model's method to sum up all item prices
+            order.calculate_totals()
+
+            return Response({
+                "message": "Order placed successfully",
+                "order_id": order.id,
+                "order_number": order.order_number if hasattr(order, 'order_number') else order.id,
+                "session_id": session.id
+            }, status=status.HTTP_201_CREATED)
+
+        except Table.DoesNotExist:
+            return Response({"error": "Table not found."}, status=status.HTTP_404_NOT_FOUND)
+        except Product.DoesNotExist:
+            return Response({"error": "One or more products not found."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            # Log the error for debugging
+            print(f"Order Placement Error: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 # ======================================================================
 # ======================== API VIEWSETS ================================
 # ======================================================================
@@ -1396,38 +1414,34 @@ class TableViewSet(TenantModelViewSet):
     permission_classes = [IsAuthenticated, IsStaffOfRestaurant]
 
     def get_queryset(self):
-        restaurants = get_accessible_restaurants(self.request.user)
         user = self.request.user
 
+        # 1. Handle Superuser (Admin) Logic
         if user.is_superuser:
             restaurant_id = self.request.query_params.get("restaurant")
-
             tables = Table.objects.all()
-
+        
+        # If no specific restaurant is requested, you might want to return 
+        # nothing or only the superuser's own restaurant to prevent clutter
             if restaurant_id:
                 tables = tables.filter(restaurant_id=restaurant_id)
+        
+        # Add annotations
+            active_session_qs = TableSession.objects.filter(table=OuterRef("pk"), is_active=True)
+            return tables.annotate(
+                has_active_session=Exists(active_session_qs),
+                active_session_id=Subquery(active_session_qs.values("id")[:1])
+            ).order_by("restaurant_id", "table_number")
 
-            active_session_qs = TableSession.objects.filter(
-                table=OuterRef("pk"),
-                is_active=True
-            )
-
-            return (
-                tables
-                .annotate(
-                    has_active_session=Exists(active_session_qs),
-                    active_session_id=Subquery(
-                        active_session_qs.values("id")[:1]
-                    )
-                )
-                .order_by("restaurant_id", "table_number")
-            )
-
+    # 2. Handle Standard Restaurant Staff/Managers
+    # Use the restaurant associated with the user profile
         restaurant = getattr(user, "restaurant", None)
 
-        if restaurant is None:
+        if not restaurant:
+        # If the user isn't assigned to a restaurant, they see NOTHING
             return Table.objects.none()
 
+    # Strict filtering by the user's assigned restaurant
         active_session_qs = TableSession.objects.filter(
             table=OuterRef("pk"),
             restaurant=restaurant,
@@ -1436,15 +1450,14 @@ class TableViewSet(TenantModelViewSet):
 
         return (
             Table.objects
-            .filter(restaurant=restaurant)
+            .filter(restaurant=restaurant) # This is the isolation barrier
             .annotate(
                 has_active_session=Exists(active_session_qs),
-                active_session_id=Subquery(
-                    active_session_qs.values("id")[:1]
-                )
+                active_session_id=Subquery(active_session_qs.values("id")[:1])
             )
             .order_by("table_number")
         )
+
 
     @action(detail=True, methods=["post"])
     def generate_qr(self, request, pk=None):
@@ -2760,15 +2773,29 @@ def mock_activate_subscription(request):
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated])
 def settings_api(request):
-    restaurant = getattr(request.user, "restaurant", None)
+    # 1. Check if user is superuser
+    if request.user.is_superuser:
+        # For superusers, we try to get a restaurant from query params, 
+        # otherwise just take the first one in the system for management.
+        restaurant_id = request.query_params.get('restaurant_id')
+        if restaurant_id:
+            restaurant = Restaurant.objects.filter(id=restaurant_id).first()
+        else:
+            restaurant = Restaurant.objects.first()
+    else:
+        # Normal flow for restaurant staff
+        restaurant = getattr(request.user, "restaurant", None)
 
+    # 2. Validation
     if not restaurant:
-        raise PermissionDenied("SaaS admin cannot edit restaurant settings.")
+        raise PermissionDenied("No restaurant found or associated with this account.")
 
-    if hasattr(request.user, "role"):
+    # 3. Role Check (Skip for superusers)
+    if not request.user.is_superuser and hasattr(request.user, "role"):
         if request.user.role not in ["OWNER", "MANAGER"]:
             raise PermissionDenied("Only owners and managers can edit restaurant settings.")
 
+    # 4. Logic
     settings_obj, _ = Settings.objects.get_or_create(
         restaurant=restaurant,
         defaults={
@@ -2790,7 +2817,7 @@ def settings_api(request):
         serializer.save()
 
         return Response(serializer.data)
-    
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me_api(request):
@@ -4305,39 +4332,160 @@ def register_restaurant(request):
 
     return render(request, "core/register.html", {"form": form})
 
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def dashboard_api(request):
+    user = request.user
+    restaurant = user.restaurant
+
+    if not restaurant:
+        return Response(
+            {
+                "success": False,
+                "message": (
+                    "Your account is not assigned to a restaurant."
+                ),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    company = restaurant.company
+    subscription = getattr(restaurant, "subscription", None)
+
+    if subscription:
+        subscription.expire_if_needed()
+
+    trial_ended = False
+
+    if subscription and subscription.current_period_end:
+        trial_ended = (
+            subscription.current_period_end
+            <= timezone.now()
+        )
+
+    profile_incomplete = not restaurant.onboarding_completed
+
+    return Response(
+        {
+            "success": True,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role,
+            },
+            "company": {
+                "id": company.id,
+                "name": company.name,
+            },
+            "restaurant": {
+                "id": restaurant.id,
+                "name": restaurant.name,
+                "address_line_1": restaurant.address_line_1,
+                "city": restaurant.city,
+                "country": restaurant.country,
+                "timezone": restaurant.timezone,
+                "currency": restaurant.currency,
+                "onboarding_completed": (
+                    restaurant.onboarding_completed
+                ),
+            },
+            "onboarding": {
+                "completed": (
+                    restaurant.onboarding_completed
+                ),
+                "profile_incomplete": profile_incomplete,
+                "trial_ended": trial_ended,
+                "show_completion_prompt": (
+                    profile_incomplete and not trial_ended
+                ),
+            },
+            "subscription": (
+                {
+                    "id": subscription.id,
+                    "status": subscription.status,
+                    "plan_name": (
+                        subscription.plan.name
+                        if subscription.plan
+                        else None
+                    ),
+                    "current_period_end": (
+                        subscription.current_period_end
+                    ),
+                    "days_remaining": subscription.days_remaining,
+                    "is_active": subscription.is_active(),
+                }
+                if subscription
+                else None
+            ),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 def subscription_expired(request):
-    return render(request, "core/subscription_expired.html")
+    return render(
+        request,
+        "core/subscription_expired.html",
+    )
+
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
 @transaction.atomic
 def register_restaurant_api(request):
-    form = RestaurantRegistrationForm(request.data)
+    form = RestaurantRegistrationForm(data=request.data)
 
     if not form.is_valid():
-        return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "success": False,
+                "message": "Please correct the errors below.",
+                "errors": form.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    email = form.cleaned_data["email"]
+    email = form.cleaned_data["email"].strip().lower()
     password = form.cleaned_data["password"]
-    restaurant_name = form.cleaned_data["restaurant_name"]
-
-    # 1. Create Company
-    company = Company.objects.create(
-        name=restaurant_name
+    restaurant_name = (
+        form.cleaned_data["restaurant_name"].strip()
     )
 
-    # 2. Create Restaurant
+    if CustomUser.objects.filter(email__iexact=email).exists():
+        return Response(
+            {
+                "success": False,
+                "message": "A user with this email already exists.",
+                "errors": {
+                    "email": [
+                        "A user with this email already exists."
+                    ]
+                },
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    starter_plan = Plan.objects.filter(
+        code="starter",
+        is_active=True,
+    ).first()
+
+    company = Company.objects.create(
+        name=restaurant_name,
+    )
+
     restaurant = Restaurant.objects.create(
         company=company,
         name=restaurant_name,
-        address_line_1="Not Provided",
-        city="Not Provided",
-        country="Not Provided",
+        address_line_1="",
+        city="",
+        country="",
         timezone="UTC",
         currency="USD",
+        onboarding_completed=False,
     )
 
-    # 3. Create User
     user = CustomUser(
         username=email,
         email=email,
@@ -4347,19 +4495,31 @@ def register_restaurant_api(request):
     user.set_password(password)
     user.save()
 
-    # 4. Create Trial Subscription
     subscription = Subscription.objects.create(
         restaurant=restaurant,
-        plan_name="Trial",
-        end_date=now().date() + timedelta(days=14)
+        plan=starter_plan,
+        status=Subscription.SubscriptionStatus.TRIALING,
     )
 
-    # 5. Create JWT tokens
     refresh = RefreshToken.for_user(user)
 
     return Response(
         {
-            "message": "Registration successful.",
+            "success": True,
+            "message": (
+                f"Welcome to {restaurant.name}. "
+                "Your account was created successfully."
+            ),
+            "onboarding": {
+                "completed": restaurant.onboarding_completed,
+                "required": True,
+                "message": (
+                    "Please complete your restaurant profile "
+                    "before the trial ends."
+                ),
+            },
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
             "company": {
                 "id": company.id,
                 "name": company.name,
@@ -4367,24 +4527,43 @@ def register_restaurant_api(request):
             "restaurant": {
                 "id": restaurant.id,
                 "name": restaurant.name,
+                "company_id": company.id,
+                "onboarding_completed": (
+                    restaurant.onboarding_completed
+                ),
             },
             "user": {
                 "id": user.id,
+                "username": user.username,
                 "email": user.email,
                 "role": user.role,
+                "restaurant_id": restaurant.id,
             },
             "subscription": {
                 "id": subscription.id,
-                "plan_name": subscription.plan_name,
-                "end_date": subscription.end_date,
+                "status": subscription.status,
+                "plan_id": subscription.plan_id,
+                "plan_name": (
+                    subscription.plan.name
+                    if subscription.plan
+                    else None
+                ),
+                "trial_start": subscription.trial_start,
+                "trial_end": subscription.trial_end,
+                "current_period_start": (
+                    subscription.current_period_start
+                ),
+                "current_period_end": (
+                    subscription.current_period_end
+                ),
+                "days_remaining": subscription.days_remaining,
+                "is_active": subscription.is_active(),
             },
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
         },
         status=status.HTTP_201_CREATED,
     )
-
-
+    
+    
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def reports_summary(request):

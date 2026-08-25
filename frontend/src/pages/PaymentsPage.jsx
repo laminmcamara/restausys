@@ -55,7 +55,7 @@ export default function PaymentsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/manager/payments/`, {
+      const res = await fetch(`${API_BASE_URL}/manager/payments/`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error("Failed to load payments");
@@ -75,7 +75,7 @@ export default function PaymentsPage() {
   async function handleMarkPaid(orderId) {
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/v1/manager/orders/${orderId}/mark-paid/`,
+        `${API_BASE_URL}/manager/orders/${orderId}/mark-paid/`,
         {
           method: "POST",
           headers: getAuthHeaders(),

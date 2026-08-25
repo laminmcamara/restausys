@@ -28,7 +28,7 @@ export default function TablesManagement() {
 
   const fetchTables = async () => {
     try {
-      const res = await api.get("/v1/tables/");
+      const res = await api.get("/tables/");
       setTables(res.data.results || res.data);
     } catch (err) {
       console.error("Error fetching tables:", err);
@@ -61,7 +61,8 @@ export default function TablesManagement() {
           capacity: parseInt(capacity),
         });
       } else {
-        await api.post("/v1/tables/", {
+        // FIXED: Removed "/v1" prefix to prevent /api/v1/v1/ duplication
+        await api.post("/tables/", {
           table_number: tableNumber,
           capacity: parseInt(capacity),
         });
@@ -212,20 +213,9 @@ export default function TablesManagement() {
             <h2 className="text-xl font-semibold mb-4">
               {editingTable ? "Edit Table" : "Create Table"}
             </h2>
-            <div className="mb-4">
-              <span
-                className={`px-3 py-1 text-xs rounded ${
-                  order.status === "DRAFT"
-                    ? "bg-gray-200 text-gray-700"
-                    : order.status === "IN_PROGRESS"
-                    ? "bg-orange-100 text-orange-700"
-                    : order.status === "PAID"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-blue-100 text-blue-700"
-                }`}>
-                {order.status}
-              </span>
-            </div>
+
+            {/* FIXED: Removed the block referencing 'order.status' which caused the ReferenceError */}
+
             <form
               onSubmit={handleSave}
               className="space-y-4">

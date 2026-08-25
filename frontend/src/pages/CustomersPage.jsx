@@ -45,7 +45,7 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
 
-  const CUSTOMER_API = `${API_BASE_URL}/api/v1/manager/customers/`;
+  const CUSTOMER_API = `${API_BASE_URL}/manager/customers/`;
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);

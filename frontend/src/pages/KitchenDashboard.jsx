@@ -40,7 +40,7 @@ export default function KitchenDashboard() {
     try {
       setError("");
 
-      const res = await api.get("/v1/orders/");
+      const res = await api.get("/orders/");
       console.log("KITCHEN ORDERS RESPONSE:", res.data);
 
       const data = Array.isArray(res.data)
@@ -123,7 +123,7 @@ export default function KitchenDashboard() {
       setUpdatingOrderId(order.id);
       setError("");
 
-      await api.patch(`/v1/orders/${order.id}/`, {
+      await api.patch(`/orders/${order.id}/`, {
         status: nextStatus,
       });
 

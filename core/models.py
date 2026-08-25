@@ -428,6 +428,7 @@ class Restaurant(TimeStampedModel):
         null=True,
         blank=True,
     )
+    
 
     phone_number = models.CharField(
         max_length=20,
@@ -444,6 +445,23 @@ class Restaurant(TimeStampedModel):
         default=uuid.uuid4,
         unique=True,
         editable=False,
+    )
+    
+    onboarding_completed = models.BooleanField(
+        default=False,
+    )
+
+    onboarding_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+    
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
     )
 
     slug = models.SlugField(unique=True)
@@ -2331,14 +2349,17 @@ class WaiterCall(TimeStampedModel):
     def __str__(self):
         return f"Call from Table {self.table.table_number}"
     
-class Plan(models.Model):
 
-    name = models.CharField(max_length=100, unique=True)
+class Plan(models.Model):
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+    )
 
     code = models.SlugField(
         max_length=100,
         unique=True,
-        help_text="Internal plan code, e.g. starter, pro, enterprise",
+        help_text="Internal plan code, e.g. starter, pro, enterprise.",
     )
 
     monthly_price = models.DecimalField(
@@ -2346,22 +2367,34 @@ class Plan(models.Model):
         decimal_places=2,
     )
 
-    max_users = models.PositiveIntegerField(default=5)
-    max_tables = models.PositiveIntegerField(default=20)
+    max_users = models.PositiveIntegerField(
+        default=5,
+    )
 
-    allow_inventory = models.BooleanField(default=True)
-    allow_analytics = models.BooleanField(default=True)
+    max_tables = models.PositiveIntegerField(
+        default=20,
+    )
 
-    is_active = models.BooleanField(default=True)
+    allow_inventory = models.BooleanField(
+        default=True,
+    )
+
+    allow_analytics = models.BooleanField(
+        default=True,
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+    )
+
+    class Meta:
+        ordering = ["monthly_price"]
 
     def __str__(self):
         return self.name
 
-    class Meta:
-        ordering = ["monthly_price"]
-        
-class Subscription(models.Model):
 
+class Subscription(models.Model):
     class SubscriptionStatus(models.TextChoices):
         TRIALING = "trialing", "Trialing"
         ACTIVE = "active", "Active"
@@ -2379,7 +2412,7 @@ class Subscription(models.Model):
     restaurant = models.OneToOneField(
         "core.Restaurant",
         on_delete=models.CASCADE,
-        related_name="subscription"
+        related_name="subscription",
     )
 
     plan = models.ForeignKey(
@@ -2396,72 +2429,86 @@ class Subscription(models.Model):
         default=SubscriptionStatus.TRIALING,
     )
 
-    # Original free trial period.
-    # These should be set once and not reset during reactivation.
-    trial_start = models.DateTimeField(blank=True, null=True)
-    trial_end = models.DateTimeField(blank=True, null=True)
+    trial_start = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
 
-    # Current access period.
-    # During trial:
-    # current_period_start = trial_start
-    # current_period_end = trial_end
-    #
-    # During paid/offline subscription:
-    # current_period_start = manual activation date
-    # current_period_end = manual expiry date
-    current_period_start = models.DateTimeField(blank=True, null=True)
-    current_period_end = models.DateTimeField(blank=True, null=True)
+    trial_end = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    current_period_start = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    current_period_end = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
 
     offline_payment_method = models.CharField(
         max_length=30,
         choices=OfflinePaymentMethod.choices,
-        blank=True,
         null=True,
+        blank=True,
     )
 
     offline_payment_reference = models.CharField(
         max_length=150,
-        blank=True,
         null=True,
-        help_text="Cash receipt number, transfer reference, or offline agreement reference."
+        blank=True,
     )
 
     offline_payment_notes = models.TextField(
         blank=True,
-        help_text="Notes about cash payment or offline agreement."
+        default="",
     )
 
-    last_reactivated_at = models.DateTimeField(blank=True, null=True)
+    last_reactivated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
 
     reactivated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
-        blank=True,
         null=True,
-        related_name="reactivated_subscriptions"
+        blank=True,
+        related_name="reactivated_subscriptions",
     )
 
-    created_at = models.DateTimeField(auto_now_add=True, null=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
+    )
 
     TRIAL_DAYS = 14
 
-    # ===============================
-    # Setup Logic
-    # ===============================
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["current_period_end"]),
+        ]
 
     def save(self, *args, **kwargs):
-        """
-        Automatically set trial dates once.
-        Trial dates are preserved and never reset by reactivation.
-        """
-        now = timezone.now()
+        current_time = timezone.now()
 
         if not self.trial_start:
-            self.trial_start = now
+            self.trial_start = current_time
 
         if not self.trial_end:
-            self.trial_end = self.trial_start + timedelta(days=self.TRIAL_DAYS)
+            self.trial_end = (
+                self.trial_start
+                + timedelta(days=self.TRIAL_DAYS)
+            )
 
         if not self.current_period_start:
             self.current_period_start = self.trial_start
@@ -2471,21 +2518,17 @@ class Subscription(models.Model):
 
         super().save(*args, **kwargs)
 
-    # ===============================
-    # Business Logic
-    # ===============================
-
     def is_active(self):
-        """
-        Returns True if the restaurant currently has system access.
-        """
-        if self.status not in [
-            self.SubscriptionStatus.ACTIVE,
+        if self.status not in {
             self.SubscriptionStatus.TRIALING,
-        ]:
+            self.SubscriptionStatus.ACTIVE,
+        }:
             return False
 
-        if self.current_period_end and self.current_period_end < timezone.now():
+        if (
+            self.current_period_end
+            and self.current_period_end <= timezone.now()
+        ):
             return False
 
         return True
@@ -2508,16 +2551,21 @@ class Subscription(models.Model):
         return max(remaining.days, 0)
 
     def expire_if_needed(self):
-        """
-        Expire the subscription automatically if trial or active period has ended.
-        """
-        if self.status in [
+        if self.status not in {
             self.SubscriptionStatus.TRIALING,
             self.SubscriptionStatus.ACTIVE,
-        ]:
-            if self.current_period_end and self.current_period_end < timezone.now():
-                self.status = self.SubscriptionStatus.EXPIRED
-                self.save(update_fields=["status", "updated_at"])
+        }:
+            return False
+
+        if (
+            self.current_period_end
+            and self.current_period_end <= timezone.now()
+        ):
+            self.status = self.SubscriptionStatus.EXPIRED
+            self.save(update_fields=["status", "updated_at"])
+            return True
+
+        return False
 
     def reactivate_offline(
         self,
@@ -2525,41 +2573,34 @@ class Subscription(models.Model):
         days=30,
         payment_method=OfflinePaymentMethod.CASH,
         reference="",
-        notes=""
+        notes="",
     ):
-        """
-        Reactivate subscription manually after offline payment/agreement.
-
-        This does NOT reset:
-        - trial_start
-        - trial_end
-
-        It only changes the paid/current subscription period.
-        """
-        now = timezone.now()
+        current_time = timezone.now()
 
         self.status = self.SubscriptionStatus.ACTIVE
-        self.current_period_start = now
-        self.current_period_end = now + timedelta(days=days)
-
+        self.current_period_start = current_time
+        self.current_period_end = (
+            current_time + timedelta(days=days)
+        )
         self.offline_payment_method = payment_method
         self.offline_payment_reference = reference
         self.offline_payment_notes = notes
-
-        self.last_reactivated_at = now
+        self.last_reactivated_at = current_time
         self.reactivated_by = user
 
-        self.save(update_fields=[
-            "status",
-            "current_period_start",
-            "current_period_end",
-            "offline_payment_method",
-            "offline_payment_reference",
-            "offline_payment_notes",
-            "last_reactivated_at",
-            "reactivated_by",
-            "updated_at",
-        ])
+        self.save(
+            update_fields=[
+                "status",
+                "current_period_start",
+                "current_period_end",
+                "offline_payment_method",
+                "offline_payment_reference",
+                "offline_payment_notes",
+                "last_reactivated_at",
+                "reactivated_by",
+                "updated_at",
+            ]
+        )
 
     def suspend(self):
         self.status = self.SubscriptionStatus.SUSPENDED
@@ -2570,29 +2611,22 @@ class Subscription(models.Model):
         self.save(update_fields=["status", "updated_at"])
 
     def can_use_inventory(self):
-        if not self.plan:
-            return False
-
-        return self.is_active() and self.plan.allow_inventory
+        return bool(
+            self.plan
+            and self.is_active()
+            and self.plan.allow_inventory
+        )
 
     def can_use_analytics(self):
-        if not self.plan:
-            return False
-
-        return self.is_active() and self.plan.allow_analytics
+        return bool(
+            self.plan
+            and self.is_active()
+            and self.plan.allow_analytics
+        )
 
     def __str__(self):
         plan_name = self.plan.name if self.plan else "No Plan"
-        restaurant_name = self.restaurant.name if self.restaurant else "No Restaurant"
-        return f"{restaurant_name} - {plan_name}"
-
-    class Meta:
-        ordering = ["-created_at"]
-        indexes = [
-            models.Index(fields=["status"]),
-            models.Index(fields=["current_period_end"]),
-        ]
-        
+        return f"{self.restaurant.name} - {plan_name}"
         
 class Printer(TimeStampedModel):
 

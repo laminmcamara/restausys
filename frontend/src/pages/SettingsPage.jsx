@@ -170,7 +170,7 @@ export default function SettingsPage() {
     try {
       setLoading(true);
       setError("");
-      const response = await api.get("/v1/settings/");
+      const response = await api.get("/settings/");
       setSettings({
         ...defaultSettings,
         ...response.data,
