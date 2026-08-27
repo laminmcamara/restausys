@@ -14,7 +14,7 @@ from .models import (
     PrintJob,
     Subscription,
     Plan,
-
+    WebhookConfiguration, WebhookEvent,
 )
 
 
@@ -719,3 +719,13 @@ class AuditLogAdmin(SuperuserOnlyAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+    
+    
+@admin.register(WebhookConfiguration)
+class WebhookConfigurationAdmin(admin.ModelAdmin):
+    list_display = ('restaurant', 'is_live_enabled', 'is_test_enabled')
+
+@admin.register(WebhookEvent)
+class WebhookEventAdmin(admin.ModelAdmin):
+    list_display = ('event_type', 'restaurant', 'status', 'created_at')
+    list_filter = ('status', 'environment', 'event_type')

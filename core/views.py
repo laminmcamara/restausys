@@ -43,6 +43,7 @@ from django.template.loader import render_to_string
 from django.db.models import Sum, Count, Avg, Prefetch, Exists, OuterRef, Subquery, DecimalField
 from django.db.models.functions import TruncDate, TruncHour, Coalesce
 from core.utils import has_active_subscription
+from .webhook_utils import trigger_outbound_webhook  # Import the utility
 
 from decimal import Decimal
 from django.conf import settings
@@ -82,7 +83,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, CashierShift, Subscription, Customer, Plan
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration
 
 )
 from .serializers import (
@@ -95,8 +96,11 @@ from .serializers import (
     InventoryItemSerializer,
     DiscountSerializer,
     ChangePasswordSerializer,
+    WebhookConfigurationSerializer,
  
 )
+
+import secrets
 from .permissions import IsStaffOfRestaurant, HasActiveSubscription
 from django.contrib.auth import get_user_model
 from .models import Subscription
@@ -1306,7 +1310,6 @@ def table_checkout(request, token):
     })
     
     
-
 class PlaceOrderAPIView(APIView):
     """
     API View to handle order placement from the POS.
@@ -1314,7 +1317,6 @@ class PlaceOrderAPIView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
-    @transaction.atomic
     def post(self, request):
         data = request.data
         table_id = data.get("table_id")
@@ -1327,68 +1329,81 @@ class PlaceOrderAPIView(APIView):
             )
 
         try:
-            # 1. Verify Table and Restaurant ownership
-            # Ensures a user from Restaurant A cannot place an order for Restaurant B
-            table = Table.objects.select_for_update().get(
-                id=table_id, 
-                restaurant=request.user.restaurant
-            )
+            # We wrap only the database logic in the transaction
+            with transaction.atomic():
+                # 1. Verify Table and Restaurant ownership
+                table = Table.objects.select_for_update().get(
+                    id=table_id, 
+                    restaurant=request.user.restaurant
+                )
 
-            # 2. Get or Create an Active Session
-            # Orders must be linked to a session (NOT NULL constraint fix)
-            session = TableSession.objects.filter(
-                table=table, 
-                is_active=True,
-                restaurant=request.user.restaurant
-            ).first()
-
-            if not session:
-                session = TableSession.objects.create(
-                    table=table,
-                    restaurant=request.user.restaurant,
+                # 2. Get or Create an Active Session
+                session = TableSession.objects.filter(
+                    table=table, 
                     is_active=True,
-                    opened_by=request.user
-                )
-                # Update table status to occupied
-                table.status = "OCCUPIED"
-                table.save(update_fields=['status'])
+                    restaurant=request.user.restaurant
+                ).first()
 
-            # 3. Create the Order
-            order = Order.objects.create(
+                if not session:
+                    session = TableSession.objects.create(
+                        table=table,
+                        restaurant=request.user.restaurant,
+                        is_active=True,
+                        opened_by=request.user
+                    )
+                    table.status = "OCCUPIED"
+                    table.save(update_fields=['status'])
+
+                # 3. Create the Order
+                order = Order.objects.create(
+                    restaurant=request.user.restaurant,
+                    table=table,
+                    session=session,
+                    status="PLACED",
+                    created_by=request.user,
+                    payment_status="PENDING"
+                )
+
+                # 4. Process Order Items
+                for item_data in items:
+                    product_id = item_data.get('product_id')
+                    quantity = int(item_data.get('quantity', 1))
+                    modifier_ids = item_data.get('modifier_option_ids', [])
+                    
+                    order_item = OrderItem.objects.create(
+                        order=order,
+                        product_id=product_id,
+                        quantity=quantity,
+                        status="QUEUED"
+                    )
+
+                    if modifier_ids:
+                        order_item.modifiers.set(modifier_ids)
+
+                    order_item.recalculate_price()
+
+                # 5. Finalize Order Totals
+                order.calculate_totals()
+
+            # ===========================================================
+            # WEBHOOK TRIGGER (Outside the transaction block)
+            # ===========================================================
+            # Prepare the payload for the external developer
+            webhook_payload = {
+                "order_id": str(order.id),
+                "order_number": order.order_number if hasattr(order, 'order_number') else order.id,
+                "total_amount": float(order.total),
+                "table_name": table.name,
+                "status": order.status,
+                "items_count": len(items)
+            }
+
+            trigger_outbound_webhook(
                 restaurant=request.user.restaurant,
-                table=table,
-                session=session,
-                status="PLACED",
-                created_by=request.user,
-                payment_status="PENDING"
+                event_type="order.placed",
+                payload=webhook_payload
             )
-
-            # 4. Process Order Items
-            for item_data in items:
-                product_id = item_data.get('product_id')
-                quantity = int(item_data.get('quantity', 1))
-                modifier_ids = item_data.get('modifier_option_ids', [])
-                
-                # Create the OrderItem
-                # Note: final_price is set to 0 initially, then updated by recalculate_price
-                order_item = OrderItem.objects.create(
-                    order=order,
-                    product_id=product_id,
-                    quantity=quantity,
-                    status="QUEUED"
-                )
-
-                # Link Many-to-Many Modifiers
-                if modifier_ids:
-                    order_item.modifiers.set(modifier_ids)
-
-                # Trigger the model logic to calculate price based on product + modifiers
-                # This ensures the 'final_price' snapshot is saved correctly
-                order_item.recalculate_price()
-
-            # 5. Finalize Order Totals
-            # This triggers the Order model's method to sum up all item prices
-            order.calculate_totals()
+            # ===========================================================
 
             return Response({
                 "message": "Order placed successfully",
@@ -1402,10 +1417,9 @@ class PlaceOrderAPIView(APIView):
         except Product.DoesNotExist:
             return Response({"error": "One or more products not found."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            # Log the error for debugging
             print(f"Order Placement Error: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+        
 # ======================================================================
 # ======================== API VIEWSETS ================================
 # ======================================================================
@@ -1805,18 +1819,14 @@ class OrderViewSet(TenantModelViewSet):
 class MarkOrderPaidView(APIView):
     """
     POST /api/v1/orders/<order_id>/mark-paid/
-
-    Marks an order as paid and creates/updates the Payment record.
-
-    Request body:
-    {
-        "payment_method": "cash"
-    }
+    Marks an order as paid and triggers an outbound webhook.
     """
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request, order_id):
+        # Assuming get_user_restaurant is a helper you have defined
+        from .utils import get_user_restaurant 
+        
         restaurant = get_user_restaurant(request.user)
         if not restaurant:
             return Response(
@@ -1842,77 +1852,59 @@ class MarkOrderPaidView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Import your existing Payment model
-        from .models import Payment
-
-        # Create or update the payment record
-        payment, created = Payment.objects.get_or_create(
-            order=order,
-            restaurant=restaurant,
-            defaults={
-                "amount": order.total,
-                "payment_method": payment_method,
-                "status": "paid",  # Adjust to match your Payment status choices
-            },
-        )
-
-        if not created:
-            payment.status = "paid"  # Adjust to match your Payment status choices
-            payment.payment_method = payment_method
-            payment.save()
-
-        # Update order status if your Order model has a status field
-        if hasattr(order, "status"):
-            order.status = "paid"  # Adjust to match your order status choices
-            order.save()
-
-        return Response(
-            {"detail": "Order marked as paid.", "order_id": order.id, "payment_method": payment_method},
-            status=status.HTTP_200_OK,
-        )
-
-    # -------------------------------------------------
-    # ✅ MANAGER: COMPLETE ORDER (SERVED + PAID → COMPLETED)
-    # -------------------------------------------------
-
-    @action(detail=True, methods=["post"])
-    def complete(self, request, pk=None):
-        order = self.get_object()
-
-        try:
-            order = order.complete_order(actor=request.user)
-        except PermissionDenied as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_403_FORBIDDEN
+        # Use a transaction to ensure data integrity
+        with transaction.atomic():
+            # Create or update the payment record
+            payment, created = Payment.objects.get_or_create(
+                order=order,
+                restaurant=restaurant,
+                defaults={
+                    "amount": order.total,
+                    "payment_method": payment_method,
+                    "status": "paid",
+                },
             )
 
-        broadcast_order_update(order)
+            if not created:
+                payment.status = "paid"
+                payment.payment_method = payment_method
+                payment.save()
 
-        serializer = self.get_serializer(order)
-        return Response(serializer.data)
+            # Update order status
+            if hasattr(order, "status"):
+                order.status = "paid"
+                order.save()
 
-    # -------------------------------------------------
-    # ✅ KITCHEN DASHBOARD LIST (PLACED + IN_PROGRESS)
-    # -------------------------------------------------
+            # ===========================================================
+            # WEBHOOK TRIGGER (Scheduled to run after DB commit)
+            # ===========================================================
+            webhook_payload = {
+                "order_id": str(order.id),
+                "order_number": getattr(order, 'order_number', order.id),
+                "amount": float(order.total),
+                "payment_method": payment_method,
+                "paid_at": payment.updated_at.isoformat() if hasattr(payment, 'updated_at') else None
+            }
 
-    @action(detail=False, methods=["get"])
-    def kitchen(self, request):
-        restaurant = getattr(request.user, "restaurant", None)
-        if not restaurant:
-            return Response([], status=status.HTTP_200_OK)
+            # transaction.on_commit ensures we don't send the webhook 
+            # if the database transaction rolls back.
+            transaction.on_commit(lambda: trigger_outbound_webhook(
+                restaurant=restaurant,
+                event_type="order.paid",
+                payload=webhook_payload
+            ))
+            # ===========================================================
 
-        orders = Order.objects.filter(
-            restaurant=restaurant,
-            status__in=[
-                Order.Status.PLACED,
-                Order.Status.IN_PROGRESS
-            ]
-        ).order_by("created_at")
-
-        serializer = self.get_serializer(orders, many=True)
-        return Response(serializer.data)
-    
+        return Response(
+            {
+                "detail": "Order marked as paid.", 
+                "order_id": order.id, 
+                "payment_method": payment_method
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+        
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [IsAuthenticated]
@@ -2261,15 +2253,41 @@ class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
 
 
 
-class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticated]
+class PaymentSummaryAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self):
-        return Payment.objects.filter(
-            order__restaurant=self.request.user.restaurant
-        )
+    def get(self, request):
+        restaurant = getattr(request.user, 'restaurant', None)
+        if not restaurant:
+            return Response({"error": "Restaurant not found"}, status=404)
+
+        today = timezone.now().date()
+        orders = Order.objects.filter(restaurant=restaurant)
         
+        # FIXED: Changed 'total_amount' to 'total' based on your model choices
+        total_today = orders.filter(created_at__date=today).aggregate(Sum('total'))['total__sum'] or 0
+        total_paid = orders.filter(status='paid').aggregate(Sum('total'))['total__sum'] or 0
+        pending = orders.filter(status='pending').aggregate(Sum('total'))['total__sum'] or 0
+
+        # Get recent payments
+        recent_payments = orders.order_by('-created_at')[:10]
+        
+        return Response({
+            "stats": {
+                "total_today": float(total_today),
+                "total_paid": float(total_paid),
+                "pending": float(pending)
+            },
+            "payments": [
+                {
+                    "id": o.id,
+                    "order_number": o.order_number or f"ORD-{o.id}",
+                    "amount": float(o.total), # FIXED: Changed o.total_amount to o.total
+                    "status": o.status,
+                    "date": o.created_at.strftime("%Y-%m-%d %H:%M")
+                } for o in recent_payments
+            ]
+        })
 
 
 # ======================================================================
@@ -4765,14 +4783,16 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Now 'restaurant' is a valid keyword!
-        restaurant = get_user_restaurant(self.request.user)
+        restaurant = getattr(self.request.user, 'restaurant', None)
+
         if not restaurant:
             return Customer.objects.none()
         return Customer.objects.filter(restaurant=restaurant)
 
     def perform_create(self, serializer):
         # Automatically assign the customer to the manager's restaurant
-        restaurant = get_user_restaurant(self.request.user)
+        restaurant = getattr(self.request.user, 'restaurant', None)
+
         serializer.save(restaurant=restaurant)
 
 # ===================================================================
@@ -4792,7 +4812,8 @@ class InventoryViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        restaurant = get_user_restaurant(self.request.user)
+        restaurant = getattr(self.request.user, 'restaurant', None)
+
         if not restaurant:
             return InventoryItem.objects.none()
         queryset = InventoryItem.objects.filter(restaurant=restaurant)
@@ -4806,7 +4827,8 @@ class InventoryViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        restaurant = get_user_restaurant(self.request.user)
+        restaurant = getattr(self.request.user, 'restaurant', None)
+
         serializer.save(restaurant=restaurant)
 
     @action(detail=False, methods=["get"])
@@ -4837,7 +4859,8 @@ class DiscountViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        restaurant = get_user_restaurant(self.request.user)
+        restaurant = getattr(self.request.user, 'restaurant', None)
+
         if not restaurant:
             return Discount.objects.none()
         queryset = Discount.objects.filter(restaurant=restaurant)
@@ -4852,7 +4875,8 @@ class DiscountViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        restaurant = get_user_restaurant(self.request.user)
+        restaurant = getattr(self.request.user, 'restaurant', None)
+
         serializer.save(restaurant=restaurant)
 
     @action(detail=True, methods=["patch"])
@@ -4863,3 +4887,61 @@ class DiscountViewSet(viewsets.ModelViewSet):
         discount.save()
         serializer = self.get_serializer(discount)
         return Response(serializer.data)
+
+
+
+class WebhookConfigAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        # Ensure restaurant exists for the user
+        restaurant = getattr(request.user, 'restaurant', None)
+        if not restaurant:
+            return Response({"error": "No restaurant found"}, status=403)
+        
+        config, _ = WebhookConfiguration.objects.get_or_create(restaurant=restaurant)
+        serializer = WebhookConfigurationSerializer(config)
+        return Response(serializer.data)
+
+    def post(self, request):
+        restaurant = request.user.restaurant
+        config, _ = WebhookConfiguration.objects.get_or_create(restaurant=restaurant)
+        
+        # Update URLs and Toggle Status
+        config.live_webhook_url = request.data.get('live_webhook_url', config.live_webhook_url)
+        config.test_webhook_url = request.data.get('test_webhook_url', config.test_webhook_url)
+        config.is_live_enabled = request.data.get('is_live_enabled', config.is_live_enabled)
+        config.is_test_enabled = request.data.get('is_test_enabled', config.is_test_enabled)
+        
+        config.save()
+        return Response({"message": "Configuration updated successfully"})
+
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def regenerate_api_key(request):
+    """
+    Endpoint: /api/v1/developer/regenerate-key/
+    Payload: {"type": "live_api_key"} or {"type": "test_api_key"}
+    """
+    key_type = request.data.get("type")
+    if key_type not in ["live_api_key", "test_api_key", "live_secret", "test_secret"]:
+        return Response({"error": "Invalid key type"}, status=400)
+
+    config = WebhookConfiguration.objects.get(restaurant=request.user.restaurant)
+    
+    # Generate new value
+    if "secret" in key_type:
+        new_value = secrets.token_hex(24)
+    else:
+        prefix = "beepos_live_" if "live" in key_type else "beepos_test_"
+        new_value = f"{prefix}{secrets.token_urlsafe(32)}"
+
+    setattr(config, key_type, new_value)
+    config.save()
+
+    return Response({
+        "message": f"{key_type.replace('_', ' ').title()} regenerated",
+        "new_value": new_value
+    })

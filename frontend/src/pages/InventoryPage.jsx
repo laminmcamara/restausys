@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import api from "../services/api";
 import {
   Boxes,
   Plus,
@@ -9,18 +10,6 @@ import {
   Minus,
   TrendingUp,
 } from "lucide-react";
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-
-function getAuthHeaders() {
-  const token =
-    localStorage.getItem("accessToken") || localStorage.getItem("access");
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
 
 const UNITS = ["kg", "g", "liter", "ml", "piece", "box", "pack", "bottle"];
 
@@ -48,13 +37,9 @@ export default function InventoryPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE_URL}/manager/inventory/`, {
-        headers: getAuthHeaders(),
-      });
-      if (!res.ok) throw new Error("Failed to load inventory");
-      const data = await res.json();
-      setItems(Array.isArray(data) ? data : data.results || []);
-    } catch {
+      const res = await api.get("/manager/inventory/");
+      setItems(Array.isArray(res.data) ? res.data : res.data.results || []);
+    } catch (err) {
       setError("Unable to load inventory. Is the backend running?");
     } finally {
       setLoading(false);
@@ -100,35 +85,20 @@ export default function InventoryPage() {
     setSaving(true);
     setFieldErrors({});
 
-    const url = editingId
-      ? `${API_BASE_URL}/manager/inventory/${editingId}/`
-      : `${API_BASE_URL}/manager/inventory/`;
-
-    const method = editingId ? "PATCH" : "POST";
-
     try {
-      const res = await fetch(url, {
-        method,
-        headers: getAuthHeaders(),
-        body: JSON.stringify(form),
-      });
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        const errors = {};
-        if (data) {
-          Object.entries(data).forEach(([key, val]) => {
-            errors[key] = Array.isArray(val) ? val : [String(val)];
-          });
-        }
-        setFieldErrors(errors);
-        return;
+      if (editingId) {
+        await api.patch(`/manager/inventory/${editingId}/`, form);
+      } else {
+        await api.post("/manager/inventory/", form);
       }
-
       setShowForm(false);
       fetchItems();
-    } catch {
-      setError("Unable to save. Check your connection.");
+    } catch (err) {
+      if (err.response?.data) {
+        setFieldErrors(err.response.data);
+      } else {
+        setError("Unable to save. Check your connection.");
+      }
     } finally {
       setSaving(false);
     }
@@ -137,18 +107,13 @@ export default function InventoryPage() {
   async function handleAdjust(item, direction) {
     const qty = parseFloat(adjustQty);
     if (!qty || qty <= 0) return;
-
     const newQty =
       direction === "add"
         ? parseFloat(item.quantity || 0) + qty
         : parseFloat(item.quantity || 0) - qty;
 
     try {
-      await fetch(`${API_BASE_URL}/manager/inventory/${item.id}/`, {
-        method: "PATCH",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ quantity: newQty }),
-      });
+      await api.patch(`/manager/inventory/${item.id}/`, { quantity: newQty });
       setAdjustingId(null);
       setAdjustQty("");
       fetchItems();
@@ -160,10 +125,7 @@ export default function InventoryPage() {
   async function handleDelete(id) {
     if (!confirm("Delete this inventory item?")) return;
     try {
-      await fetch(`${API_BASE_URL}/manager/inventory/${id}/`, {
-        method: "DELETE",
-        headers: getAuthHeaders(),
-      });
+      await api.delete(`/manager/inventory/${id}/`);
       fetchItems();
     } catch {
       setError("Unable to delete.");
@@ -177,21 +139,19 @@ export default function InventoryPage() {
   );
 
   return (
-    <div>
+    <div className="p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-black text-slate-900">Inventory</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Track ingredient stock, monitor low levels, and manage supplier
-            costs.
+            Track ingredient stock and manage costs.
           </p>
         </div>
         <button
           onClick={openCreate}
-          className="flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-md shadow-amber-500/20 transition hover:bg-amber-300">
-          <Plus size={18} />
-          Add Item
+          className="flex items-center gap-2 rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-md transition hover:bg-amber-300">
+          <Plus size={18} /> Add Item
         </button>
       </div>
 
@@ -201,7 +161,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Low stock alert */}
+      {/* Low Stock Alert */}
       {lowStockItems.length > 0 && (
         <div className="mb-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <AlertTriangle
@@ -209,285 +169,190 @@ export default function InventoryPage() {
             className="text-amber-600"
           />
           <p className="text-sm font-semibold text-amber-800">
-            {lowStockItems.length} item{lowStockItems.length > 1 ? "s" : ""} at
-            or below low stock threshold.
+            {lowStockItems.length} items at low stock.
           </p>
         </div>
       )}
 
-      {/* Modal */}
+      {/* Form Modal */}
       {showForm && (
-        <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900">
-              {editingId ? "Edit Inventory Item" : "Add Inventory Item"}
-            </h2>
-            <button
-              onClick={() => setShowForm(false)}
-              className="text-slate-400 hover:text-slate-700">
-              <X size={20} />
-            </button>
-          </div>
-
-          <form
-            onSubmit={handleSubmit}
-            className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Item Name
-              </label>
-              <input
-                type="text"
-                required
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none"
-                placeholder="Chicken Breast"
-              />
-              {fieldErrors.name && (
-                <p className="mt-1 text-xs text-red-600">
-                  {fieldErrors.name[0]}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Category
-              </label>
-              <input
-                type="text"
-                value={form.category}
-                onChange={(e) => setForm({ ...form, category: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none"
-                placeholder="Meat, Produce, Dry Goods"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Quantity
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                required
-                value={form.quantity}
-                onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none"
-                placeholder="0"
-              />
-              {fieldErrors.quantity && (
-                <p className="mt-1 text-xs text-red-600">
-                  {fieldErrors.quantity[0]}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Unit
-              </label>
-              <select
-                value={form.unit}
-                onChange={(e) => setForm({ ...form, unit: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none">
-                {UNITS.map((u) => (
-                  <option
-                    key={u}
-                    value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Low Stock Threshold
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={form.low_stock_threshold}
-                onChange={(e) =>
-                  setForm({ ...form, low_stock_threshold: e.target.value })
-                }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none"
-                placeholder="Alert when below"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Cost per Unit ($)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={form.cost_per_unit}
-                onChange={(e) =>
-                  setForm({ ...form, cost_per_unit: e.target.value })
-                }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none"
-                placeholder="0.00"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Supplier
-              </label>
-              <input
-                type="text"
-                value={form.supplier}
-                onChange={(e) => setForm({ ...form, supplier: e.target.value })}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none"
-                placeholder="Supplier name"
-              />
-            </div>
-
-            <div className="sm:col-span-2 flex gap-3">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h2 className="text-xl font-bold text-slate-900">
+                {editingId ? "Edit Item" : "Add New Item"}
+              </h2>
               <button
-                type="submit"
-                disabled={saving}
-                className="rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">
-                {saving
-                  ? "Saving..."
-                  : editingId
-                  ? "Update Item"
-                  : "Create Item"}
-              </button>
-              <button
-                type="button"
                 onClick={() => setShowForm(false)}
-                className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100">
-                Cancel
+                className="text-slate-400 hover:text-slate-600">
+                <X size={24} />
               </button>
             </div>
-          </form>
+            <form
+              onSubmit={handleSubmit}
+              className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  Item Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full border rounded-lg p-2"
+                />
+                {fieldErrors.name && (
+                  <p className="text-red-500 text-xs mt-1">
+                    {fieldErrors.name[0]}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  Category
+                </label>
+                <input
+                  type="text"
+                  value={form.category}
+                  onChange={(e) =>
+                    setForm({ ...form, category: e.target.value })
+                  }
+                  className="w-full border rounded-lg p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  Unit
+                </label>
+                <select
+                  value={form.unit}
+                  onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                  className="w-full border rounded-lg p-2">
+                  {UNITS.map((u) => (
+                    <option
+                      key={u}
+                      value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  Quantity
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={form.quantity}
+                  onChange={(e) =>
+                    setForm({ ...form, quantity: e.target.value })
+                  }
+                  className="w-full border rounded-lg p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">
+                  Low Stock Threshold
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={form.low_stock_threshold}
+                  onChange={(e) =>
+                    setForm({ ...form, low_stock_threshold: e.target.value })
+                  }
+                  className="w-full border rounded-lg p-2"
+                />
+              </div>
+              <div className="md:col-span-2 flex justify-end gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="px-4 py-2 text-slate-600 font-bold">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="bg-amber-400 px-6 py-2 rounded-lg font-bold text-slate-950 hover:bg-amber-300 disabled:opacity-50">
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                    ? "Update Item"
+                    : "Create Item"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
-      {/* Inventory table */}
+      {/* Table */}
       {loading ? (
-        <p className="text-center text-slate-500 py-10">Loading inventory...</p>
-      ) : items.length === 0 ? (
-        <div className="text-center py-16">
-          <Boxes
-            size={48}
-            className="mx-auto text-slate-300 mb-3"
-          />
-          <p className="text-slate-500">No inventory items yet.</p>
-        </div>
+        <div className="text-center py-10">Loading...</div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr className="text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                <th className="px-4 py-3">Item</th>
-                <th className="px-4 py-3">Category</th>
-                <th className="px-4 py-3">Quantity</th>
-                <th className="px-4 py-3">Cost/Unit</th>
-                <th className="px-4 py-3">Supplier</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+        <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 border-b font-bold text-slate-600 uppercase text-xs">
+              <tr>
+                <th className="p-4">Item</th>
+                <th className="p-4">Stock</th>
+                <th className="p-4">Category</th>
+                <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {items.map((item) => {
-                const isLow =
-                  item.low_stock_threshold != null &&
-                  parseFloat(item.quantity || 0) <=
-                    parseFloat(item.low_stock_threshold);
-                return (
-                  <tr
-                    key={item.id}
-                    className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-semibold text-slate-900">
-                      {item.name}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {item.category || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {adjustingId === item.id ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={adjustQty}
-                            onChange={(e) => setAdjustQty(e.target.value)}
-                            placeholder="qty"
-                            className="w-20 rounded border border-slate-300 px-2 py-1 text-xs"
-                          />
-                          <button
-                            onClick={() => handleAdjust(item, "add")}
-                            className="rounded bg-emerald-100 p-1 text-emerald-600 hover:bg-emerald-200"
-                            title="Add stock">
-                            <TrendingUp size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleAdjust(item, "subtract")}
-                            className="rounded bg-orange-100 p-1 text-orange-600 hover:bg-orange-200"
-                            title="Remove stock">
-                            <Minus size={14} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setAdjustingId(null);
-                              setAdjustQty("");
-                            }}
-                            className="text-slate-400 hover:text-slate-700">
-                            <X size={14} />
-                          </button>
-                        </div>
-                      ) : (
+            <tbody className="divide-y">
+              {items.map((item) => (
+                <tr
+                  key={item.id}
+                  className="hover:bg-slate-50">
+                  <td className="p-4 font-bold text-slate-900">{item.name}</td>
+                  <td className="p-4">
+                    {adjustingId === item.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          className="w-16 border rounded p-1"
+                          value={adjustQty}
+                          onChange={(e) => setAdjustQty(e.target.value)}
+                        />
                         <button
-                          onClick={() => setAdjustingId(item.id)}
-                          className="font-bold text-slate-900 hover:text-amber-600 transition">
-                          {item.quantity} {item.unit}
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {item.cost_per_unit
-                        ? `$${parseFloat(item.cost_per_unit).toFixed(2)}`
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {item.supplier || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {isLow ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">
-                          <AlertTriangle size={12} /> Low
-                        </span>
-                      ) : (
-                        <span className="inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
-                          OK
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => openEdit(item)}
-                          className="rounded-lg p-2 text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition"
-                          title="Edit">
-                          <Pencil size={16} />
+                          onClick={() => handleAdjust(item, "add")}
+                          className="text-emerald-600">
+                          <TrendingUp size={16} />
                         </button>
                         <button
-                          onClick={() => handleDelete(item.id)}
-                          className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                          title="Delete">
-                          <Trash2 size={16} />
+                          onClick={() => handleAdjust(item, "subtract")}
+                          className="text-orange-600">
+                          <Minus size={16} />
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                    ) : (
+                      <button
+                        onClick={() => setAdjustingId(item.id)}
+                        className="hover:text-amber-600 font-mono">
+                        {item.quantity} {item.unit}
+                      </button>
+                    )}
+                  </td>
+                  <td className="p-4 text-slate-500">{item.category}</td>
+                  <td className="p-4 text-right">
+                    <button
+                      onClick={() => openEdit(item)}
+                      className="p-2 text-slate-400 hover:text-amber-600">
+                      <Pencil size={18} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      className="p-2 text-slate-400 hover:text-red-600">
+                      <Trash2 size={18} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

@@ -23,12 +23,16 @@ from .models import (
     Settings,
     Printer,
     PrintJob,
+    WebhookConfiguration,
 )
+
 
 LANGUAGE_CHOICES = [
     ("en", "English"),
     ("es", "Español"),
     ("zh", "中文"),
+    ("zh-HK", "粵語"), 
+
     ("fr", "Français"),
     ("tr", "Türkçe"),
     ("ur", "اردو"),
@@ -828,7 +832,7 @@ class CustomerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Customer
-        fields = '__all__'
+        fields = ['id', 'name', 'email', 'phone', 'total_spent', 'created_at']
         read_only_fields = ('restaurant',) 
 
     def get_total_orders(self, obj):
@@ -944,3 +948,21 @@ class DiscountSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "times_used", "created_at", "updated_at"]
+
+
+class WebhookConfigurationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WebhookConfiguration
+        fields = [
+            'live_api_key', 
+            'test_api_key', 
+            'live_secret', 
+            'test_secret', 
+            'live_webhook_url', 
+            'test_webhook_url', 
+            'is_live_enabled', 
+            'is_test_enabled'
+        ]
+        # We make these read-only so they can't be changed via the standard POST
+        # (Regeneration is handled by our custom endpoint instead)
+        read_only_fields = ['live_api_key', 'test_api_key', 'live_secret', 'test_secret']

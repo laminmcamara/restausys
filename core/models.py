@@ -1053,6 +1053,27 @@ class Category(TimeStampedModel):
             path.insert(0, ancestor.name)
             ancestor = ancestor.parent
         return ' > '.join(path)
+
+class MenuItemIngredient(models.Model):
+    # Changed 'MenuItem' to 'Menu'
+    menu_item = models.ForeignKey(
+        'Menu', 
+        related_name='ingredients', 
+        on_delete=models.CASCADE
+    )
+    inventory_item = models.ForeignKey(
+        'InventoryItem', 
+        related_name='used_in_items',
+        on_delete=models.CASCADE
+    )
+    quantity_needed = models.DecimalField(
+        max_digits=10, 
+        decimal_places=3,
+        help_text="How much of this inventory item is used for 1 serving of this Menu item"
+    )
+
+    def __str__(self):
+        return f"{self.menu_item.name} recipe: {self.quantity_needed} of {self.inventory_item.name}"
     
 class Cuisine(models.Model):
     """Kept from original design."""
@@ -2910,3 +2931,54 @@ class Discount(models.Model):
         if self.valid_from and date.today() < self.valid_from:
             return False
         return True
+
+
+
+
+class WebhookConfiguration(models.Model):
+    restaurant = models.OneToOneField('Restaurant', on_delete=models.CASCADE, related_name='webhook_config')
+    
+    # API Keys (For Inbound requests)
+    live_api_key = models.CharField(max_length=100, unique=True, blank=True)
+    test_api_key = models.CharField(max_length=100, unique=True, blank=True)
+    
+    # Webhook Secrets (For Outbound signing)
+    live_secret = models.CharField(max_length=100, blank=True)
+    test_secret = models.CharField(max_length=100, blank=True)
+
+    # URLs
+    live_webhook_url = models.URLField(blank=True, null=True)
+    test_webhook_url = models.URLField(blank=True, null=True)
+    
+    is_live_enabled = models.BooleanField(default=False)
+    is_test_enabled = models.BooleanField(default=False)
+
+    def save(self, *args, **kwargs):
+        # Auto-generate keys if they don't exist
+        if not self.live_api_key:
+            self.live_api_key = f"beepos_live_{secrets.token_urlsafe(32)}"
+        if not self.test_api_key:
+            self.test_api_key = f"beepos_test_{secrets.token_urlsafe(32)}"
+        if not self.live_secret:
+            self.live_secret = secrets.token_hex(24)
+        if not self.test_secret:
+            self.test_secret = secrets.token_hex(24)
+        super().save(*args, **kwargs)
+
+class WebhookEvent(models.Model):
+    """
+    A log of every webhook event triggered. 
+    Useful for debugging and retrying failed deliveries.
+    """
+    restaurant = models.ForeignKey('Restaurant', on_delete=models.CASCADE)
+    event_id = models.CharField(max_length=50, unique=True) # e.g. evt_...
+    event_type = models.CharField(max_length=100) # e.g. order.placed
+    payload = models.JSONField()
+    environment = models.CharField(max_length=10, choices=[('TEST', 'Test'), ('LIVE', 'Live')])
+    
+    status = models.CharField(max_length=20, default='PENDING') # PENDING, SENT, FAILED
+    response_code = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.event_type} - {self.restaurant.name} ({self.status})"

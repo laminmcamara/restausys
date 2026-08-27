@@ -157,3 +157,31 @@ def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
             },
         },
     )
+    
+    
+@receiver(post_save, sender=Order)
+def auto_deduct_inventory(sender, instance, created, **kwargs):
+    """
+    Triggered whenever an Order is saved. 
+    If status changes to 'paid', deduct ingredients from inventory.
+    """
+    # Only run if the order is marked as paid and hasn't been deducted yet
+    # We use a flag 'inventory_deducted' to prevent double-deduction
+    if instance.status == 'paid' and not getattr(instance, 'inventory_deducted', False):
+        try:
+            with transaction.atomic():
+                for order_item in instance.items.all():
+                    # Get the ingredients linked to this menu item                    
+                    recipe = order_item.menu.ingredients.all() 
+    
+                    for ingredient in recipe:
+                        inv_item = ingredient.inventory_item
+                        total_deduction = ingredient.quantity_needed * order_item.quantity
+                        inv_item.quantity -= total_deduction
+                        inv_item.save()
+                
+                # Mark as deducted so we don't do it again if the order is saved again
+                Order.objects.filter(id=instance.id).update(inventory_deducted=True)
+                
+        except Exception as e:
+            print(f"Error deducting inventory for Order {instance.id}: {e}")
