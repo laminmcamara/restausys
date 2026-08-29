@@ -1,302 +1,314 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import api from "../services/api";
+import {
+  Plus,
+  Search,
+  Edit2,
+  Trash2,
+  Package,
+  DollarSign,
+  Loader2,
+  Check,
+  AlertCircle,
+} from "lucide-react";
 
-export default function Products() {
+const ProductManagement = () => {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [modifierGroups, setModifierGroups] = useState([]);
-
-  const [name, setName] = useState("");
-  const [basePrice, setBasePrice] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("");
-  const [selectedGroups, setSelectedGroups] = useState([]);
-
-  const [editingId, setEditingId] = useState(null);
-  const [editingName, setEditingName] = useState("");
-  const [editingBasePrice, setEditingBasePrice] = useState("");
-  const [editingCategory, setEditingCategory] = useState("");
-  const [editingGroups, setEditingGroups] = useState([]);
-
+  const [modifiers, setModifiers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const [formData, setFormData] = useState({
+    name: "",
+    base_price: "",
+    category: "",
+    selectedModifiers: [],
+  });
 
   useEffect(() => {
-    loadPageData();
+    fetchData();
   }, []);
 
-  const loadPageData = async () => {
+  const fetchData = async () => {
     setLoading(true);
-    setError("");
-    try {
-      const [prodRes, catRes, modRes] = await Promise.all([
-        api.get("/manager/products/"),
-        api.get("/manager/categories/"),
-        api.get("/manager/modifier-groups/"),
-      ]);
 
-      setProducts(prodRes.data.results || prodRes.data);
-      setCategories(catRes.data.results || catRes.data);
-      setModifierGroups(modRes.data.results || modRes.data);
+    // Fetch Categories
+    try {
+      const catRes = await api.get("/manager/categories/");
+      const data = catRes.data.results || catRes.data || [];
+      setCategories(data);
+      console.log("Categories successfully loaded:", data);
     } catch (err) {
-      setError("Failed to load product data.");
-      console.error(err);
-    } finally {
-      setLoading(false);
+      console.error("Category Load Error:", err);
     }
+
+    // Fetch Products
+    try {
+      const prodRes = await api.get("/manager/products/");
+      setProducts(prodRes.data.results || prodRes.data || []);
+    } catch (err) {
+      console.error("Product Load Error:", err);
+    }
+
+    // Fetch Modifiers (Using the new endpoint we just registered)
+    try {
+      const modRes = await api.get("/manager/modifiers/");
+      setModifiers(modRes.data.results || modRes.data || []);
+    } catch (err) {
+      console.warn("Modifiers not found, check backend router registration.");
+      setModifiers([]);
+    }
+
+    setLoading(false);
   };
 
-  const fetchProducts = async () => {
-    try {
-      const res = await api.get("/manager/products/");
-      setProducts(res.data.results || res.data);
-    } catch (err) {
-      console.error("Failed to refresh products", err);
-    }
-  };
-
-  const handleCreate = async (e) => {
+  const handleCreateProduct = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !basePrice || !selectedCategory) {
-      setError("Please fill in all required fields.");
+
+    if (!formData.category) {
+      alert("Please select a category first.");
       return;
     }
 
-    setSaving(true);
-    setError("");
+    setSubmitting(true);
     try {
-      await api.post("/manager/products/", {
-        name: name.trim(),
-        base_price: parseFloat(basePrice),
-        category: selectedCategory,
-        modifier_group_ids: selectedGroups,
+      const payload = {
+        name: formData.name,
+        base_price: formData.base_price,
+        category: formData.category, // This must be the ID
+        modifier_ids: formData.selectedModifiers,
+      };
+
+      await api.post("/manager/products/", payload);
+
+      setFormData({
+        name: "",
+        base_price: "",
+        category: "",
+        selectedModifiers: [],
       });
-      setName("");
-      setBasePrice("");
-      setSelectedCategory("");
-      setSelectedGroups([]);
-      await fetchProducts();
+      fetchData();
+      alert("Product created successfully!");
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to create product.");
+      console.error("Creation error:", err.response?.data);
+      alert(
+        err.response?.data?.detail ||
+          "Failed to create product. Ensure all fields are valid."
+      );
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   };
 
-  const handleUpdate = async (productId) => {
-    setSaving(true);
-    try {
-      await api.patch(`/manager/products/${productId}/`, {
-        name: editingName.trim(),
-        base_price: parseFloat(editingBasePrice),
-        category: editingCategory,
-        modifier_group_ids: editingGroups,
-      });
-      setEditingId(null);
-      await fetchProducts();
-    } catch (err) {
-      setError("Failed to update product.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (productId) => {
-    if (!window.confirm("Delete this product?")) return;
-    try {
-      await api.delete(`/manager/products/${productId}/`);
-      await fetchProducts();
-    } catch (err) {
-      setError("Failed to delete product.");
-    }
-  };
-
-  const startEditing = (product) => {
-    setEditingId(product.id);
-    setEditingName(product.name);
-    setEditingBasePrice(product.base_price);
-    setEditingCategory(product.category?.id || product.category || "");
-    setEditingGroups(
-      product.modifier_groups?.map((g) => String(g.id || g)) || []
-    );
+  const toggleModifier = (modId) => {
+    setFormData((prev) => ({
+      ...prev,
+      selectedModifiers: prev.selectedModifiers.includes(modId)
+        ? prev.selectedModifiers.filter((id) => id !== modId)
+        : [...prev.selectedModifiers, modId],
+    }));
   };
 
   if (loading)
-    return <div className="p-8 text-gray-600">Loading products...</div>;
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <Loader2
+          className="animate-spin text-blue-600"
+          size={40}
+        />
+      </div>
+    );
 
   return (
-    <div className="p-8 space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-800">Product Management</h1>
-        <p className="text-gray-500">
-          Manage your menu items, prices, and modifiers.
-        </p>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          {error}
+    <div className="p-6 max-w-7xl mx-auto space-y-8">
+      <header className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900">Menu Items</h1>
+          <p className="text-slate-500">
+            Create and manage your products and pricing.
+          </p>
         </div>
-      )}
+        {categories.length === 0 && (
+          <div className="flex items-center gap-2 bg-amber-50 text-amber-700 px-4 py-2 rounded-xl border border-amber-200 text-sm font-bold">
+            <AlertCircle size={16} />
+            No categories found. Create one first!
+          </div>
+        )}
+      </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* CREATE FORM */}
-        <div className="bg-white p-6 rounded-xl border shadow-sm h-fit">
-          <h2 className="text-lg font-bold mb-4">Add New Product</h2>
-          <form
-            onSubmit={handleCreate}
-            className="space-y-4">
-            <input
-              type="text"
-              placeholder="Product Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full border p-2 rounded"
-              required
-            />
-            <input
-              type="number"
-              step="0.01"
-              placeholder="Base Price"
-              value={basePrice}
-              onChange={(e) => setBasePrice(e.target.value)}
-              className="w-full border p-2 rounded"
-              required
-            />
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full border p-2 rounded"
-              required>
-              <option value="">Select Category</option>
-              {categories.map((cat) => (
-                <option
-                  key={cat.id}
-                  value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-
-            <div>
-              <p className="text-sm font-bold text-gray-700 mb-2">
-                Modifier Groups
-              </p>
-              <div className="max-h-40 overflow-y-auto border rounded p-2 space-y-1">
-                {modifierGroups.map((group) => (
-                  <label
-                    key={group.id}
-                    className="flex items-center text-sm">
-                    <input
-                      type="checkbox"
-                      checked={selectedGroups.includes(String(group.id))}
-                      onChange={() =>
-                        setSelectedGroups((prev) =>
-                          prev.includes(String(group.id))
-                            ? prev.filter((id) => id !== String(group.id))
-                            : [...prev, String(group.id)]
-                        )
-                      }
-                      className="mr-2"
-                    />
-                    {group.name}
-                  </label>
-                ))}
-              </div>
+        {/* FORM SECTION */}
+        <div className="lg:col-span-1">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden sticky top-6">
+            <div className="p-6 border-b border-slate-100">
+              <h2 className="text-lg font-bold">Add New Product</h2>
             </div>
-            <button
-              type="submit"
-              disabled={saving}
-              className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700 disabled:bg-gray-400">
-              {saving ? "Saving..." : "Create Product"}
-            </button>
-          </form>
+
+            <form
+              onSubmit={handleCreateProduct}
+              className="p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-black text-slate-400 uppercase mb-2">
+                  Product Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 outline-none transition-all"
+                  placeholder="e.g. Cheese Pizza"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase mb-2">
+                    Price ($)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={formData.base_price}
+                    onChange={(e) =>
+                      setFormData({ ...formData, base_price: e.target.value })
+                    }
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 outline-none"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-400 uppercase mb-2">
+                    Category
+                  </label>
+                  <select
+                    required
+                    value={formData.category}
+                    onChange={(e) =>
+                      setFormData({ ...formData, category: e.target.value })
+                    }
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 outline-none bg-white">
+                    <option value="">Select...</option>
+                    {categories.map((cat) => (
+                      <option
+                        key={cat.id}
+                        value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-400 uppercase mb-2">
+                  Modifiers
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {modifiers.map((mod) => (
+                    <button
+                      key={mod.id}
+                      type="button"
+                      onClick={() => toggleModifier(mod.id)}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
+                        formData.selectedModifiers.includes(mod.id)
+                          ? "border-blue-600 bg-blue-600 text-white"
+                          : "border-slate-200 text-slate-500 hover:border-slate-400"
+                      }`}>
+                      {mod.name}
+                    </button>
+                  ))}
+                  {modifiers.length === 0 && (
+                    <p className="text-[10px] text-slate-400 italic">
+                      No modifiers created yet.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting || categories.length === 0}
+                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black hover:bg-black transition-all disabled:bg-slate-200">
+                {submitting ? (
+                  <Loader2 className="animate-spin mx-auto" />
+                ) : (
+                  "Save Product"
+                )}
+              </button>
+            </form>
+          </div>
         </div>
 
-        {/* PRODUCT LIST */}
-        <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-lg font-bold">Existing Products</h2>
-          {products.length === 0 ? (
-            <div className="text-center py-10 border border-dashed rounded text-gray-400">
-              No products found.
+        {/* LIST SECTION */}
+        <div className="lg:col-span-2">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <th className="px-6 py-4">Item</th>
+                    <th className="px-6 py-4">Category</th>
+                    <th className="px-6 py-4">Price</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {products.map((product) => (
+                    <tr
+                      key={product.id}
+                      className="group hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                            <Package size={16} />
+                          </div>
+                          <span className="font-bold text-slate-700">
+                            {product.name}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
+                          {product.category_name || "General"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-black text-slate-900">
+                        ${parseFloat(product.base_price).toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button className="p-2 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 text-slate-400 hover:text-blue-600">
+                            <Edit2 size={14} />
+                          </button>
+                          <button className="p-2 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 text-slate-400 hover:text-red-600">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ) : (
-            products.map((product) => (
-              <div
-                key={product.id}
-                className="bg-white border rounded-xl p-4 shadow-sm">
-                {editingId === product.id ? (
-                  <div className="space-y-3">
-                    <input
-                      type="text"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="w-full border p-2 rounded"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editingBasePrice}
-                      onChange={(e) => setEditingBasePrice(e.target.value)}
-                      className="w-full border p-2 rounded"
-                    />
-                    <select
-                      value={editingCategory}
-                      onChange={(e) => setEditingCategory(e.target.value)}
-                      className="w-full border p-2 rounded">
-                      {categories.map((cat) => (
-                        <option
-                          key={cat.id}
-                          value={cat.id}>
-                          {cat.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleUpdate(product.id)}
-                        className="bg-green-600 text-white px-4 py-1 rounded text-sm">
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setEditingId(null)}
-                        className="bg-gray-400 text-white px-4 py-1 rounded text-sm">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h3 className="font-bold text-gray-800">
-                        {product.name}
-                      </h3>
-                      <p className="text-blue-600 font-semibold">
-                        ${product.base_price}
-                      </p>
-                      <p className="text-xs text-gray-500 uppercase mt-1">
-                        {product.category_name || "No Category"}
-                      </p>
-                    </div>
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => startEditing(product)}
-                        className="text-blue-600 hover:underline text-sm font-medium">
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(product.id)}
-                        className="text-red-600 hover:underline text-sm font-medium">
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {products.length === 0 && (
+              <div className="py-20 text-center text-slate-400">
+                <Package
+                  className="mx-auto mb-2 opacity-20"
+                  size={40}
+                />
+                <p className="text-sm">No products added yet.</p>
               </div>
-            ))
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default ProductManagement;

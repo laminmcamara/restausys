@@ -1,364 +1,259 @@
 import React, { useEffect, useState } from "react";
-import { useAuth } from "../hooks/useAuth";
-import { API_BASE } from "../config";
+import api from "../services/api";
 import PrintPreviewModal from "../components/printing/PrintPreviewModal";
+import {
+  Printer,
+  ChevronRight,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  Receipt,
+  UtensilsCrossed,
+  Send,
+  Loader2,
+} from "lucide-react";
 
 export default function Orders() {
-  const { accessToken } = useAuth();
-
   const [orders, setOrders] = useState([]);
-
+  const [loading, setLoading] = useState(true);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printOrder, setPrintOrder] = useState(null);
   const [printType, setPrintType] = useState("receipt");
 
   useEffect(() => {
-    if (accessToken) {
-      fetchOrders();
-
-      const interval = setInterval(fetchOrders, 10000);
-
-      return () => clearInterval(interval);
-    }
-  }, [accessToken]);
-
-  const authFetch = async (url, options = {}) => {
-    return fetch(url, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      },
-    });
-  };
-
-  const formatMoney = (value) =>
-    value !== undefined && value !== null && !Number.isNaN(Number(value))
-      ? Number(value).toFixed(2)
-      : "0.00";
-
-  const getOrderItems = (order) => {
-    return order?.items || order?.order_items || [];
-  };
-
-  const getUnitPrice = (item) => {
-    const quantity = Number(item.quantity || 1);
-
-    const explicitUnitPrice =
-      item.unit_price ??
-      item.unitPrice ??
-      item.product?.base_price ??
-      item.product?.price ??
-      item.menu_item?.base_price ??
-      item.menu_item?.price ??
-      item.product_base_price ??
-      item.menu_item_base_price ??
-      item.base_price ??
-      item.price;
-
-    if (explicitUnitPrice !== undefined && explicitUnitPrice !== null) {
-      return Number(explicitUnitPrice);
-    }
-
-    if (item.final_price !== undefined && item.final_price !== null) {
-      return Number(item.final_price) / quantity;
-    }
-
-    return 0;
-  };
-
-  const getLineTotal = (item) => {
-    const quantity = Number(item.quantity || 1);
-
-    const explicitLineTotal =
-      item.line_total ??
-      item.lineTotal ??
-      item.total_price ??
-      item.totalPrice ??
-      item.total;
-
-    if (explicitLineTotal !== undefined && explicitLineTotal !== null) {
-      return Number(explicitLineTotal);
-    }
-
-    return getUnitPrice(item) * quantity;
-  };
-
-  const getOrderTotal = (order) => {
-    const items = getOrderItems(order);
-
-    return items.reduce((sum, item) => {
-      return sum + getLineTotal(item);
-    }, 0);
-  };
-
-  const getSafeOrderForPrint = (order) => {
-    const items = getOrderItems(order);
-
-    const safeItems = items.map((item) => {
-      const unitPrice = getUnitPrice(item);
-      const lineTotal = getLineTotal(item);
-
-      return {
-        ...item,
-        unit_price: unitPrice,
-        unitPrice,
-        line_total: lineTotal,
-        lineTotal,
-        final_price: lineTotal,
-        total_price: lineTotal,
-        total: lineTotal,
-      };
-    });
-
-    const calculatedTotal = safeItems.reduce((sum, item) => {
-      return sum + Number(item.line_total || 0);
-    }, 0);
-
-    return {
-      ...order,
-      items: safeItems,
-      order_items: safeItems,
-      total_price: calculatedTotal,
-      total: calculatedTotal,
-    };
-  };
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   const fetchOrders = async () => {
     try {
-      const res = await authFetch(`${API_BASE}/api/v1/orders/`, {
-        method: "GET",
-      });
-
-      if (!res) return;
-
-      if (!res.ok) {
-        console.error("Failed to fetch orders:", res.status);
-        return;
-      }
-
-      const data = await res.json();
-
-      console.log("ORDERS ENDPOINT RAW DATA:", data);
-      console.log(
-        "FIRST ORDER ITEMS:",
-        Array.isArray(data)
-          ? data[0]?.items || data[0]?.order_items
-          : data.results?.[0]?.items || data.results?.[0]?.order_items
-      );
-      console.log(
-        "FIRST ORDER TOTAL FROM BACKEND:",
-        Array.isArray(data)
-          ? data[0]?.total_price || data[0]?.total
-          : data.results?.[0]?.total_price || data.results?.[0]?.total
-      );
-
-      const normalizedOrders = Array.isArray(data) ? data : data.results || [];
-
+      const res = await api.get("/orders/");
+      const normalizedOrders = Array.isArray(res.data)
+        ? res.data
+        : res.data.results || [];
       setOrders(normalizedOrders);
     } catch (err) {
       console.error("Fetch failed:", err);
+    } finally {
+      setLoading(false);
     }
   };
-  
-  const updateStatus = async (orderId, newStatus) => {
+
+  const triggerAction = async (orderId, actionName) => {
     try {
-      const response = await authFetch(
-        `${API_BASE}/orders/${orderId}/`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ status: newStatus }),
-        }
-      );
-
-      if (response && response.ok) {
-        fetchOrders();
-      } else if (response) {
-        const error = await response.json().catch(() => null);
-        console.log("Status update error:", error || response.status);
-      }
+      await api.post(`/orders/${orderId}/${actionName}/`);
+      fetchOrders();
     } catch (err) {
-      console.error("Status update failed:", err);
+      alert(err.response?.data?.error || `Failed to perform ${actionName}`);
     }
   };
 
-  const openPrintPreview = (order, type) => {
-    const safeOrder = getSafeOrderForPrint(order);
+  const formatMoney = (value) => Number(value || 0).toFixed(2);
 
-    setPrintOrder(safeOrder);
-    setPrintType(type);
-    setPrintModalOpen(true);
+  // Status configuration mapping backend status to UI elements
+  const statusConfig = {
+    DRAFT: {
+      color: "bg-slate-400",
+      label: "Draft",
+      action: "send_to_kitchen",
+      btnText: "Send to Kitchen",
+      icon: Send,
+    },
+    PLACED: {
+      color: "bg-blue-500",
+      label: "Placed",
+      action: "start_preparing",
+      btnText: "Start Cooking",
+      icon: Clock,
+    },
+    IN_PROGRESS: {
+      color: "bg-amber-500",
+      label: "Cooking",
+      action: "mark_ready",
+      btnText: "Mark Ready",
+      icon: UtensilsCrossed,
+    },
+    READY: {
+      color: "bg-emerald-500",
+      label: "Ready",
+      action: "mark_served",
+      btnText: "Mark Served",
+      icon: CheckCircle2,
+    },
+    SERVED: {
+      color: "bg-purple-600",
+      label: "Served",
+      action: "mark_paid",
+      btnText: "Settle Payment",
+      icon: Receipt,
+    },
+    PAID: {
+      color: "bg-black",
+      label: "Paid",
+      action: null,
+      btnText: null,
+      icon: CheckCircle2,
+    },
+    CANCELED: {
+      color: "bg-red-500",
+      label: "Canceled",
+      action: null,
+      btnText: null,
+      icon: AlertCircle,
+    },
   };
 
-  const statusColor = (status) => {
-    switch (status) {
-      case "DRAFT":
-        return "bg-gray-400";
-      case "PLACED":
-        return "bg-blue-500";
-      case "IN_PROGRESS":
-        return "bg-yellow-500";
-      case "READY":
-        return "bg-green-500";
-      case "SERVED":
-        return "bg-purple-500";
-      case "COMPLETED":
-        return "bg-black";
-      case "CANCELED":
-        return "bg-red-500";
-      default:
-        return "bg-gray-500";
-    }
-  };
-
-  const allowedTransitions = {
-    DRAFT: ["PLACED", "CANCELED"],
-    PLACED: ["IN_PROGRESS", "CANCELED"],
-    IN_PROGRESS: ["READY", "CANCELED"],
-    READY: ["SERVED", "CANCELED"],
-    SERVED: ["COMPLETED"],
-    COMPLETED: [],
-    CANCELED: [],
-  };
+  if (loading && orders.length === 0) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2
+          className="animate-spin text-indigo-600"
+          size={32}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="p-8 space-y-6">
-      <h1 className="text-2xl font-bold">Orders Dashboard</h1>
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900">
+            Orders Dashboard
+          </h1>
+          <p className="text-slate-500 text-sm">
+            Manage live order flow and status transitions.
+          </p>
+        </div>
+        <button
+          onClick={fetchOrders}
+          className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
+          Refresh
+        </button>
+      </div>
 
-      {orders.length === 0 && (
-        <div className="text-gray-500">No orders yet.</div>
-      )}
+      {orders.length === 0 ? (
+        <div className="bg-white border border-dashed border-slate-300 rounded-3xl p-20 text-center">
+          <UtensilsCrossed
+            className="mx-auto text-slate-200 mb-4"
+            size={48}
+          />
+          <p className="text-slate-400 font-medium">No active orders found.</p>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          {orders.map((order) => {
+            const config = statusConfig[order.status] || statusConfig.DRAFT;
+            const Icon = config.icon;
 
-      <div className="space-y-4">
-        {orders.map((order) => {
-          const orderItems = getOrderItems(order);
-          const calculatedTotal = getOrderTotal(order);
-
-          return (
-            <div
-              key={order.id}
-              className="border rounded-lg p-5 shadow-sm space-y-3"
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <h2 className="font-semibold">
-                    Order #{order.display_id || order.id}
-                  </h2>
-
-                  <p className="text-sm text-gray-500">
-                    {order.table_name
-                      ? `Table ${order.table_name}`
-                      : order.customer_name
-                      ? `Customer: ${order.customer_name}`
-                      : "Pickup"}
-                  </p>
+            return (
+              <div
+                key={order.id}
+                className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex gap-4">
+                    <div
+                      className={`p-3 rounded-xl text-white ${config.color} shadow-inner`}>
+                      <Icon size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-black text-slate-900">
+                          Order #{order.display_id || order.id}
+                        </h2>
+                        <span
+                          className={`text-[10px] font-bold text-white px-2 py-0.5 rounded-full uppercase ${config.color}`}>
+                          {config.label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500 font-medium">
+                        {order.table_name
+                          ? `Table ${order.table_name}`
+                          : "Walk-in / Takeaway"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-black text-slate-900">
+                      ${formatMoney(order.total_price || order.total)}
+                    </p>
+                    <p className="text-[10px] text-slate-400 uppercase font-bold">
+                      {new Date(order.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  </div>
                 </div>
 
-                <span
-                  className={`text-white px-3 py-1 rounded text-sm ${statusColor(
-                    order.status
-                  )}`}
-                >
-                  {String(order.status || "").replace("_", " ")}
-                </span>
-              </div>
-
-              <div className="space-y-1 text-sm">
-                {orderItems.map((item) => {
-                  const itemName =
-                    item.product?.name ||
-                    item.menu_item?.name ||
-                    item.product_name ||
-                    item.menu_item_name ||
-                    item.name ||
-                    "Item";
-
-                  return (
+                {/* Items List */}
+                <div className="bg-slate-50/50 rounded-xl p-3 my-3 space-y-1">
+                  {order.items?.map((item) => (
                     <div
                       key={item.id}
-                      className="flex justify-between gap-4"
-                    >
-                      <span>
-                        {item.quantity} × {itemName}
+                      className="flex justify-between text-sm">
+                      <span className="text-slate-700 font-medium">
+                        {item.quantity}x {item.product?.name || item.name}
+                        {item.modifiers?.length > 0 && (
+                          <span className="text-[10px] text-slate-400 block ml-4">
+                            {item.modifiers.map((m) => m.name).join(", ")}
+                          </span>
+                        )}
                       </span>
-
-                      <span className="text-gray-600">
-                        ${formatMoney(getLineTotal(item))}
+                      <span className="text-slate-600 font-bold">
+                        ${formatMoney(item.final_price)}
                       </span>
                     </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex justify-between items-center gap-4 flex-wrap">
-                <div className="font-semibold">
-                  Total: ${formatMoney(calculatedTotal)}
+                  ))}
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => openPrintPreview(order, "bill")}
-                    className="border px-3 py-2 rounded text-sm hover:bg-gray-100"
-                  >
-                    Bill
-                  </button>
+                {/* Actions Footer */}
+                <div className="flex justify-between items-center pt-2">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setPrintOrder(order);
+                        setPrintType("bill");
+                        setPrintModalOpen(true);
+                      }}
+                      className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors">
+                      <Printer size={14} /> Bill
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPrintOrder(order);
+                        setPrintType("receipt");
+                        setPrintModalOpen(true);
+                      }}
+                      className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors">
+                      <Receipt size={14} /> Receipt
+                    </button>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => openPrintPreview(order, "receipt")}
-                    className="border px-3 py-2 rounded text-sm hover:bg-gray-100"
-                  >
-                    Receipt
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => openPrintPreview(order, "kitchen")}
-                    className="border px-3 py-2 rounded text-sm hover:bg-gray-100"
-                  >
-                    Kitchen Ticket
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => openPrintPreview(order, "bar")}
-                    className="border px-3 py-2 rounded text-sm hover:bg-gray-100"
-                  >
-                    Bar Ticket
-                  </button>
-
-                  {allowedTransitions[order.status]?.length > 0 && (
-                    <select
-                      onChange={(e) => updateStatus(order.id, e.target.value)}
-                      defaultValue=""
-                      className="border p-2 rounded text-sm"
-                    >
-                      <option value="" disabled>
-                        Change Status
-                      </option>
-
-                      {allowedTransitions[order.status].map((status) => (
-                        <option key={status} value={status}>
-                          {status.replace("_", " ")}
-                        </option>
-                      ))}
-                    </select>
+                  {config.action && (
+                    <button
+                      onClick={() => triggerAction(order.id, config.action)}
+                      className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 ${config.color} hover:brightness-110`}>
+                      {config.btnText}
+                      <ChevronRight size={16} />
+                    </button>
                   )}
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      <PrintPreviewModal
-        open={printModalOpen}
-        onClose={() => setPrintModalOpen(false)}
-        order={printOrder}
-        type={printType}
-      />
+      {printOrder && (
+        <PrintPreviewModal
+          open={printModalOpen}
+          onClose={() => setPrintModalOpen(false)}
+          order={printOrder}
+          type={printType}
+        />
+      )}
     </div>
   );
 }

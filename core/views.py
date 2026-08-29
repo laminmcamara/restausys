@@ -83,7 +83,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration, Discount
 
 )
 from .serializers import (
@@ -2970,7 +2970,30 @@ def create_checkout_session(request):
 
     except Exception as e:
         return Response({"error": str(e)}, status=400)
-    
+
+
+@api_view(['GET', 'POST'])
+def subscription_status(request):
+    restaurant = request.user.restaurant_profile # Adjust based on your User model
+    subscription = restaurant.subscription
+
+    if request.method == 'GET':
+        serializer = SubscriptionSerializer(subscription)
+        return Response(serializer.data)
+
+    if request.method == 'POST':
+        # User is reporting a payment
+        method = request.data.get('offline_payment_method')
+        ref = request.data.get('offline_payment_reference')
+        
+        subscription.offline_payment_method = method
+        subscription.offline_payment_reference = ref
+        subscription.offline_payment_notes = f"User reported payment via {method} at {timezone.now()}"
+        # We DON'T change status to ACTIVE yet. Admin does that.
+        subscription.save()
+        
+        return Response({"status": "submitted", "message": "Verification pending."})
+
     
 class ManagerDashboardView(LoginRequiredMixin, TemplateView):
     template_name = "core/manager_dashboard.html"

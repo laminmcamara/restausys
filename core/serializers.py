@@ -832,7 +832,7 @@ class CustomerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Customer
-        fields = ['id', 'name', 'email', 'phone', 'total_spent', 'created_at']
+        fields = ['id', 'name', 'email', 'phone', 'total_spent', 'created_at', 'total_orders', 'restaurant']
         read_only_fields = ('restaurant',) 
 
     def get_total_orders(self, obj):

@@ -1,12 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import api from "../services/api";
 
-/**
- * Dashboard Component
- * Combines user authentication context with restaurant settings data.
- */
 export default function Dashboard() {
   const { user } = useAuth();
   const location = useLocation();
@@ -18,7 +14,20 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Fetch restaurant/company settings
+  // Best-effort: determine the restaurant name from the logged-in user/tenant first
+  const restaurantName = useMemo(() => {
+    // Common patterns depending on your backend/serializer
+    return (
+      user?.restaurant?.name ||
+      user?.restaurant_name ||
+      user?.restaurantName ||
+      dashboardData?.restaurant?.name ||
+      dashboardData?.tenant?.restaurant_name ||
+      dashboardData?.tenant?.restaurant?.name ||
+      "Restaurant Dashboard"
+    );
+  }, [user, dashboardData]);
+
   useEffect(() => {
     const loadDashboard = async () => {
       try {
@@ -83,11 +92,10 @@ export default function Dashboard() {
 
       {/* Header Section */}
       <header className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">
-          {dashboardData?.restaurant?.name || "Restaurant Dashboard"}
-        </h1>
+        <h1 className="text-3xl font-bold text-gray-900">{restaurantName}</h1>
+
         <p className="text-gray-600">
-          Welcome back, <span className="font-semibold">{user.username}</span>.
+          Welcome back, <span className="font-semibold">{user.username}</span>.{" "}
           Here is your {dashboardData?.company?.name || "BEEPOS"} overview.
         </p>
       </header>
