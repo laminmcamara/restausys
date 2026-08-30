@@ -1,49 +1,113 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 
-const tables = [
-  { id: 1, name: "Table 1", seats: 2, status: "available" },
-  { id: 2, name: "Table 2", seats: 4, status: "available" },
-  { id: 3, name: "Table 3", seats: 4, status: "occupied" },
-  { id: 4, name: "Table 4", seats: 6, status: "available" },
-  { id: 5, name: "Table 5", seats: 2, status: "available" },
-  { id: 6, name: "Table 6", seats: 8, status: "available" },
-];
-
-const menus = [
-  { id: 1, name: "Chicken Burger", price: 8.99 },
-  { id: 2, name: "Beef Burger", price: 9.99 },
-  { id: 3, name: "French Fries", price: 3.99 },
-  { id: 4, name: "Caesar Salad", price: 6.99 },
-  { id: 5, name: "Orange Juice", price: 2.99 },
-  { id: 6, name: "Coffee", price: 2.49 },
-];
-
-export default function DineInPage() {
-  const [selectedTable, setSelectedTable] = useState(null);
+export default function DineInPage({
+  restaurantName,
+  floorTables = [], // [{ id, name, seats, status }]
+  menus = [], // [{ id, name, price }]
+  onSendOrder, // async fn(payload) => promise
+  tableIdentifierPrefix = "", // optional, e.g. "" => use table.name, or "T" => T1 style
+}) {
+  const [selectedTableId, setSelectedTableId] = useState(null);
   const [cart, setCart] = useState([]);
 
-  const visibleTables = selectedTable ? [selectedTable] : tables;
+  const selectedTable = useMemo(() => {
+    return floorTables.find((t) => t.id === selectedTableId) || null;
+  }, [floorTables, selectedTableId]);
+
+  const visibleTables = selectedTable ? [selectedTable] : floorTables;
 
   const addToCart = (item) => {
-    setCart((prevCart) => {
-      const existingItem = prevCart.find((cartItem) => cartItem.id === item.id);
-
-      if (existingItem) {
-        return prevCart.map((cartItem) =>
-          cartItem.id === item.id
-            ? { ...cartItem, quantity: cartItem.quantity + 1 }
-            : cartItem
+    setCart((prev) => {
+      const existing = prev.find((ci) => ci.id === item.id);
+      if (existing) {
+        return prev.map((ci) =>
+          ci.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci
         );
       }
-
-      return [...prevCart, { ...item, quantity: 1 }];
+      return [...prev, { ...item, quantity: 1 }];
     });
   };
 
-  const cartTotal = cart.reduce(
-    (total, item) => total + item.price * item.quantity,
-    0
-  );
+  const removeFromCart = (id) => {
+    setCart((prev) => prev.filter((x) => x.id !== id));
+  };
+
+  const setQty = (id, qty) => {
+    setCart((prev) =>
+      prev
+        .map((x) => (x.id === id ? { ...x, quantity: qty } : x))
+        .filter((x) => x.quantity > 0)
+    );
+  };
+
+  const cartTotal = useMemo(() => {
+    return cart.reduce((total, item) => total + item.price * item.quantity, 0);
+  }, [cart]);
+
+  const getTableLabel = (table) => {
+    if (!table) return "";
+    // If caller wants prefix-based labels, they can pass tableIdentifierPrefix="T"
+    // and also ensure table.name is something like "1" or they handle it upstream.
+    // Default: use table.name directly.
+    if (!tableIdentifierPrefix) return table.name;
+    const suffix = String(table.name).replace(/^T\s*/i, "").trim();
+    return `${tableIdentifierPrefix}${suffix}`;
+  };
+
+  const identifier = selectedTable ? getTableLabel(selectedTable) : "";
+
+  const sendDisabled =
+    !selectedTable || cart.length === 0 || typeof onSendOrder !== "function";
+
+  const handleSend = async () => {
+    if (sendDisabled) return;
+
+    const payload = {
+      orderType: "DINE_IN",
+      identifier, // e.g. T1
+      restaurantName,
+      tableId: selectedTable.id,
+
+      items: cart.map((i) => ({
+        menuId: i.id,
+        name: i.name,
+        price: i.price,
+        quantity: i.quantity,
+        lineTotal: i.price * i.quantity,
+      })),
+
+      totals: {
+        subtotal: cartTotal,
+        total: cartTotal,
+      },
+
+      // Drives your 3 printouts on backend:
+      ticketMeta: {
+        kitchen: {
+          showAmounts: false,
+          showRestaurantName: false,
+          showPayment: false,
+          identifier,
+        },
+        customerTicket: {
+          showAmounts: true,
+          showRestaurantName: true,
+          showPayment: false,
+          identifier,
+        },
+        receipt: {
+          showAmounts: true,
+          showRestaurantName: true,
+          showPayment: true,
+          identifier,
+        },
+      },
+    };
+
+    await onSendOrder(payload);
+    setCart([]);
+    setSelectedTableId(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -70,7 +134,7 @@ export default function DineInPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedTable(null);
+                  setSelectedTableId(null);
                   setCart([]);
                 }}
                 className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">
@@ -90,9 +154,7 @@ export default function DineInPage() {
                   type="button"
                   disabled={isOccupied && !isSelected}
                   onClick={() => {
-                    if (!isOccupied) {
-                      setSelectedTable(table);
-                    }
+                    if (!isOccupied) setSelectedTableId(table.id);
                   }}
                   className={`rounded-3xl border p-6 text-left transition ${
                     isSelected
@@ -150,17 +212,26 @@ export default function DineInPage() {
               cart.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
                   <div>
                     <p className="font-bold text-slate-800">{item.name}</p>
                     <p className="text-sm text-slate-500">
-                      ${item.price.toFixed(2)} × {item.quantity}
+                      ${Number(item.price).toFixed(2)} × {item.quantity}
                     </p>
                   </div>
 
-                  <p className="font-black text-slate-900">
-                    ${(item.price * item.quantity).toFixed(2)}
-                  </p>
+                  <div className="flex flex-col items-end gap-2">
+                    <p className="font-black text-slate-900">
+                      ${(item.price * item.quantity).toFixed(2)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(item.id)}
+                      className="rounded-lg px-2 py-1 text-xs font-black text-slate-600 hover:bg-slate-50"
+                      aria-label={`Remove ${item.name}`}>
+                      ✕
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -177,6 +248,7 @@ export default function DineInPage() {
             <button
               type="button"
               disabled={!selectedTable || cart.length === 0}
+              onClick={handleSend}
               className="mt-5 w-full rounded-xl bg-blue-600 px-4 py-3 font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300">
               Send Order
             </button>
@@ -198,7 +270,7 @@ export default function DineInPage() {
                 className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
                 <h3 className="font-black text-slate-900">{item.name}</h3>
                 <p className="mt-2 text-lg font-black text-blue-600">
-                  ${item.price.toFixed(2)}
+                  ${Number(item.price).toFixed(2)}
                 </p>
 
                 <button
@@ -209,6 +281,12 @@ export default function DineInPage() {
                 </button>
               </div>
             ))}
+          </div>
+
+          {/* optional: show identifier used on kitchen/customer/receipt */}
+          <div className="mt-4 text-xs text-slate-500">
+            Order label:{" "}
+            <span className="font-black text-slate-800">{identifier}</span>
           </div>
         </section>
       )}

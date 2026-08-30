@@ -3,13 +3,23 @@ import React from "react";
 const PrintableOrderDocument = ({ order, type = "receipt" }) => {
   if (!order) return null;
 
+  // Get restaurant name from logged in user data
+  const userData = JSON.parse(localStorage.getItem("user") || "{}");
+  const restaurantName =
+    userData.restaurant_name || order.restaurant_name || "BEEPOS RESTAURANT";
+
   const isKitchen = type === "kitchen" || type === "bar";
   const items = order.items || order.order_items || [];
 
   // Logic for Table Name: T1, T2 or T/O (Take Out)
-  const tableDisplay = order.table_name
-    ? `T${order.table_name.replace(/\D/g, "") || order.table_name}`
-    : "T/O";
+  const tableDisplay =
+    order.table_number || order.table_name
+      ? `T${
+          String(order.table_number || order.table_name).replace(/\D/g, "") ||
+          order.table_number ||
+          order.table_name
+        }`
+      : "T/O";
 
   const formatMoney = (val) => Number(val || 0).toFixed(2);
 
@@ -57,9 +67,7 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
         /* CUSTOMER RECEIPT: Restaurant Name, Items, Prices, Total */
         <div className="customer-receipt">
           <div className="receipt-header">
-            <h2 className="restaurant-name">
-              {order.restaurant_name || "BEEPOS RESTAURANT"}
-            </h2>
+            <h2 className="restaurant-name">{restaurantName}</h2>
             <p className="receipt-subtext">
               Order #{order.display_id || order.id}
             </p>
@@ -91,7 +99,7 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
                   </td>
                   <td className="text-right">{item.quantity}</td>
                   <td className="text-right">
-                    {formatMoney(item.final_price)}
+                    {formatMoney(item.final_price || item.price)}
                   </td>
                 </tr>
               ))}
@@ -113,6 +121,9 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
 
           <div className="receipt-footer">
             <p>Thank you for your visit!</p>
+            <p style={{ fontSize: "8px", marginTop: "10px", color: "#888" }}>
+              Powered by BEEPOS
+            </p>
           </div>
         </div>
       )}

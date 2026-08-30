@@ -550,6 +550,10 @@ class OrderItemSerializer(serializers.ModelSerializer):
 # ✅ ORDER SERIALIZER (UPDATED FOR DISPLAY)
 # ==============================================================================
 
+# ==============================================================================
+# ✅ ORDER SERIALIZER (UPDATED FOR DISPLAY)
+# ==============================================================================
+
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     staff = CustomUserSerializer(source="created_by", read_only=True)
@@ -557,6 +561,12 @@ class OrderSerializer(serializers.ModelSerializer):
     total_price = serializers.SerializerMethodField()
     display_id = serializers.SerializerMethodField()
     estimated_time = serializers.SerializerMethodField()
+
+    # ✅ ADD THIS LINE: Pulls the name from the Restaurant model
+    restaurant_name = serializers.CharField(
+        source="restaurant.name", 
+        read_only=True
+    )
 
     # ✅ Clean display helpers
     table_name = serializers.CharField(
@@ -576,6 +586,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "id",
             "display_id",
             "restaurant",
+            "restaurant_name", 
             "table",
             "table_name",
             "customer_name",
