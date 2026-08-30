@@ -83,7 +83,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration, Discount
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration, Discount, Session,
 
 )
 from .serializers import (
@@ -97,6 +97,7 @@ from .serializers import (
     DiscountSerializer,
     ChangePasswordSerializer,
     WebhookConfigurationSerializer,
+    SessionSerializer,
  
 )
 
@@ -4968,3 +4969,27 @@ def regenerate_api_key(request):
         "message": f"{key_type.replace('_', ' ').title()} regenerated",
         "new_value": new_value
     })
+    
+    
+
+class SessionViewSet(viewsets.ModelViewSet):
+    serializer_class = SessionSerializer
+    
+    def get_queryset(self):
+        return Session.objects.filter(restaurant=self.request.user.restaurant)
+
+    def perform_create(self, serializer):
+        serializer.save(
+            restaurant=self.request.user.restaurant,
+            opened_by=self.request.user,
+            status='OPEN'
+        )
+
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        # Finds the most recent open session for this restaurant
+        session = self.get_queryset().filter(status='OPEN').first()
+        if not session:
+            return Response({"detail": "No active session"}, status=404)
+        serializer = self.get_serializer(session)
+        return Response(serializer.data)

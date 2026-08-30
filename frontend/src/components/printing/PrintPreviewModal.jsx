@@ -3,33 +3,52 @@ import React from "react";
 const PrintableOrderDocument = ({ order, type = "receipt" }) => {
   if (!order) return null;
 
-  // Get restaurant name from logged in user data
+  // 1. DYNAMIC BRANDING
   const userData = JSON.parse(localStorage.getItem("user") || "{}");
   const restaurantName =
-    userData.restaurant_name || order.restaurant_name || "BEEPOS RESTAURANT";
+    order.restaurant_name || userData.restaurant_name || "BEEPOS RESTAURANT";
 
   const isKitchen = type === "kitchen" || type === "bar";
-  const items = order.items || order.order_items || [];
+  const rawItems = order.items || order.order_items || [];
 
-  // Logic for Table Name: T1, T2 or T/O (Take Out)
-  const tableDisplay =
-    order.table_number || order.table_name
-      ? `T${
-          String(order.table_number || order.table_name).replace(/\D/g, "") ||
-          order.table_number ||
-          order.table_name
-        }`
-      : "T/O";
+  // 2. ITEM GROUPING LOGIC
+  // Combines identical items (same product + same modifiers) into a single line with increased quantity
+  const groupedItems = rawItems.reduce((acc, item) => {
+    const productName = item.product?.name || item.name;
+    const modifierString = JSON.stringify(item.modifiers || []);
+    const key = `${productName}-${modifierString}`;
+
+    if (!acc[key]) {
+      acc[key] = { ...item, display_name: productName };
+    } else {
+      acc[key].quantity = (acc[key].quantity || 0) + (item.quantity || 1);
+    }
+    return acc;
+  }, {});
+
+  const displayItems = Object.values(groupedItems);
+
+  // 3. TABLE / IDENTIFIER LOGIC
+  // Handles Dine-In (T1, T2) and Take-Out (Customer Name or T/O)
+  let tableDisplay = "T/O";
+  if (order.table_number || order.table_name) {
+    const val = String(order.table_number || order.table_name);
+    tableDisplay = val.startsWith("T") ? val : `T${val}`;
+  } else if (order.customer_name && order.customer_name !== "Guest") {
+    tableDisplay = order.customer_name.toUpperCase();
+  }
 
   const formatMoney = (val) => Number(val || 0).toFixed(2);
 
   return (
     <div className="printable-document">
       {isKitchen ? (
-        /* KITCHEN TICKET: Bold Table ID and Items Only */
+        /* KITCHEN TICKET */
         <div className="kitchen-ticket">
           <div className="kitchen-header">
-            <h1>{tableDisplay}</h1>
+            <h1 className={tableDisplay.length > 4 ? "text-xl" : ""}>
+              {tableDisplay}
+            </h1>
             <div className="order-meta">
               <span>#{order.display_id || order.id}</span>
               <span>
@@ -42,15 +61,13 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
           </div>
 
           <div className="item-list">
-            {items.map((item, idx) => (
+            {displayItems.map((item, idx) => (
               <div
                 key={idx}
                 className="kitchen-item">
                 <span className="qty">{item.quantity}x</span>
                 <div className="details">
-                  <span className="name">
-                    {item.product?.name || item.name}
-                  </span>
+                  <span className="name">{item.display_name}</span>
                   {item.modifiers?.map((m, i) => (
                     <span
                       key={i}
@@ -58,13 +75,16 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
                       • {m.name}
                     </span>
                   ))}
+                  {item.notes && (
+                    <span className="item-note">** {item.notes}</span>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         </div>
       ) : (
-        /* CUSTOMER RECEIPT: Restaurant Name, Items, Prices, Total */
+        /* CUSTOMER RECEIPT */
         <div className="customer-receipt">
           <div className="receipt-header">
             <h2 className="restaurant-name">{restaurantName}</h2>
@@ -72,6 +92,7 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
               Order #{order.display_id || order.id}
             </p>
             <p className="receipt-subtext">{new Date().toLocaleString()}</p>
+            <p className="receipt-subtext font-bold">Table: {tableDisplay}</p>
           </div>
 
           <div className="receipt-divider"></div>
@@ -85,10 +106,10 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
               </tr>
             </thead>
             <tbody>
-              {items.map((item, idx) => (
+              {displayItems.map((item, idx) => (
                 <tr key={idx}>
                   <td className="text-left">
-                    {item.product?.name || item.name}
+                    {item.display_name}
                     {item.modifiers?.map((m, i) => (
                       <div
                         key={i}
@@ -99,7 +120,9 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
                   </td>
                   <td className="text-right">{item.quantity}</td>
                   <td className="text-right">
-                    {formatMoney(item.final_price || item.price)}
+                    {formatMoney(
+                      (item.final_price || item.price) * item.quantity
+                    )}
                   </td>
                 </tr>
               ))}
@@ -121,9 +144,7 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
 
           <div className="receipt-footer">
             <p>Thank you for your visit!</p>
-            <p style={{ fontSize: "8px", marginTop: "10px", color: "#888" }}>
-              Powered by BEEPOS
-            </p>
+            <p className="powered-by">Powered by BEEPOS</p>
           </div>
         </div>
       )}
@@ -133,119 +154,107 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
           font-family: 'Courier New', Courier, monospace;
           color: #000;
           background: #fff;
-          width: 300px; /* Standard 80mm width */
+          width: 300px;
           margin: 0 auto;
           padding: 10px;
         }
 
-        /* Kitchen Styles */
-        .kitchen-header {
-          text-align: center;
-          border-bottom: 2px solid #000;
-          padding-bottom: 10px;
-          margin-bottom: 10px;
-        }
         .kitchen-header h1 {
           font-size: 64px;
+          text-align: center;
           margin: 0;
-          line-height: 1;
+          border-bottom: 2px solid #000;
+          line-height: 1.1;
         }
+        
+        .kitchen-header h1.text-xl {
+          font-size: 32px; /* For longer customer names */
+        }
+
         .order-meta {
           display: flex;
           justify-content: space-between;
-          font-size: 14px;
           font-weight: bold;
+          font-size: 14px;
+          margin-top: 5px;
         }
+
         .kitchen-item {
           display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          padding: 8px 0;
-          border-bottom: 1px solid #eee;
-          font-size: 20px;
+          font-size: 22px;
           font-weight: bold;
+          padding: 10px 0;
+          border-bottom: 1px solid #ccc;
         }
-        .kitchen-item .mod {
+
+        .qty { margin-right: 15px; }
+        
+        .mod {
           display: block;
-          font-size: 14px;
+          font-size: 16px;
           font-weight: normal;
           margin-left: 10px;
         }
 
-        /* Receipt Styles */
-        .receipt-header {
-          text-align: center;
-          margin-bottom: 10px;
+        .item-note {
+          display: block;
+          font-size: 14px;
+          color: #444;
+          margin-top: 4px;
         }
+
         .restaurant-name {
-          font-size: 18px;
-          font-weight: bold;
+          font-size: 20px;
+          text-align: center;
           text-transform: uppercase;
           margin: 0;
         }
+
         .receipt-subtext {
-          font-size: 11px;
+          text-align: center;
+          font-size: 12px;
           margin: 2px 0;
         }
+
         .receipt-divider {
           border-top: 1px dashed #000;
           margin: 10px 0;
         }
+
         .receipt-table {
           width: 100%;
-          font-size: 12px;
-          border-collapse: collapse;
+          font-size: 14px;
         }
-        .receipt-table th {
-          border-bottom: 1px solid #000;
-          padding-bottom: 5px;
-        }
-        .receipt-table td {
-          padding: 5px 0;
-          vertical-align: top;
-        }
+
         .receipt-mod {
-          font-size: 10px;
-          color: #555;
+          font-size: 11px;
           font-style: italic;
+          margin-left: 5px;
         }
-        .text-left { text-align: left; }
-        .text-right { text-align: right; }
-        
-        .receipt-totals {
-          margin-top: 10px;
-        }
-        .total-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 13px;
-          margin-bottom: 3px;
-        }
+
         .grand-total {
-          font-size: 18px;
+          font-size: 20px;
           font-weight: bold;
-          border-top: 1px solid #000;
+          border-top: 2px solid #000;
+          margin-top: 5px;
           padding-top: 5px;
         }
+
         .receipt-footer {
           text-align: center;
-          margin-top: 20px;
-          font-size: 12px;
+          margin-top: 30px;
+        }
+
+        .powered-by {
+          font-size: 8px;
+          color: #888;
+          margin-top: 10px;
         }
 
         @media print {
-          body * {
-            visibility: hidden;
-          }
-          .printable-document, .printable-document * {
-            visibility: visible;
-          }
-          .printable-document {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-          }
+          body * { visibility: hidden; }
+          .printable-document, .printable-document * { visibility: visible; }
+          .printable-document { position: absolute; left: 0; top: 0; width: 100%; }
         }
       `}</style>
     </div>

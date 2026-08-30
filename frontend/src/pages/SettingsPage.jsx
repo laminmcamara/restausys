@@ -13,15 +13,20 @@ import {
   Users,
   CheckCircle2,
   AlertCircle,
+  Wallet,
 } from "lucide-react";
 import api from "../services/api";
+import SessionManagement from "../components/SessionManagement";
 
+// Updated tabs to include Register and Staff
 const tabs = [
   { id: "general", label: "General", icon: Store },
+  { id: "register", label: "Register", icon: Wallet },
   { id: "tax", label: "Tax & Charges", icon: CreditCard },
   { id: "orders", label: "Orders", icon: ShoppingBag },
   { id: "receipt", label: "Receipt", icon: ReceiptText },
   { id: "inventory", label: "Inventory", icon: ClipboardList },
+  { id: "staff", label: "Staff", icon: Users },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "appearance", label: "Appearance", icon: Palette },
 ];
@@ -75,6 +80,21 @@ const SectionCard = ({ title, children }) => (
   </div>
 );
 
+// Placeholder for StaffList until created
+const StaffList = () => (
+  <SectionCard title="Staff Management">
+    <div className="text-center py-12">
+      <Users
+        className="mx-auto text-slate-300 mb-4"
+        size={48}
+      />
+      <p className="text-slate-500 font-medium">
+        Staff management features coming soon.
+      </p>
+    </div>
+  </SectionCard>
+);
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("general");
   const [settings, setSettings] = useState({});
@@ -83,11 +103,6 @@ export default function SettingsPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-
-  const activeTabInfo = useMemo(
-    () => tabs.find((t) => t.id === activeTab),
-    [activeTab]
-  );
 
   useEffect(() => {
     const load = async () => {
@@ -117,7 +132,6 @@ export default function SettingsPage() {
     setError("");
     setMessage("");
     try {
-      // Precise mapping to your SettingsSerializer fields
       const payload = {
         ...settings,
         tax_percentage: parseFloat(settings.tax_percentage) || 0,
@@ -160,24 +174,27 @@ export default function SettingsPage() {
               Manage your restaurant configuration and preferences.
             </p>
           </div>
-          <button
-            onClick={handleSave}
-            disabled={!isDirty || saving}
-            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all shadow-lg ${
-              isDirty
-                ? "bg-indigo-600 text-white hover:bg-indigo-700 scale-105"
-                : "bg-slate-200 text-slate-400 cursor-not-allowed"
-            }`}>
-            {saving ? (
-              <Loader2
-                className="animate-spin"
-                size={18}
-              />
-            ) : (
-              <Save size={18} />
-            )}
-            {saving ? "Saving..." : "Save Changes"}
-          </button>
+          {/* Save button only visible/useful for standard settings tabs */}
+          {!["register", "staff"].includes(activeTab) && (
+            <button
+              onClick={handleSave}
+              disabled={!isDirty || saving}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all shadow-lg ${
+                isDirty
+                  ? "bg-indigo-600 text-white hover:bg-indigo-700 scale-105"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+              }`}>
+              {saving ? (
+                <Loader2
+                  className="animate-spin"
+                  size={18}
+                />
+              ) : (
+                <Save size={18} />
+              )}
+              {saving ? "Saving..." : "Save Changes"}
+            </button>
+          )}
         </header>
 
         {message && (
@@ -208,6 +225,10 @@ export default function SettingsPage() {
           </nav>
 
           <div className="lg:col-span-3">
+            {activeTab === "register" && <SessionManagement />}
+
+            {activeTab === "staff" && <StaffList />}
+
             {activeTab === "general" && (
               <SectionCard title="Restaurant Identity">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

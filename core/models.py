@@ -2982,3 +2982,23 @@ class WebhookEvent(models.Model):
 
     def __str__(self):
         return f"{self.event_type} - {self.restaurant.name} ({self.status})"
+    
+    
+
+class Session(models.Model):
+    STATUS_CHOICES = [
+        ('OPEN', 'Open'),
+        ('CLOSED', 'Closed'),
+    ]
+    restaurant = models.ForeignKey('Restaurant', on_delete=models.CASCADE)
+    opened_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
+    start_time = models.DateTimeField(auto_now_add=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+    start_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    end_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='OPEN')
+    notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"Session {self.id} - {self.restaurant.name} ({self.status})"
+

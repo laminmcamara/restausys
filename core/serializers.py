@@ -24,6 +24,7 @@ from .models import (
     Printer,
     PrintJob,
     WebhookConfiguration,
+    Session,
 )
 
 
@@ -977,3 +978,16 @@ class WebhookConfigurationSerializer(serializers.ModelSerializer):
         # We make these read-only so they can't be changed via the standard POST
         # (Regeneration is handled by our custom endpoint instead)
         read_only_fields = ['live_api_key', 'test_api_key', 'live_secret', 'test_secret']
+        
+
+class SessionSerializer(serializers.ModelSerializer):
+    opened_by_name = serializers.ReadOnlyField(source='opened_by.username')
+
+    class Meta:
+        model = Session
+        fields = [
+            'id', 'restaurant', 'opened_by', 'opened_by_name', 
+            'start_time', 'end_time', 'start_amount', 
+            'end_amount', 'status', 'notes'
+        ]
+        read_only_fields = ['opened_by', 'restaurant', 'start_time']
