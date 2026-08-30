@@ -126,7 +126,7 @@ export default function POS() {
     try {
       const payload = {
         order: activeOrder.id,
-        product: itemWithModifiers.id,
+        product_id: itemWithModifiers.id,
         quantity: itemWithModifiers.quantity,
         modifier_ids: itemWithModifiers.selectedModifiers.map((m) => m.id),
       };
