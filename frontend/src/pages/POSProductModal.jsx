@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Plus, Minus } from "lucide-react";
+import { X, Plus, Minus, AlertTriangle } from "lucide-react";
 
 const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
   const [quantity, setQuantity] = useState(1);
@@ -11,7 +11,8 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
     if (product) {
       setQuantity(1);
       setSelectedModifiers({});
-      setTotalPrice(parseFloat(product.base_price));
+      // Use base_price from backend
+      setTotalPrice(parseFloat(product.base_price || product.price || 0));
     }
   }, [product]);
 
@@ -26,7 +27,8 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
       });
     });
 
-    setTotalPrice((parseFloat(product.base_price) + modifiersCost) * quantity);
+    const base = parseFloat(product.base_price || product.price || 0);
+    setTotalPrice((base + modifiersCost) * quantity);
   }, [selectedModifiers, quantity, product]);
 
   if (!isOpen || !product) return null;
@@ -39,10 +41,8 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
       const currentSelection = prev[groupId] || [];
 
       if (isSingle) {
-        // If single choice, replace the whole array with just this option
         return { ...prev, [groupId]: [option] };
       } else {
-        // If multiple, toggle the option in the array
         const exists = currentSelection.find((item) => item.id === option.id);
         if (exists) {
           return {
@@ -57,13 +57,19 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
   };
 
   const handleConfirm = () => {
-    // Flatten selected modifiers for the cart
     const flatModifiers = Object.values(selectedModifiers).flat();
+
+    // Calculate price per unit including modifiers
+    const unitPrice = totalPrice / quantity;
+
     onAddToCart({
-      ...product,
-      quantity,
-      selectedModifiers: flatModifiers,
-      finalPrice: totalPrice / quantity, // price per unit with mods
+      product: product.id, // Backend expects product ID
+      name: product.name, // For UI display in cart
+      quantity: quantity,
+      modifiers: flatModifiers.map((m) => m.id), // Backend expects IDs
+      selectedModifiers: flatModifiers, // For UI display
+      final_price: unitPrice.toFixed(2), // Standardized field name
+      total_price: totalPrice.toFixed(2), // Total for this line item
     });
     onClose();
   };
@@ -73,7 +79,14 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="p-4 border-b flex justify-between items-center bg-gray-50">
-          <h2 className="text-xl font-bold text-gray-800">{product.name}</h2>
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">{product.name}</h2>
+            {product.is_available === false && (
+              <span className="text-red-500 text-xs font-bold flex items-center gap-1">
+                <AlertTriangle size={12} /> OUT OF STOCK
+              </span>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="p-1 hover:bg-gray-200 rounded-full transition">
@@ -90,7 +103,7 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
               className="space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-bold text-gray-700">{group.name}</h3>
-                <span className="text-xs text-gray-400 uppercase font-semibold">
+                <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 uppercase font-bold">
                   {group.selection_type === "SINGLE"
                     ? "Pick 1"
                     : "Multi-select"}
@@ -132,7 +145,7 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
             <div className="flex items-center gap-4 bg-gray-100 p-1 rounded-lg">
               <button
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                className="p-2 bg-white rounded-md shadow-sm hover:text-red-500">
+                className="p-2 bg-white rounded-md shadow-sm hover:text-red-500 transition-colors">
                 <Minus size={18} />
               </button>
               <span className="w-8 text-center font-bold text-lg">
@@ -140,7 +153,7 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
               </span>
               <button
                 onClick={() => setQuantity(quantity + 1)}
-                className="p-2 bg-white rounded-md shadow-sm hover:text-green-500">
+                className="p-2 bg-white rounded-md shadow-sm hover:text-green-500 transition-colors">
                 <Plus size={18} />
               </button>
             </div>
@@ -151,8 +164,13 @@ const POSProductModal = ({ product, isOpen, onClose, onAddToCart }) => {
         <div className="p-4 border-t bg-gray-50">
           <button
             onClick={handleConfirm}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-xl font-bold text-lg shadow-lg flex justify-between px-6 items-center transition-transform active:scale-95">
-            <span>Add to Order</span>
+            disabled={!product.is_available}
+            className={`w-full text-white py-4 rounded-xl font-bold text-lg shadow-lg flex justify-between px-6 items-center transition-all active:scale-95 ${
+              product.is_available
+                ? "bg-blue-600 hover:bg-blue-700"
+                : "bg-gray-400 cursor-not-allowed"
+            }`}>
+            <span>{product.is_available ? "Add to Order" : "Unavailable"}</span>
             <span>${totalPrice.toFixed(2)}</span>
           </button>
         </div>

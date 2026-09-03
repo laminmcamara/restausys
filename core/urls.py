@@ -6,8 +6,8 @@ from rest_framework_simplejwt.views import (
 )
 
 from .views import *
-from .views import (register_restaurant_api, reports_summary, settings_api, staff_list_create_api, staff_detail_api, CustomerViewSet,
-    InventoryViewSet, DiscountViewSet, MarkOrderPaidView, ChangePasswordView, PlaceOrderAPIView, WebhookConfigAPIView, PaymentSummaryAPIView, regenerate_api_key, InventoryViewSet, CategoryViewSet, ProductViewSet,  ModifierOptionViewSet, ManagerCategoryViewSet, ManagerProductViewSet, ManagerMenuViewSet, ManagerModifierGroupViewSet, ManagerModifierOptionViewSet, PublicMenuViewSet, SessionViewSet
+from .views import (PaymentMethodViewSet, PaymentViewSet, register_restaurant_api, reports_summary, settings_api, staff_list_create_api, staff_detail_api, CustomerViewSet,
+    InventoryViewSet, DiscountViewSet, MarkOrderPaidView, ChangePasswordView, PlaceOrderAPIView, WebhookConfigAPIView, PaymentSummaryAPIView, regenerate_api_key, InventoryViewSet, CategoryViewSet, ProductViewSet,  ModifierOptionViewSet, ManagerCategoryViewSet, ManagerProductViewSet, ManagerMenuViewSet, ManagerModifierGroupViewSet, ManagerModifierOptionViewSet, PublicMenuViewSet, SessionViewSet, 
 )
 
 app_name = "core"
@@ -24,6 +24,9 @@ router.register(r"products", ProductViewSet, basename="product")
 router.register(r"orders", OrderViewSet, basename="order")
 router.register(r"order-items", OrderItemViewSet, basename="orderitem")
 router.register(r'sessions', SessionViewSet, basename='session') 
+router.register(r'payment-methods', PaymentMethodViewSet, basename='paymentmethod')
+router.register(r'payments', PaymentViewSet, basename='payment')
+
 
 # Manager API (The ones your Management pages use)
 router.register(r"manager/categories", ManagerCategoryViewSet, basename="manager-categories")

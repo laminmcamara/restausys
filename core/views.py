@@ -83,7 +83,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (Company, 
     Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration, Discount, Session,
+    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration, Discount, Session, ProductIngredient, PaymentMethod,
 
 )
 from .serializers import (
@@ -97,7 +97,7 @@ from .serializers import (
     DiscountSerializer,
     ChangePasswordSerializer,
     WebhookConfigurationSerializer,
-    SessionSerializer,
+    SessionSerializer, PaymentSerializer,  PaymentMethodSerializer,
  
 )
 
@@ -1551,271 +1551,100 @@ class TableDeleteView(LoginRequiredMixin, DeleteView):
             restaurant=self.request.user.restaurant
         )
 
-
-
-class OrderViewSet(TenantModelViewSet):
+class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated, IsStaffOfRestaurant]
-
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["table", "status"]
-    ordering_fields = ["created_at"]
-    ordering = ["-created_at"]
-
-    # -------------------------------------------------
-    # ✅ QUERYSET (TENANT SAFE)
-    # -------------------------------------------------
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        restaurants = get_accessible_restaurants(self.request.user)
+        restaurant = self._get_restaurant()
+        if restaurant:
+            return Order.objects.filter(restaurant=restaurant)
+        return Order.objects.none()
+
+    def _get_restaurant(self):
         user = self.request.user
+        res = getattr(user, "restaurant", None)
+        if not res and hasattr(user, 'userprofile'):
+            res = user.userprofile.restaurant
+        return res
 
-        qs = Order.objects.select_related(
-            "restaurant",
-            "table",
-            "session",
-            "created_by",
-        ).prefetch_related(
-            "items",
-            "items__product",
-            "items__modifiers",
-        ).order_by("-created_at")
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        restaurant = self._get_restaurant()
+        if not restaurant:
+            return Response({"error": "User not associated with a restaurant"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if user.is_superuser:
-            return qs
-
-        restaurant = getattr(user, "restaurant", None)
-
-        if restaurant is None:
-            return Order.objects.none()
-
-        return qs.filter(restaurant=restaurant)
-
-    # -------------------------------------------------
-    # ✅ CREATE ORDER
-    # -------------------------------------------------
-
-    def perform_create(self, serializer):
-        user = self.request.user
-
-        if user.is_superuser:
-            table = serializer.validated_data.get("table")
-            restaurant = serializer.validated_data.get("restaurant", None)
-
-            if restaurant is None and table is not None:
-                restaurant = table.restaurant
-
-            if restaurant is None:
-                raise PermissionDenied("Restaurant or table required for superuser.")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Match frontend 'TAKEOUT' or common 'TAKE_AWAY'
+        order_type = serializer.validated_data.get('order_type', 'DINE_IN')
+        is_takeout = order_type in ['TAKEOUT', 'TAKE_AWAY', 'TAKE_OUT']
+        
+        # 1. Handle Session/Table Logic
+        if is_takeout:
+            # Ensure a virtual table exists for this restaurant
+            takeout_table, _ = Table.objects.get_or_create(
+                restaurant=restaurant, 
+                table_number="TO", 
+                defaults={'capacity': 0}
+            )
+            # Ensure an active TableSession exists for the virtual table
+            session_obj, _ = TableSession.objects.get_or_create(
+                table=takeout_table, 
+                restaurant=restaurant, 
+                is_active=True
+            )
         else:
-            restaurant = getattr(user, "restaurant", None)
+            table_id = request.data.get('table') or request.data.get('table_id')
+            if not table_id:
+                return Response({"error": "Table ID is required for Dine-in"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            table = get_object_or_404(Table, id=table_id, restaurant=restaurant)
+            session_obj, _ = TableSession.objects.get_or_create(
+                table=table, 
+                restaurant=restaurant, 
+                is_active=True
+            )
 
-            if not restaurant:
-                raise PermissionDenied("No restaurant assigned.")
-
+        # 2. Save Order
+        # We pass the table and session explicitly to override serializer defaults
         order = serializer.save(
             restaurant=restaurant,
-            created_by=user
+            created_by=request.user,
+            session=session_obj,
+            table=takeout_table if is_takeout else table
         )
-
-        broadcast_order_update(order)
         
+        # 3. Finalize and Calculate
+        if hasattr(order, 'calculate_totals'):
+            order.calculate_totals()
         
-    # -------------------------------------------------
-    # ✅ OPEN OR CREATE DRAFT ORDER
-    # -------------------------------------------------
+        order.save()
 
-    @action(detail=False, methods=["post"])
+        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path='open_or_create')
     def open_or_create(self, request):
         table_id = request.data.get("table_id") or request.data.get("table")
+        restaurant = self._get_restaurant()
+        table = get_object_or_404(Table, id=table_id, restaurant=restaurant)
 
-        if not table_id:
-            return Response(
-                {"error": "table_id required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        user = request.user
-
-        if user.is_superuser:
-            # For superuser, derive the restaurant from the selected table.
-            table = get_object_or_404(
-                Table.objects.select_related("restaurant"),
-                id=table_id,
-            )
-            restaurant = table.restaurant
-        else:
-            restaurant = getattr(user, "restaurant", None)
-
-            if not restaurant:
-                return Response(
-                    {"error": "No restaurant assigned."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            # Tenant safety: non-superusers can only open orders for their own restaurant tables.
-            table = get_object_or_404(
-                Table,
-                id=table_id,
-                restaurant=restaurant
-            )
-
-        # Check existing draft order for this table
-        order = Order.objects.filter(
-            table=table,
-            restaurant=restaurant,
-            status=Order.Status.DRAFT
-        ).first()
-
+        order = Order.objects.filter(table=table, restaurant=restaurant, status='DRAFT').first()
         if order:
-            serializer = self.get_serializer(order)
-            return Response(serializer.data)
+            return Response(self.get_serializer(order).data)
 
-        # Ensure active table session
-        session, _ = TableSession.objects.get_or_create(
-            table=table,
-            restaurant=restaurant,
-            is_active=True,
-            defaults={
-                "opened_by": user,
-            } if any(f.name == "opened_by" for f in TableSession._meta.fields) else {}
-        )
+        ts_session, _ = TableSession.objects.get_or_create(table=table, restaurant=restaurant, is_active=True)
 
-        # Create new draft order
         order = Order.objects.create(
-            restaurant=restaurant,
-            table=table,
-            session=session,
-            order_type=Order.OrderType.DINE_IN,
-            status=Order.Status.DRAFT,
-            created_by=user,
+            restaurant=restaurant, 
+            table=table, 
+            session=ts_session,
+            order_type='DINE_IN', 
+            status='DRAFT', 
+            created_by=request.user,
         )
-
-        serializer = self.get_serializer(order)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    # -------------------------------------------------
-    # ✅ SEND TO KITCHEN (DRAFT → PLACED + CREATE PRINT JOB)
-    # -------------------------------------------------
-
-    @action(detail=True, methods=["post"])
-    @transaction.atomic
-    def send_to_kitchen(self, request, pk=None):
-        order = self.get_object()
-
-        if order.status != Order.Status.DRAFT:
-            return Response(
-                {"error": "Only draft orders can be sent to kitchen."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Recalculate saved backend totals before sending to kitchen
-        order.calculate_totals()
-        order.refresh_from_db()
-
-        # Move order from DRAFT to PLACED
-        order.transition_to(Order.Status.PLACED, actor=request.user)
-        order.refresh_from_db()
-
-        # Create kitchen print job
-        print_job = create_kitchen_print_job(order)
-
-        # Broadcast update to POS/Kitchen dashboards
-        broadcast_order_update(order)
-
-        serializer = self.get_serializer(order)
-        data = serializer.data
-
-        # Optional extra info for frontend/debugging
-        data["print_job_id"] = print_job.id
-        data["printer"] = str(print_job.printer) if print_job.printer else None
-
-        return Response(data)
-
-    # -------------------------------------------------
-    # ✅ KITCHEN: START PREPARING (PLACED → IN_PROGRESS)
-    # -------------------------------------------------
-
-    @action(detail=True, methods=["post"])
-    def start_preparing(self, request, pk=None):
-        order = self.get_object()
-
-        if order.status != Order.Status.PLACED:
-            return Response(
-                {"error": "Only placed orders can start preparation."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        order.transition_to(Order.Status.IN_PROGRESS, actor=request.user)
-
-        broadcast_order_update(order)
-
-        serializer = self.get_serializer(order)
-        return Response(serializer.data)
-
-    # -------------------------------------------------
-    # ✅ KITCHEN: MARK READY (IN_PROGRESS → READY)
-    # -------------------------------------------------
-
-    @action(detail=True, methods=["post"])
-    def mark_ready(self, request, pk=None):
-        order = self.get_object()
-
-        if order.status != Order.Status.IN_PROGRESS:
-            return Response(
-                {"error": "Order must be in progress."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        order.transition_to(Order.Status.READY, actor=request.user)
-
-        broadcast_order_update(order)
-
-        serializer = self.get_serializer(order)
-        return Response(serializer.data)
-
-    # -------------------------------------------------
-    # ✅ PICKUP: MARK SERVED (READY → SERVED)
-    # -------------------------------------------------
-
-    @action(detail=True, methods=["post"])
-    def mark_served(self, request, pk=None):
-        order = self.get_object()
-
-        if order.status != Order.Status.READY:
-            return Response(
-                {"error": "Order must be ready first."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        order.transition_to(Order.Status.SERVED, actor=request.user)
-
-        broadcast_order_update(order)
-
-        serializer = self.get_serializer(order)
-        return Response(serializer.data)
-
-    # -------------------------------------------------
-    # ✅ MANAGER: MARK PAID (PAYMENT ONLY)
-    # -------------------------------------------------
-
-    @action(detail=True, methods=["post"])
-    def mark_paid(self, request, pk=None):
-        order = self.get_object()
-
-        if order.payment_status == Order.PaymentStatus.PAID:
-            return Response(
-                {"error": "Order already paid."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        order.mark_as_paid(actor=request.user)
-
-        broadcast_order_update(order)
-
-        serializer = self.get_serializer(order)
-        return Response(serializer.data)
-    
+        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
     
 class MarkOrderPaidView(APIView):
     """
@@ -2002,7 +1831,8 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
             menu__restaurant__company__owner=user
         )
 
-class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+
+class ProductViewSet(viewsets.ModelViewSet): # Changed from ReadOnlyModelViewSet to allow updates
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter]
@@ -2010,7 +1840,8 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-
+        
+        # Base queryset with optimized lookups
         qs = (
             Product.objects
             .filter(
@@ -2027,12 +1858,52 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
             return qs
 
         restaurant = getattr(user, "restaurant", None)
-
         if restaurant is None:
             return Product.objects.none()
 
         return qs.filter(category__menu__restaurant=restaurant)
-    
+
+    @action(detail=True, methods=['get'], url_path='recipe')
+    def get_recipe(self, request, pk=None):
+        """Fetch the ingredients linked to this product"""
+        product = self.get_object()
+        ingredients = ProductIngredient.objects.filter(product=product).select_related('inventory_item')
+        
+        data = [{
+            "inventory_item": ing.inventory_item.id,
+            "inventory_item_name": ing.inventory_item.name,
+            "quantity_required": ing.quantity_required,
+            "unit": ing.inventory_item.unit
+        } for ing in ingredients]
+        
+        return Response(data)
+
+    @action(detail=True, methods=['post'], url_path='update_recipe')
+    def update_recipe(self, request, pk=None):
+        """Update or create the recipe for this product"""
+        product = self.get_object()
+        ingredients_data = request.data.get('ingredients', [])
+
+        try:
+            with transaction.atomic():
+                # 1. Clear existing recipe for this product
+                ProductIngredient.objects.filter(product=product).delete()
+
+                # 2. Re-create ingredients from the provided list
+                for item in ingredients_data:
+                    inv_item_id = item.get('inventory_item')
+                    qty = item.get('quantity_required')
+                    
+                    if inv_item_id and qty:
+                        ProductIngredient.objects.create(
+                            product=product,
+                            inventory_item_id=inv_item_id,
+                            quantity_required=qty
+                        )
+
+            return Response({"message": "Recipe updated successfully"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class ManagerCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
@@ -2252,6 +2123,16 @@ class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
 
         serializer.save()
 
+class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = PaymentMethodSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = PaymentMethod.objects.filter(active=True)
+        print(f"DEBUG: Found {qs.count()} active payment methods in DB")
+        for pm in qs:
+            print(f"DEBUG: Method Name: '{pm.name}'")
+        return qs
 
 
 class PaymentSummaryAPIView(APIView):
@@ -4976,9 +4857,22 @@ class SessionViewSet(viewsets.ModelViewSet):
     serializer_class = SessionSerializer
     
     def get_queryset(self):
+        # Ensure user is authenticated before filtering
+        if not self.request.user.is_authenticated:
+            return Session.objects.none()
         return Session.objects.filter(restaurant=self.request.user.restaurant)
 
     def perform_create(self, serializer):
+        # PREVENT DUPLICATE SESSIONS: 
+        # Check if there is already an active session for this restaurant
+        active_session = Session.objects.filter(
+            restaurant=self.request.user.restaurant, 
+            status='OPEN'
+        ).exists()
+        
+        if active_session:
+            raise serializers.ValidationError({"detail": "A session is already open for this restaurant."})
+        
         serializer.save(
             restaurant=self.request.user.restaurant,
             opened_by=self.request.user,
@@ -4988,8 +4882,80 @@ class SessionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def active(self, request):
         # Finds the most recent open session for this restaurant
-        session = self.get_queryset().filter(status='OPEN').first()
+        session = self.get_queryset().filter(status='OPEN').order_by('-start_time').first()
         if not session:
-            return Response({"detail": "No active session"}, status=404)
+            return Response(None, status=200) # Return null instead of 404 to help frontend logic
         serializer = self.get_serializer(session)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def close(self, request, pk=None):
+        session = self.get_object()
+        end_amount = request.data.get('end_amount')
+        
+        if not end_amount:
+            return Response({"error": "Closing amount is required"}, status=400)
+            
+        session.status = 'CLOSED'
+        session.end_amount = end_amount
+        session.end_time = timezone.now()
+        session.save()
+        
+        return Response({"status": "Session closed successfully"})
+    
+    
+class PaymentViewSet(viewsets.ModelViewSet):
+    queryset = Payment.objects.all()
+    serializer_class = PaymentSerializer
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Logic for your existing PaymentsPage"""
+        today = timezone.now().date()
+        payments = Payment.objects.filter(created_at__date=today)
+        
+        stats = {
+            "total_today": sum(p.amount for p in payments),
+            "total_paid": sum(p.amount for p in payments if p.status == 'paid'),
+            "pending": sum(p.amount for p in payments if p.status == 'pending'),
+        }
+        
+        # Simplified list for the table
+        payment_list = [{
+            "id": p.id,
+            "order_number": p.order.id,
+            "amount": float(p.amount),
+            "status": p.status,
+            "date": p.created_at.strftime("%Y-%m-%d %H:%M")
+        } for p in payments]
+
+        return Response({"stats": stats, "payments": payment_list})
+
+    def create(self, request, *args, **kwargs):
+        """Handle new payment from POS"""
+        order_id = request.data.get('order')
+        amount = request.data.get('amount')
+        method_id = request.data.get('method')
+
+        try:
+            with transaction.atomic():
+                order = Order.objects.get(id=order_id)
+                
+                # 1. Create the Payment Record
+                payment = Payment.objects.create(
+                    order=order,
+                    amount=amount,
+                    method_id=method_id,
+                    status='PAID'
+                )
+
+                # 2. Update the Order Status 
+                # THIS IS CRITICAL: It triggers the inventory deduction signal
+                order.status = 'PAID' 
+                order.save()
+
+                return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+        except Order.DoesNotExist:
+            return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

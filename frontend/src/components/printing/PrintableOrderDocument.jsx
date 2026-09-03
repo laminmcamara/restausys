@@ -4,20 +4,35 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
   if (!order) return null;
 
   // 1. DYNAMIC NAME LOGIC
-  // Prioritize backend name, then local storage, then fallback
   const userData = JSON.parse(localStorage.getItem("user") || "{}");
   const restaurantName =
     order.restaurant_name || userData.restaurant_name || "BEEPOS RESTAURANT";
 
   const isKitchen = type === "kitchen" || type === "bar";
 
-  // Normalize items array based on common API response variations
+  // 2. DATA NORMALIZATION (Fixes $0.00 and Invalid Date)
   const rawItems = order.items || order.order_items || [];
 
-  // 2. ITEM GROUPING LOGIC
-  // Prevents duplicate lines (e.g., 1x Burger, 1x Burger) and combines them into 2x Burger
+  // Use total_amount (standard backend field) or total_price/total as fallbacks
+  const orderTotal =
+    order.total_amount || order.total_price || order.total || 0;
+
+  // Safe Date Parsing
+  const orderDate = order.created_at || order.date;
+  const displayDate = orderDate
+    ? new Date(orderDate).toLocaleString()
+    : new Date().toLocaleString();
+  const displayTime = orderDate
+    ? new Date(orderDate).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  // 3. ITEM GROUPING LOGIC
   const groupedItems = rawItems.reduce((acc, item) => {
-    const productName = item.product?.name || item.name;
+    const productName =
+      item.product_name || item.product?.name || "Unknown Item";
     const modifierString = JSON.stringify(item.modifiers || []);
     const key = `${productName}-${modifierString}`;
 
@@ -46,18 +61,13 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
   return (
     <div className="printable-document">
       {isKitchen ? (
-        /* KITCHEN TICKET: Focus on Table and Items */
+        /* KITCHEN TICKET */
         <div className="kitchen-ticket">
           <div className="kitchen-header">
             <h1>{tableDisplay}</h1>
             <div className="order-meta">
               <span>#{order.display_id || order.id?.toString().slice(-6)}</span>
-              <span>
-                {new Date().toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
+              <span>{displayTime}</span>
             </div>
           </div>
 
@@ -85,14 +95,14 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
           </div>
         </div>
       ) : (
-        /* CUSTOMER RECEIPT: Restaurant Branding and Totals */
+        /* CUSTOMER RECEIPT */
         <div className="customer-receipt">
           <div className="receipt-header">
             <h2 className="restaurant-name">{restaurantName}</h2>
             <p className="receipt-subtext">
               Order #{order.display_id || order.id?.toString().slice(-6)}
             </p>
-            <p className="receipt-subtext">{new Date().toLocaleString()}</p>
+            <p className="receipt-subtext">{displayDate}</p>
             <p className="receipt-subtext">Table: {tableDisplay}</p>
           </div>
 
@@ -107,26 +117,28 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
               </tr>
             </thead>
             <tbody>
-              {displayItems.map((item, idx) => (
-                <tr key={idx}>
-                  <td className="text-left">
-                    {item.display_name}
-                    {item.modifiers?.map((m, i) => (
-                      <div
-                        key={i}
-                        className="receipt-mod">
-                        +{m.name}
-                      </div>
-                    ))}
-                  </td>
-                  <td className="text-right">{item.quantity}</td>
-                  <td className="text-right">
-                    {formatMoney(
-                      (item.final_price || item.price) * item.quantity
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {displayItems.map((item, idx) => {
+                const itemPrice =
+                  item.final_price || item.unit_price || item.price || 0;
+                return (
+                  <tr key={idx}>
+                    <td className="text-left">
+                      {item.display_name}
+                      {item.modifiers?.map((m, i) => (
+                        <div
+                          key={i}
+                          className="receipt-mod">
+                          +{m.name}
+                        </div>
+                      ))}
+                    </td>
+                    <td className="text-right">{item.quantity}</td>
+                    <td className="text-right">
+                      {formatMoney(itemPrice * item.quantity)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
@@ -135,11 +147,11 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
           <div className="receipt-totals">
             <div className="total-row">
               <span>Subtotal</span>
-              <span>${formatMoney(order.total_price || order.total)}</span>
+              <span>${formatMoney(orderTotal)}</span>
             </div>
             <div className="total-row grand-total">
               <span>TOTAL</span>
-              <span>${formatMoney(order.total_price || order.total)}</span>
+              <span>${formatMoney(orderTotal)}</span>
             </div>
           </div>
 
@@ -159,81 +171,21 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
           margin: 0 auto;
           padding: 10px;
         }
-
-        .kitchen-header h1 {
-          font-size: 64px;
-          text-align: center;
-          margin: 0;
-          border-bottom: 2px solid #000;
-        }
-
-        .kitchen-item {
-          display: flex;
-          font-size: 22px;
-          font-weight: bold;
-          padding: 10px 0;
-          border-bottom: 1px solid #ccc;
-        }
-
+        .kitchen-header h1 { font-size: 64px; text-align: center; margin: 0; border-bottom: 2px solid #000; }
+        .kitchen-item { display: flex; font-size: 22px; font-weight: bold; padding: 10px 0; border-bottom: 1px solid #ccc; }
         .qty { margin-right: 15px; }
-        
-        .mod {
-          display: block;
-          font-size: 16px;
-          font-weight: normal;
-          margin-left: 10px;
-        }
-
-        .item-note {
-          display: block;
-          font-size: 14px;
-          font-style: italic;
-          color: #444;
-          margin-top: 4px;
-        }
-
-        .restaurant-name {
-          font-size: 20px;
-          text-align: center;
-          text-transform: uppercase;
-          margin: 0;
-        }
-
-        .receipt-subtext {
-          text-align: center;
-          font-size: 12px;
-          margin: 2px 0;
-        }
-
-        .receipt-divider {
-          border-top: 1px dashed #000;
-          margin: 10px 0;
-        }
-
-        .receipt-table {
-          width: 100%;
-          font-size: 14px;
-        }
-
-        .grand-total {
-          font-size: 20px;
-          font-weight: bold;
-          border-top: 2px solid #000;
-          margin-top: 5px;
-          padding-top: 5px;
-        }
-
-        .receipt-footer {
-          text-align: center;
-          margin-top: 30px;
-        }
-
-        .powered-by {
-          font-size: 8px;
-          color: #888;
-          margin-top: 10px;
-        }
-
+        .mod { display: block; font-size: 16px; font-weight: normal; margin-left: 10px; }
+        .item-note { display: block; font-size: 14px; font-style: italic; color: #444; margin-top: 4px; }
+        .restaurant-name { font-size: 20px; text-align: center; text-transform: uppercase; margin: 0; }
+        .receipt-subtext { text-align: center; font-size: 12px; margin: 2px 0; }
+        .receipt-divider { border-top: 1px dashed #000; margin: 10px 0; }
+        .receipt-table { width: 100%; font-size: 14px; }
+        .total-row { display: flex; justify-content: space-between; font-size: 14px; margin: 2px 0; }
+        .grand-total { font-size: 20px; font-weight: bold; border-top: 2px solid #000; margin-top: 5px; padding-top: 5px; }
+        .receipt-footer { text-align: center; margin-top: 30px; }
+        .powered-by { font-size: 8px; color: #888; margin-top: 10px; }
+        .text-left { text-align: left; }
+        .text-right { text-align: right; }
         @media print {
           body * { visibility: hidden; }
           .printable-document, .printable-document * { visibility: visible; }

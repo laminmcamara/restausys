@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from channels.layers import get_channel_layer
@@ -7,79 +8,71 @@ from .models import (
     Order,
     OrderItem,
     KitchenTicket,
+    ProductIngredient
 )
 from .serializers import OrderSerializer, KitchenTicketSerializer
 
-
 # =====================================================
-# ✅ ORDER BROADCASTING (React / DRF Aligned)
+# ✅ 1. ORDER BROADCASTING & KITCHEN FLOW
 # =====================================================
 
 @receiver(post_save, sender=Order)
 def broadcast_order_update(sender, instance, created, update_fields=None, **kwargs):
-
     channel_layer = get_channel_layer()
     if not channel_layer:
         return
 
-    # ✅ Only trigger on creation or status change
+    # Only trigger on creation or status change to save resources
     if not created and update_fields is not None:
         if "status" not in update_fields:
             return
 
-    # ✅ Reload order with relations for full serialization
-    order_obj = (
-        Order.objects
-        .select_related("restaurant", "table", "created_by")
-        .prefetch_related(
-            "items",
-            "items__product",
-            "items__modifiers",
+    # Reload order with relations for full serialization
+    try:
+        order_obj = (
+            Order.objects
+            .select_related("restaurant", "table", "created_by")
+            .prefetch_related(
+                "items",
+                "items__product",
+                "items__modifiers",
+            )
+            .get(pk=instance.pk)
         )
-        .get(pk=instance.pk)
-    )
+    except Order.DoesNotExist:
+        return
 
     order_data = OrderSerializer(order_obj).data
+    restaurant_id = instance.restaurant_id
 
-    # ✅ Universal message format
+    # Universal message format for WebSockets
     message = {
-        "type": "order_status_update",  # transport layer
+        "type": "order_status_update",
         "data": {
             "event": "ORDER_STATUS_UPDATED",
             "order": order_data,
         },
     }
 
-    restaurant_id = instance.restaurant_id
-
-    # ✅ Broadcast to all relevant groups
+    # Broadcast to relevant groups
     groups = [
         f"restaurant_{restaurant_id}",
         f"pos_{restaurant_id}",
         f"kitchen_{restaurant_id}",
         f"display_{restaurant_id}",
     ]
-
     if instance.table_id:
         groups.append(f"table_{instance.table_id}")
 
     for group in groups:
         async_to_sync(channel_layer.group_send)(group, message)
 
-    # =====================================================
-    # ✅ KITCHEN TICKET FLOW (JSON ONLY — No Templates)
-    # =====================================================
-
+    # --- Kitchen Ticket Lifecycle ---
     kitchen_group = f"kitchen_{restaurant_id}"
 
-    # ✅ Order enters kitchen flow
-    if instance.status in [
-        Order.Status.PLACED,
-        Order.Status.IN_PROGRESS,
-    ]:
-
+    # Order enters kitchen flow
+    if instance.status in [Order.Status.PLACED, Order.Status.IN_PROGRESS]:
         ticket, _ = KitchenTicket.objects.get_or_create(order=instance)
-
         ticket_data = KitchenTicketSerializer(ticket).data
 
         async_to_sync(channel_layer.group_send)(
@@ -93,50 +86,40 @@ def broadcast_order_update(sender, instance, created, update_fields=None, **kwar
             },
         )
 
-    # ✅ Order completed or cancelled
-    elif instance.status in [
-        Order.Status.COMPLETED,
-        Order.Status.CANCELED,
-    ]:
+    # Order completed or cancelled - Remove from KDS
+    elif instance.status in [Order.Status.COMPLETED, Order.Status.CANCELED]:
         try:
-            ticket = instance.kitchen_ticket
-
-            async_to_sync(channel_layer.group_send)(
-                kitchen_group,
-                {
-                    "type": "order_status_update",
-                    "data": {
-                        "event": "KITCHEN_TICKET_REMOVED",
-                        "ticket_id": ticket.id,
+            # Use hasattr to safely check for one-to-one relation
+            if hasattr(instance, 'kitchen_ticket'):
+                ticket = instance.kitchen_ticket
+                async_to_sync(channel_layer.group_send)(
+                    kitchen_group,
+                    {
+                        "type": "order_status_update",
+                        "data": {
+                            "event": "KITCHEN_TICKET_REMOVED",
+                            "ticket_id": ticket.id,
+                        },
                     },
-                },
-            )
-
-            ticket.delete()
-
-        except KitchenTicket.DoesNotExist:
-            pass
+                )
+                ticket.delete()
+        except Exception as e:
+            print(f"Error removing kitchen ticket: {e}")
 
 
 # =====================================================
-# ✅ ORDER ITEM CHANGES → UPDATE KITCHEN (JSON ONLY)
+# ✅ 2. ORDER ITEM CHANGES → UPDATE KITCHEN
 # =====================================================
 
 @receiver([post_save, post_delete], sender=OrderItem)
 def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
-
     order = instance.order
 
-    # ✅ Only update active kitchen orders
-    if order.status not in [
-        Order.Status.PLACED,
-        Order.Status.IN_PROGRESS,
-    ]:
+    # Only update active kitchen orders
+    if order.status not in [Order.Status.PLACED, Order.Status.IN_PROGRESS]:
         return
 
-    try:
-        ticket = order.kitchen_ticket
-    except KitchenTicket.DoesNotExist:
+    if not hasattr(order, 'kitchen_ticket'):
         return
 
     channel_layer = get_channel_layer()
@@ -144,8 +127,7 @@ def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
         return
 
     kitchen_group = f"kitchen_{order.restaurant_id}"
-
-    ticket_data = KitchenTicketSerializer(ticket).data
+    ticket_data = KitchenTicketSerializer(order.kitchen_ticket).data
 
     async_to_sync(channel_layer.group_send)(
         kitchen_group,
@@ -157,31 +139,41 @@ def update_kitchen_ticket_on_item_change(sender, instance, **kwargs):
             },
         },
     )
-    
-    
+
+
+# =====================================================
+# ✅ 3. ATOMIC INVENTORY DEDUCTION
+# =====================================================
+
 @receiver(post_save, sender=Order)
 def auto_deduct_inventory(sender, instance, created, **kwargs):
     """
-    Triggered whenever an Order is saved. 
-    If status changes to 'paid', deduct ingredients from inventory.
+    Deducts ingredients from inventory when an order is PLACED.
+    Uses the 'inventory_deducted' flag to prevent double-deduction.
     """
-    # Only run if the order is marked as paid and hasn't been deducted yet
-    # We use a flag 'inventory_deducted' to prevent double-deduction
-    if instance.status == 'paid' and not getattr(instance, 'inventory_deducted', False):
+    # Trigger deduction when order is sent to kitchen (PLACED)
+    # or when PAID, depending on your business logic.
+    target_statuses = [Order.Status.PLACED, 'paid', 'PAID']
+    
+    if instance.status in target_statuses and not getattr(instance, 'inventory_deducted', False):
         try:
             with transaction.atomic():
+                # Iterate through all items in the order
                 for order_item in instance.items.all():
-                    # Get the ingredients linked to this menu item                    
-                    recipe = order_item.menu.ingredients.all() 
+                    # Get ingredients mapped to the product (Recipe)
+                    recipe = ProductIngredient.objects.filter(product=order_item.product)
     
                     for ingredient in recipe:
                         inv_item = ingredient.inventory_item
-                        total_deduction = ingredient.quantity_needed * order_item.quantity
+                        # Total = (Qty needed for 1) * (Qty ordered)
+                        total_deduction = ingredient.quantity_required * order_item.quantity
+                        
                         inv_item.quantity -= total_deduction
-                        inv_item.save()
+                        inv_item.save(update_fields=['quantity'])
                 
-                # Mark as deducted so we don't do it again if the order is saved again
+                # Mark as deducted using update() to avoid re-triggering post_save
                 Order.objects.filter(id=instance.id).update(inventory_deducted=True)
+                print(f"Inventory successfully deducted for Order {instance.id}")
                 
         except Exception as e:
-            print(f"Error deducting inventory for Order {instance.id}: {e}")
+            print(f"CRITICAL INVENTORY ERROR for Order {instance.id}: {str(e)}")

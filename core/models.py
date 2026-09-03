@@ -1383,7 +1383,8 @@ class Order(TimeStampedModel):
         subtotal = Decimal("0.00")
 
         for item in self.items.all():
-           subtotal += Decimal(str(item.final_price or 0))
+            item_total = Decimal(str(item.final_price or 0)) * item.quantity
+            subtotal += item_total
         
         # ✅ Ensure all monetary fields are Decimal
         tax = self.tax or Decimal("0.00")
@@ -1592,7 +1593,33 @@ class Order(TimeStampedModel):
     def __str__(self):
         return f"Order #{self.order_number} - {self.restaurant.name}"
     
-    
+# Add this to your existing models.py
+
+class ProductIngredient(models.Model):
+    """
+    Links a Product to an InventoryItem (The Recipe).
+    """
+    product = models.ForeignKey(
+        'Product', 
+        on_delete=models.CASCADE, 
+        related_name='product_recipe'
+    )
+    inventory_item = models.ForeignKey(
+        'InventoryItem', 
+        on_delete=models.CASCADE,
+        related_name='used_in_products'
+    )
+    quantity_required = models.DecimalField(
+        max_digits=10, 
+        decimal_places=3,
+        help_text="Amount of inventory item used for 1 unit of this product"
+    )
+
+    class Meta:
+        unique_together = ('product', 'inventory_item')
+
+    def __str__(self):
+        return f"{self.product.name} needs {self.quantity_required} of {self.inventory_item.name}"
     
 class OrderItem(models.Model):
 
@@ -1665,10 +1692,6 @@ class OrderItem(models.Model):
 
 
     def recalculate_price(self):
-        """
-        Calculate and persist final_price safely.
-        """
-
         if not self.product:
             return
 
@@ -1683,11 +1706,9 @@ class OrderItem(models.Model):
             for mod in self.modifiers.all()
         )
 
-        quantity = self.quantity or 1
-
-        self.final_price = (base_price + modifiers_total) * quantity
-
-    # ✅ Use normal save — safe with update_fields
+        # ✅ Change: final_price is now the price for ONE unit
+        self.final_price = (base_price + modifiers_total)
+    
         super().save(update_fields=["final_price"])
 
     # -------------------------------------------------
@@ -2031,8 +2052,10 @@ class PaymentMethod(models.Model):
     )
 
     name = models.CharField(max_length=50)
+    slug = models.SlugField(max_length=50, blank=True)
     active = models.BooleanField(default=True)
-
+    requires_reference = models.BooleanField(default=False)
+    
     class Meta:
         unique_together = ("restaurant", "name")
 

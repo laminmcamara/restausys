@@ -33,7 +33,9 @@ const TakeOutPage = ({ products, onSendOrder }) => {
             : item
         );
       }
-      return [...prev, { ...product, quantity: 1 }];
+      // Ensure price is captured correctly for the receipt
+      const price = parseFloat(product.price || product.base_price || 0);
+      return [...prev, { ...product, quantity: 1, unit_price: price }];
     });
   };
 
@@ -54,36 +56,32 @@ const TakeOutPage = ({ products, onSendOrder }) => {
   };
 
   const calculateTotal = () => {
-    return cart.reduce(
-      (sum, item) => sum + parseFloat(item.base_price) * item.quantity,
-      0
-    );
+    return cart.reduce((sum, item) => {
+      const price = parseFloat(
+        item.unit_price || item.price || item.base_price || 0
+      );
+      return sum + price * item.quantity;
+    }, 0);
   };
 
   const handleSubmit = async () => {
-    if (cart.length === 0) return alert("Cart is empty");
+    if (cart.length === 0) return;
 
     setIsSubmitting(true);
     try {
-      const payload = {
-        customer: customerName || "Walk-in Customer",
+      // We pass the cart and customer info to the parent POS.jsx
+      // The parent handleTakeOutOrder will format the final API payload
+      await onSendOrder(cart, {
+        customer_name: customerName || "Walk-in Customer",
         customer_phone: customerPhone,
-        order_type: "TAKE_OUT",
-        total_amount: calculateTotal(),
-        items: cart.map((item) => ({
-          product: item.id,
-          quantity: item.quantity,
-          unit_price: parseFloat(item.base_price),
-          subtotal: parseFloat(item.base_price) * item.quantity,
-        })),
-      };
+      });
 
-      await onSendOrder(payload);
+      // Reset local state on success
       setCart([]);
       setCustomerName("");
       setCustomerPhone("");
     } catch (err) {
-      // Error handled by parent POS.jsx
+      console.error("Takeout submission error:", err);
     } finally {
       setIsSubmitting(false);
     }
@@ -116,7 +114,10 @@ const TakeOutPage = ({ products, onSendOrder }) => {
               <h3 className="font-bold text-slate-800 mb-2">{product.name}</h3>
               <div className="flex justify-between items-center">
                 <span className="text-indigo-600 font-black">
-                  ${parseFloat(product.base_price).toFixed(2)}
+                  $
+                  {parseFloat(product.price || product.base_price || 0).toFixed(
+                    2
+                  )}
                 </span>
                 <div className="w-8 h-8 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
                   <Plus size={18} />
@@ -182,7 +183,10 @@ const TakeOutPage = ({ products, onSendOrder }) => {
                     {item.name}
                   </p>
                   <p className="text-xs text-indigo-600 font-black">
-                    ${parseFloat(item.base_price).toFixed(2)}
+                    $
+                    {parseFloat(
+                      item.unit_price || item.price || item.base_price || 0
+                    ).toFixed(2)}
                   </p>
                 </div>
                 <div className="flex items-center gap-3 bg-slate-50 p-1 rounded-xl">
