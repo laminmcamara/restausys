@@ -8,7 +8,9 @@ from .models import (
     Order,
     OrderItem,
     KitchenTicket,
-    ProductIngredient
+    ProductIngredient,
+    Restaurant, PaymentMethod
+ 
 )
 from .serializers import OrderSerializer, KitchenTicketSerializer
 
@@ -177,3 +179,9 @@ def auto_deduct_inventory(sender, instance, created, **kwargs):
                 
         except Exception as e:
             print(f"CRITICAL INVENTORY ERROR for Order {instance.id}: {str(e)}")
+            
+@receiver(post_save, sender=Restaurant)
+def create_default_payment_methods(sender, instance, created, **kwargs):
+    if created:
+        PaymentMethod.objects.create(restaurant=instance, name="Cash", active=True)
+        PaymentMethod.objects.create(restaurant=instance, name="Card", active=True)

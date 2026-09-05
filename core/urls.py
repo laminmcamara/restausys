@@ -7,7 +7,7 @@ from rest_framework_simplejwt.views import (
 
 from .views import *
 from .views import (PaymentMethodViewSet, PaymentViewSet, register_restaurant_api, reports_summary, settings_api, staff_list_create_api, staff_detail_api, CustomerViewSet,
-    InventoryViewSet, DiscountViewSet, MarkOrderPaidView, ChangePasswordView, PlaceOrderAPIView, WebhookConfigAPIView, PaymentSummaryAPIView, regenerate_api_key, InventoryViewSet, CategoryViewSet, ProductViewSet,  ModifierOptionViewSet, ManagerCategoryViewSet, ManagerProductViewSet, ManagerMenuViewSet, ManagerModifierGroupViewSet, ManagerModifierOptionViewSet, PublicMenuViewSet, SessionViewSet, 
+    InventoryViewSet, DiscountViewSet, ChangePasswordView, PlaceOrderAPIView, WebhookConfigAPIView, PaymentSummaryAPIView, regenerate_api_key, InventoryViewSet, CategoryViewSet, ProductViewSet,  ModifierOptionViewSet, ManagerCategoryViewSet, ManagerProductViewSet, ManagerMenuViewSet, ManagerModifierGroupViewSet, ManagerModifierOptionViewSet, PublicMenuViewSet, SessionViewSet, 
 )
 
 app_name = "core"
@@ -52,7 +52,6 @@ urlpatterns = [
     path("api/v1/settings/", settings_api, name="settings-api"),
     path("api/v1/manager/staff/", staff_list_create_api, name="staff-list-create-api"),
     path("api/v1/manager/staff/<int:pk>/", staff_detail_api, name="staff-detail-api"),
-    path("api/v1/orders/<int:order_id>/mark-paid/", MarkOrderPaidView.as_view(), name="mark-order-paid"),
     
     # 3. Auth & User
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),

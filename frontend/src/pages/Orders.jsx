@@ -11,11 +11,13 @@ import {
   UtensilsCrossed,
   Send,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 
 export default function Orders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printOrder, setPrintOrder] = useState(null);
   const [printType, setPrintType] = useState("receipt");
@@ -27,16 +29,23 @@ export default function Orders() {
   }, []);
 
   const fetchOrders = async () => {
+    setIsRefreshing(true);
     try {
       const res = await api.get("/orders/");
-      const normalizedOrders = Array.isArray(res.data)
-        ? res.data
-        : res.data.results || [];
-      setOrders(normalizedOrders);
+      const data = Array.isArray(res.data) ? res.data : res.data.results || [];
+
+      // SORTING LOGIC: Newest first (by created_at or id)
+      const sortedOrders = [...data].sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      setOrders(sortedOrders);
     } catch (err) {
       console.error("Fetch failed:", err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -51,10 +60,10 @@ export default function Orders() {
 
   const formatMoney = (value) => Number(value || 0).toFixed(2);
 
-  // Status configuration mapping backend status to UI elements
   const statusConfig = {
     DRAFT: {
       color: "bg-slate-400",
+      border: "border-l-slate-400",
       label: "Draft",
       action: "send_to_kitchen",
       btnText: "Send to Kitchen",
@@ -62,6 +71,7 @@ export default function Orders() {
     },
     PLACED: {
       color: "bg-blue-500",
+      border: "border-l-blue-500",
       label: "Placed",
       action: "start_preparing",
       btnText: "Start Cooking",
@@ -69,6 +79,7 @@ export default function Orders() {
     },
     IN_PROGRESS: {
       color: "bg-amber-500",
+      border: "border-l-amber-500",
       label: "Cooking",
       action: "mark_ready",
       btnText: "Mark Ready",
@@ -76,6 +87,7 @@ export default function Orders() {
     },
     READY: {
       color: "bg-emerald-500",
+      border: "border-l-emerald-500",
       label: "Ready",
       action: "mark_served",
       btnText: "Mark Served",
@@ -83,6 +95,7 @@ export default function Orders() {
     },
     SERVED: {
       color: "bg-purple-600",
+      border: "border-l-purple-600",
       label: "Served",
       action: "mark_paid",
       btnText: "Settle Payment",
@@ -90,6 +103,7 @@ export default function Orders() {
     },
     PAID: {
       color: "bg-black",
+      border: "border-l-black",
       label: "Paid",
       action: null,
       btnText: null,
@@ -97,6 +111,7 @@ export default function Orders() {
     },
     CANCELED: {
       color: "bg-red-500",
+      border: "border-l-red-500",
       label: "Canceled",
       action: null,
       btnText: null,
@@ -106,43 +121,50 @@ export default function Orders() {
 
   if (loading && orders.length === 0) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center bg-slate-50">
         <Loader2
           className="animate-spin text-indigo-600"
-          size={32}
+          size={40}
         />
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="p-6 max-w-5xl mx-auto space-y-6 min-h-screen bg-slate-50/30">
+      <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-black text-slate-900">
-            Orders Dashboard
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight">
+            Orders
           </h1>
-          <p className="text-slate-500 text-sm">
-            Manage live order flow and status transitions.
+          <p className="text-slate-500 font-medium">
+            Live kitchen and payment flow
           </p>
         </div>
         <button
           onClick={fetchOrders}
-          className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
-          Refresh
+          disabled={isRefreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm active:scale-95 disabled:opacity-50">
+          <RefreshCw
+            size={16}
+            className={isRefreshing ? "animate-spin" : ""}
+          />
+          {isRefreshing ? "Updating..." : "Refresh"}
         </button>
       </div>
 
       {orders.length === 0 ? (
-        <div className="bg-white border border-dashed border-slate-300 rounded-3xl p-20 text-center">
+        <div className="bg-white border-2 border-dashed border-slate-200 rounded-[32px] p-20 text-center">
           <UtensilsCrossed
             className="mx-auto text-slate-200 mb-4"
-            size={48}
+            size={64}
           />
-          <p className="text-slate-400 font-medium">No active orders found.</p>
+          <p className="text-slate-400 text-lg font-bold">
+            No active orders right now.
+          </p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-6">
           {orders.map((order) => {
             const config = statusConfig[order.status] || statusConfig.DRAFT;
             const Icon = config.icon;
@@ -150,95 +172,98 @@ export default function Orders() {
             return (
               <div
                 key={order.id}
-                className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex gap-4">
-                    <div
-                      className={`p-3 rounded-xl text-white ${config.color} shadow-inner`}>
-                      <Icon size={24} />
+                className={`bg-white border border-slate-200 border-l-[6px] ${config.border} rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all`}>
+                <div className="p-5">
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex gap-4">
+                      <div
+                        className={`p-3 rounded-2xl text-white ${config.color} shadow-lg shadow-inner`}>
+                        <Icon size={24} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-xl font-black text-slate-900">
+                            #{order.display_id || String(order.id).slice(0, 5)}
+                          </h2>
+                          <span
+                            className={`text-[10px] font-black text-white px-2.5 py-1 rounded-full uppercase tracking-wider ${config.color}`}>
+                            {config.label}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-500 font-bold uppercase tracking-tight mt-0.5">
+                          {order.table_name
+                            ? `Table ${order.table_name}`
+                            : "Takeaway"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-lg font-black text-slate-900">
-                          Order #{order.display_id || order.id}
-                        </h2>
-                        <span
-                          className={`text-[10px] font-bold text-white px-2 py-0.5 rounded-full uppercase ${config.color}`}>
-                          {config.label}
+                    <div className="text-right">
+                      <p className="text-2xl font-black text-slate-900">
+                        ${formatMoney(order.total_price || order.total)}
+                      </p>
+                      <div className="flex items-center justify-end gap-1 text-slate-400 font-bold text-[11px]">
+                        <Clock size={12} />
+                        {new Date(order.created_at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Items List */}
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
+                    {order.items?.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex justify-between items-center text-sm">
+                        <div className="flex items-center gap-3">
+                          <span className="w-6 h-6 bg-slate-200 text-slate-600 rounded-md flex items-center justify-center text-[10px] font-black">
+                            {item.quantity}
+                          </span>
+                          <span className="text-slate-800 font-bold">
+                            {item.product?.name || item.name}
+                          </span>
+                        </div>
+                        <span className="text-slate-500 font-mono font-bold">
+                          ${formatMoney(item.final_price)}
                         </span>
                       </div>
-                      <p className="text-sm text-slate-500 font-medium">
-                        {order.table_name
-                          ? `Table ${order.table_name}`
-                          : "Walk-in / Takeaway"}
-                      </p>
+                    ))}
+                  </div>
+
+                  {/* Actions Footer */}
+                  <div className="flex justify-between items-center pt-5 mt-2 border-t border-slate-50">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setPrintOrder(order);
+                          setPrintType("bill");
+                          setPrintModalOpen(true);
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-600 transition-colors">
+                        <Printer size={14} /> BILL
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPrintOrder(order);
+                          setPrintType("receipt");
+                          setPrintModalOpen(true);
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-600 transition-colors">
+                        <Receipt size={14} /> RECEIPT
+                      </button>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-black text-slate-900">
-                      ${formatMoney(order.total_price || order.total)}
-                    </p>
-                    <p className="text-[10px] text-slate-400 uppercase font-bold">
-                      {new Date(order.created_at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                </div>
 
-                {/* Items List */}
-                <div className="bg-slate-50/50 rounded-xl p-3 my-3 space-y-1">
-                  {order.items?.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex justify-between text-sm">
-                      <span className="text-slate-700 font-medium">
-                        {item.quantity}x {item.product?.name || item.name}
-                        {item.modifiers?.length > 0 && (
-                          <span className="text-[10px] text-slate-400 block ml-4">
-                            {item.modifiers.map((m) => m.name).join(", ")}
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-slate-600 font-bold">
-                        ${formatMoney(item.final_price)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Actions Footer */}
-                <div className="flex justify-between items-center pt-2">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        setPrintOrder(order);
-                        setPrintType("bill");
-                        setPrintModalOpen(true);
-                      }}
-                      className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors">
-                      <Printer size={14} /> Bill
-                    </button>
-                    <button
-                      onClick={() => {
-                        setPrintOrder(order);
-                        setPrintType("receipt");
-                        setPrintModalOpen(true);
-                      }}
-                      className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 text-xs font-bold text-slate-600 transition-colors">
-                      <Receipt size={14} /> Receipt
-                    </button>
+                    {config.action && (
+                      <button
+                        onClick={() => triggerAction(order.id, config.action)}
+                        className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 ${config.color} hover:brightness-110`}>
+                        {config.btnText}
+                        <ChevronRight size={18} />
+                      </button>
+                    )}
                   </div>
-
-                  {config.action && (
-                    <button
-                      onClick={() => triggerAction(order.id, config.action)}
-                      className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 ${config.color} hover:brightness-110`}>
-                      {config.btnText}
-                      <ChevronRight size={16} />
-                    </button>
-                  )}
                 </div>
               </div>
             );

@@ -178,27 +178,26 @@ export default function POS() {
   };
   fetchPaymentMethods();
 
-  const handlePaymentComplete = async (orderId, method) => {
+  const handlePaymentComplete = async (orderId, methodId) => {
+    console.log("PAYMENT START:", { orderId, methodId }); // Add this!
     try {
-      await api.post("/payments/", {
+      const payload = {
         order: orderId,
-        amount: activeOrder.total_price || activeOrder.total_amount,
+        // Use the price from the order object passed in or the active state
+        amount: activeOrder?.total_price || activeOrder?.total_amount || 0,
         method: methodId,
-      });
+        status: "PAID",
+      };
+
+      const res = await api.post("/payments/", payload);
+      console.log("PAYMENT SUCCESS:", res.data);
 
       toast.success("Payment successful!");
       setIsPaymentModalOpen(false);
-
-      // Reset POS State
       setActiveOrder(null);
-      setSelectedTable(null);
       setView("mode-select");
-
-      // Refresh tables to show the table is now available
-      const tableRes = await api.get("/tables/");
-      setTables(tableRes.data.results || tableRes.data);
     } catch (err) {
-      console.error("Payment Error:", err.response?.data);
+      console.error("PAYMENT FAIL:", err.response?.data);
       toast.error("Payment failed");
     }
   };

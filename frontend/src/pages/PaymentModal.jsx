@@ -29,19 +29,30 @@ const PaymentModal = ({
     return found ? found.id : null;
   };
   
-  const handlePayment = async (searchName) => {
-    const methodId = getMethodId(searchName);
-    if (!methodId) {
-      alert(`Payment method "${searchName}" not configured in backend.`);
-      return;
-    }
-    setIsProcessing(true);
-    try {
-      await onPaymentComplete(order.id, methodId);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    const handlePayment = async (searchName) => {
+      const methodId = getMethodId(searchName);
+      if (!methodId) {
+        alert(`Payment method "${searchName}" not configured in backend.`);
+        return;
+      }
+
+      // Check which ID property exists
+      const orderId = order.id || order.uuid;
+
+      if (!orderId) {
+        console.error("Order object missing ID:", order);
+        alert("Error: Order ID is missing. Check console.");
+        return;
+      }
+
+      setIsProcessing(true);
+      try {
+        await onPaymentComplete(orderId, methodId);
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">

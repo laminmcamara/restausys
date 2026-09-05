@@ -153,7 +153,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "product_name",
             "variant",
             "quantity",
-            "final_price",   # This is the unit price in your model
+            "final_price",   # This is the unit price in  model
             "notes",
             "modifiers",
             "status",
@@ -321,16 +321,20 @@ class DiscountSerializer(serializers.ModelSerializer):
         model = Discount
         fields = ["id", "name", "code", "discount_type", "value", "is_active"]
 
-class PaymentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Payment
-        fields = "__all__"
-
+# core/serializers.py
 
 class PaymentMethodSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentMethod
+        # Ensure these fields exist in models.py 
         fields = ['id', 'name', 'slug', 'active', 'requires_reference']
+
+class PaymentSerializer(serializers.ModelSerializer):
+    # We add this to see the method details in GET requests, 
+    # but keep it simple for POST requests.
+    class Meta:
+        model = Payment
+        fields = ['id', 'order', 'method', 'amount', 'status', 'transaction_id', 'created_at']
 
 class SettingsSerializer(serializers.ModelSerializer):
     class Meta:

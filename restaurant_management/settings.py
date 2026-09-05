@@ -325,43 +325,33 @@ LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {
-            "format": "[{asctime}] [{levelname}] {name}: {message}",
-            "style": "{",
-        },
-        "simple": {"format": "{levelname} {message}", "style": "{"},
-    },
-    "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
-        "file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "django.log",
-            "maxBytes": 5_000_000,
-            "backupCount": 5,
-            "encoding": "utf-8",
-            "formatter": "verbose",
-        },
-        "mail_admins": {
-            "class": "django.utils.log.AdminEmailHandler",
-            "level": "ERROR",
-            "include_html": True,
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
         },
     },
-    "loggers": {
-        "django": {
-            "handlers": ["console", "file"],
-            "level": "INFO"     # if DEBUG else "INFO",
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
         },
-        "audit": {
-            "handlers": ["file", "console"],
-            "level": "INFO",
-            "propagate": False,
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
         },
     },
 }
+
 
 SYSTEM_NAME = "BeePOS Pro"
 SYSTEM_SHORT_NAME = "BeePOS"

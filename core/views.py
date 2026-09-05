@@ -1558,7 +1558,8 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         restaurant = self._get_restaurant()
         if restaurant:
-            return Order.objects.filter(restaurant=restaurant)
+            # We use select_related/prefetch_related to optimize the Dashboard fetch
+            return Order.objects.filter(restaurant=restaurant).order_by('-created_at')
         return Order.objects.none()
 
     def _get_restaurant(self):
@@ -1577,19 +1578,15 @@ class OrderViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Match frontend 'TAKEOUT' or common 'TAKE_AWAY'
         order_type = serializer.validated_data.get('order_type', 'DINE_IN')
         is_takeout = order_type in ['TAKEOUT', 'TAKE_AWAY', 'TAKE_OUT']
         
-        # 1. Handle Session/Table Logic
         if is_takeout:
-            # Ensure a virtual table exists for this restaurant
             takeout_table, _ = Table.objects.get_or_create(
                 restaurant=restaurant, 
                 table_number="TO", 
                 defaults={'capacity': 0}
             )
-            # Ensure an active TableSession exists for the virtual table
             session_obj, _ = TableSession.objects.get_or_create(
                 table=takeout_table, 
                 restaurant=restaurant, 
@@ -1607,8 +1604,6 @@ class OrderViewSet(viewsets.ModelViewSet):
                 is_active=True
             )
 
-        # 2. Save Order
-        # We pass the table and session explicitly to override serializer defaults
         order = serializer.save(
             restaurant=restaurant,
             created_by=request.user,
@@ -1616,12 +1611,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             table=takeout_table if is_takeout else table
         )
         
-        # 3. Finalize and Calculate
         if hasattr(order, 'calculate_totals'):
             order.calculate_totals()
         
         order.save()
-
         return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path='open_or_create')
@@ -1645,96 +1638,108 @@ class OrderViewSet(viewsets.ModelViewSet):
             created_by=request.user,
         )
         return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
-    
-class MarkOrderPaidView(APIView):
-    """
-    POST /api/v1/orders/<order_id>/mark-paid/
-    Marks an order as paid and triggers an outbound webhook.
-    """
-    permission_classes = [IsAuthenticated]
 
-    def post(self, request, order_id):
-        # Assuming get_user_restaurant is a helper you have defined
-        from .utils import get_user_restaurant 
+    # ===========================================================
+    # WORKFLOW ACTIONS (For Orders Dashboard)
+    # ===========================================================
+
+    @action(detail=True, methods=['post'])
+    def send_to_kitchen(self, request, pk=None):
+        order = self.get_object()
+        order.status = 'PLACED'
+        order.save()
         
-        restaurant = get_user_restaurant(request.user)
-        if not restaurant:
-            return Response(
-                {"detail": "No restaurant associated with your account."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # TRIGGER KITCHEN PRINTING HERE
+        try:
+            from .utils import trigger_kitchen_print # Your printing utility
+            trigger_kitchen_print(order) 
+        except Exception as e:
+            print(f"Printing failed: {e}")
+
+        return Response({'status': 'Order sent to kitchen'})
+    
+    @action(detail=True, methods=['post'])
+    def start_preparing(self, request, pk=None):
+        order = self.get_object()
+        order.status = 'IN_PROGRESS'
+        order.save()
+        return Response({'status': 'Preparation started'})
+
+    @action(detail=True, methods=['post'])
+    def mark_ready(self, request, pk=None):
+        order = self.get_object()
+        order.status = 'READY'
+        order.save()
+        return Response({'status': 'Order ready for pickup/service'})
+
+    @action(detail=True, methods=['post'])
+    def mark_served(self, request, pk=None):
+        order = self.get_object()
+        order.status = 'SERVED'
+        order.save()
+        return Response({'status': 'Order served'})
+
+    @action(detail=True, methods=['post'])
+    def mark_paid(self, request, pk=None):
+        # 1. Get order and restaurant
+        order = self.get_object()
+        restaurant = self._get_restaurant()
+        
+        # 2. Get method name from frontend (default to Cash)
+        method_name = request.data.get("payment_method", "Cash")
+        if not method_name:
+            method_name = "Cash"
+
+        # 3. IMPORT MODELS LOCALLY TO AVOID CIRCULAR IMPORTS
+        from core.models import Payment, PaymentMethod
+        from django.db import transaction
 
         try:
-            order = Order.objects.get(id=order_id, restaurant=restaurant)
-        except Order.DoesNotExist:
-            return Response(
-                {"detail": "Order not found."},
-                status=status.HTTP_404_NOT_FOUND,
+            # 4. Find or Create the PaymentMethod object
+            method_obj, _ = PaymentMethod.objects.get_or_create(
+                restaurant=restaurant, 
+                name__iexact=method_name,
+                defaults={'name': method_name.capitalize(), 'active': True}
             )
 
-        payment_method = request.data.get("payment_method", "cash")
+            with transaction.atomic():
+                # 5. Determine the correct amount field
+                # Some versions of your model use 'total_price', others 'total'
+                amount_to_pay = 0
+                if hasattr(order, 'total_price'):
+                    amount_to_pay = order.total_price
+                elif hasattr(order, 'total'):
+                    amount_to_pay = order.total
+                
+                # 6. Create/Update Payment record
+                # Note: Check if your Payment model uses 'method' or 'payment_method'
+                payment, created = Payment.objects.update_or_create(
+                    order=order,
+                    defaults={
+                        "amount": amount_to_pay,
+                        "method": method_obj, # Using 'method' based on your previous error log
+                        "status": "PAID",
+                    },
+                )
 
-        # Validate payment method
-        valid_methods = ["cash", "card", "mobile", "online"]
-        if payment_method not in valid_methods:
-            return Response(
-                {"detail": f"Invalid payment method. Use: {', '.join(valid_methods)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Use a transaction to ensure data integrity
-        with transaction.atomic():
-            # Create or update the payment record
-            payment, created = Payment.objects.get_or_create(
-                order=order,
-                restaurant=restaurant,
-                defaults={
-                    "amount": order.total,
-                    "payment_method": payment_method,
-                    "status": "paid",
-                },
-            )
-
-            if not created:
-                payment.status = "paid"
-                payment.payment_method = payment_method
-                payment.save()
-
-            # Update order status
-            if hasattr(order, "status"):
-                order.status = "paid"
+                # 7. Update Order Status
+                order.status = 'PAID'
                 order.save()
 
-            # ===========================================================
-            # WEBHOOK TRIGGER (Scheduled to run after DB commit)
-            # ===========================================================
-            webhook_payload = {
-                "order_id": str(order.id),
-                "order_number": getattr(order, 'order_number', order.id),
-                "amount": float(order.total),
-                "payment_method": payment_method,
-                "paid_at": payment.updated_at.isoformat() if hasattr(payment, 'updated_at') else None
-            }
+            return Response({
+                'status': 'PAID', 
+                'order_id': order.id,
+                'method': method_obj.name
+            })
 
-            # transaction.on_commit ensures we don't send the webhook 
-            # if the database transaction rolls back.
-            transaction.on_commit(lambda: trigger_outbound_webhook(
-                restaurant=restaurant,
-                event_type="order.paid",
-                payload=webhook_payload
-            ))
-            # ===========================================================
+        except Exception as e:
+            # This will print the EXACT error to your terminal so you can see it
+            print(f"CRITICAL ERROR IN MARK_PAID: {str(e)}")
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-        return Response(
-            {
-                "detail": "Order marked as paid.", 
-                "order_id": order.id, 
-                "payment_method": payment_method
-            },
-            status=status.HTTP_200_OK,
-        )
-        
-        
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [IsAuthenticated]

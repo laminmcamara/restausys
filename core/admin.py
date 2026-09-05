@@ -14,7 +14,8 @@ from .models import (
     PrintJob,
     Subscription,
     Plan,
-    WebhookConfiguration, WebhookEvent,
+    WebhookConfiguration, WebhookEvent
+
 )
 
 
@@ -729,3 +730,6 @@ class WebhookConfigurationAdmin(admin.ModelAdmin):
 class WebhookEventAdmin(admin.ModelAdmin):
     list_display = ('event_type', 'restaurant', 'status', 'created_at')
     list_filter = ('status', 'environment', 'event_type')
+
+
+
