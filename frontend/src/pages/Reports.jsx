@@ -517,10 +517,10 @@ function Reports() {
                 <tbody>
                   {report.top_items.map((item) => (
                     <tr
-                      key={item.name}
+                      key={item.product_name}
                       className="border-b last:border-0">
                       <td className="py-3 font-medium text-gray-900">
-                        {item.name}
+                        {item.product_name}
                       </td>
                       <td className="py-3 text-gray-600">
                         {Number(item.quantity || 0).toLocaleString()}

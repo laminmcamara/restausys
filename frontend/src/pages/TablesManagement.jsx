@@ -1,19 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   Plus,
   Trash2,
   Edit2,
   QrCode,
   Users,
-  ExternalLink,
   RefreshCw,
   X,
+  MoreVertical,
 } from "lucide-react";
 import api from "../services/api";
 
 export default function TablesManagement() {
-  const navigate = useNavigate();
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -24,33 +22,19 @@ export default function TablesManagement() {
 
   useEffect(() => {
     fetchTables();
-    const interval = setInterval(fetchTables, 15000); // Poll every 15s
+    const interval = setInterval(fetchTables, 15000);
     return () => clearInterval(interval);
   }, []);
 
   const fetchTables = async () => {
     try {
       const res = await api.get("/tables/");
-      setTables(res.data.results || res.data);
+      setTables(res.data.results || res.data || []);
     } catch (err) {
       console.error("Error fetching tables:", err);
     } finally {
       setLoading(false);
     }
-  };
-
-  const openCreateModal = () => {
-    setEditingTable(null);
-    setTableNumber("");
-    setCapacity("2");
-    setShowModal(true);
-  };
-
-  const openEditModal = (table) => {
-    setEditingTable(table);
-    setTableNumber(table.table_number);
-    setCapacity(table.capacity);
-    setShowModal(true);
   };
 
   const handleSave = async (e) => {
@@ -59,13 +43,9 @@ export default function TablesManagement() {
       table_number: tableNumber,
       capacity: parseInt(capacity) || 2,
     };
-
     try {
-      if (editingTable) {
-        await api.put(`/tables/${editingTable.id}/`, payload);
-      } else {
-        await api.post("/tables/", payload);
-      }
+      if (editingTable) await api.put(`/tables/${editingTable.id}/`, payload);
+      else await api.post("/tables/", payload);
       setShowModal(false);
       fetchTables();
     } catch (err) {
@@ -93,193 +73,183 @@ export default function TablesManagement() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
         <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mb-2" />
-        <p className="text-gray-500 font-medium">Loading your floor plan...</p>
+        <p className="text-gray-500 font-medium">Loading floor plan...</p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto bg-slate-50 min-h-screen">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Tables</h1>
-          <p className="text-gray-500">
-            Manage your restaurant floor and QR codes.
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">
+            Tables
+          </h1>
+          <p className="text-slate-500 font-medium">
+            Configure your restaurant layout and QR ordering.
           </p>
         </div>
         <button
-          onClick={openCreateModal}
-          className="flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
-          <Plus className="w-5 h-5" /> Add New Table
+          onClick={() => {
+            setEditingTable(null);
+            setTableNumber("");
+            setCapacity("2");
+            setShowModal(true);
+          }}
+          className="flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
+          <Plus className="w-5 h-5" /> Add Table
         </button>
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-        {sortedTables.map((table) => (
-          <div
-            key={table.id}
-            className="group relative bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-all overflow-hidden">
-            {/* Status Bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {sortedTables.map((table) => {
+          const occupied =
+            table.has_active_session || table.status === "OCCUPIED";
+          return (
             <div
-              className={`h-1.5 w-full ${
-                table.has_active_session ? "bg-rose-500" : "bg-emerald-500"
-              }`}
-            />
-
-            <div className="p-5">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-800">
-                    {table.table_number}
-                  </h2>
-                  <div className="flex items-center gap-1.5 text-gray-500 mt-1">
-                    <Users className="w-4 h-4" />
-                    <span className="text-sm font-medium">
-                      Seats {table.capacity}
-                    </span>
-                  </div>
-                </div>
-                <span
-                  className={`text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md ${
-                    table.has_active_session
-                      ? "bg-rose-50 text-rose-600"
-                      : "bg-emerald-50 text-emerald-600"
+              key={table.id}
+              className="group bg-white rounded-[24px] border border-slate-200 p-5 hover:shadow-xl hover:shadow-slate-200/50 transition-all relative">
+              {/* Top Row: Status & Actions */}
+              <div className="flex justify-between items-start mb-6">
+                <div
+                  className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    occupied
+                      ? "bg-orange-100 text-orange-600"
+                      : "bg-emerald-100 text-emerald-600"
                   }`}>
-                  {table.has_active_session ? "Occupied" : "Available"}
-                </span>
-              </div>
+                  {occupied ? "Occupied" : "Vacant"}
+                </div>
 
-              <div className="space-y-2">
-                <button
-                  onClick={() => navigate(`/pos/${table.id}`)}
-                  className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white py-2 rounded-lg hover:bg-black transition text-sm font-semibold">
-                  <ExternalLink className="w-4 h-4" /> Open POS
-                </button>
-
-                <div className="grid grid-cols-2 gap-2">
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
-                    onClick={() => setActiveQrTable(table)}
-                    className="flex items-center justify-center gap-1.5 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition text-xs font-bold">
-                    <QrCode className="w-3.5 h-3.5" /> QR Code
+                    onClick={() => {
+                      setEditingTable(table);
+                      setTableNumber(table.table_number);
+                      setCapacity(table.capacity);
+                      setShowModal(true);
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors">
+                    <Edit2 size={16} />
                   </button>
-                  <button
-                    onClick={() => openEditModal(table)}
-                    className="flex items-center justify-center gap-1.5 py-2 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition text-xs font-bold">
-                    <Edit2 className="w-3.5 h-3.5" /> Edit
-                  </button>
+                  {!occupied && (
+                    <button
+                      onClick={() => handleDelete(table)}
+                      className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors">
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Delete Button - Absolute positioned to show on hover */}
-              {!table.has_active_session && (
-                <button
-                  onClick={() => handleDelete(table)}
-                  className="absolute top-2 right-2 p-1.5 text-gray-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
+              {/* Center: Table Info */}
+              <div className="text-center mb-6">
+                <h2 className="text-4xl font-black text-slate-800 mb-1">
+                  {table.table_number}
+                </h2>
+                <div className="flex items-center justify-center gap-1.5 text-slate-400 font-bold text-xs">
+                  <Users size={14} />
+                  <span>Seats {table.capacity}</span>
+                </div>
+              </div>
+
+              {/* Bottom: QR Action */}
+              <button
+                onClick={() => setActiveQrTable(table)}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-50 text-slate-600 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all text-xs font-black uppercase tracking-widest border border-slate-100">
+                <QrCode size={14} /> QR Code
+              </button>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Create/Edit Modal */}
+      {/* Modals remain functionally the same but with updated styling */}
       {showModal && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="p-6 border-b flex justify-between items-center">
-              <h2 className="text-xl font-bold text-gray-800">
-                {editingTable ? "Edit Table" : "Create New Table"}
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-slate-50 flex justify-between items-center">
+              <h2 className="text-2xl font-black text-slate-900">
+                {editingTable ? "Edit Table" : "New Table"}
               </h2>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-gray-400 hover:text-gray-600">
-                <X className="w-6 h-6" />
+                className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <X className="w-6 h-6 text-slate-400" />
               </button>
             </div>
-
             <form
               onSubmit={handleSave}
-              className="p-6 space-y-4">
+              className="p-8 space-y-5">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">
-                  Table Name / Number
+                <label className="block text-xs font-black uppercase tracking-widest text-slate-400 mb-2">
+                  Table Number
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Table 01"
+                  placeholder="e.g. 01"
                   value={tableNumber}
                   onChange={(e) => setTableNumber(e.target.value)}
                   required
-                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                  className="w-full p-4 bg-slate-50 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none transition-all font-bold text-slate-800"
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">
-                  Seating Capacity
+                <label className="block text-xs font-black uppercase tracking-widest text-slate-400 mb-2">
+                  Capacity
                 </label>
                 <input
                   type="number"
                   value={capacity}
                   onChange={(e) => setCapacity(e.target.value)}
                   required
-                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                  className="w-full p-4 bg-slate-50 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none transition-all font-bold text-slate-800"
                 />
               </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition">
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-100">
-                  {editingTable ? "Update Table" : "Create Table"}
-                </button>
-              </div>
+              <button
+                type="submit"
+                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all">
+                {editingTable ? "Save Changes" : "Create Table"}
+              </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* QR Modal */}
+      {/* QR Modal - Simplified */}
       {activeQrTable && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-sm w-full relative">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-10 rounded-[40px] shadow-2xl text-center max-w-sm w-full relative animate-in fade-in slide-in-from-bottom-4 duration-300">
             <button
               onClick={() => setActiveQrTable(null)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
-              <X className="w-6 h-6" />
+              className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <X
+                size={24}
+                className="text-slate-300"
+              />
             </button>
-
-            <div className="mb-6">
-              <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <QrCode className="w-8 h-8 text-indigo-600" />
-              </div>
-              <h2 className="text-3xl font-black text-gray-900">
+            <div className="mb-8">
+              <h2 className="text-5xl font-black text-slate-900 mb-2">
                 {activeQrTable.table_number}
               </h2>
-              <p className="text-indigo-600 font-bold tracking-widest uppercase text-xs mt-1">
-                Scan to Order
+              <p className="text-indigo-600 font-black tracking-[0.2em] uppercase text-[10px]">
+                Digital Menu Access
               </p>
             </div>
-
-            <div className="bg-white p-4 rounded-2xl mb-8 border-2 border-dashed border-gray-200 inline-block">
+            <div className="bg-slate-50 p-6 rounded-[32px] mb-8 border-2 border-dashed border-slate-200">
               {activeQrTable.qr_code ? (
                 <img
                   src={activeQrTable.qr_code}
-                  alt="QR Code"
-                  className="w-48 h-48 mx-auto"
+                  alt="QR"
+                  className="w-48 h-48 mx-auto mix-blend-multiply"
                 />
               ) : (
-                <div className="w-48 h-48 flex flex-col items-center justify-center gap-2">
-                  <p className="text-sm text-gray-400">No QR generated</p>
+                <div className="h-48 flex flex-col items-center justify-center text-slate-400">
+                  <QrCode
+                    size={48}
+                    className="mb-2 opacity-20"
+                  />
                   <button
                     onClick={async () => {
                       try {
@@ -287,28 +257,22 @@ export default function TablesManagement() {
                           `/tables/${activeQrTable.id}/generate_qr/`
                         );
                         fetchTables();
-                        setActiveQrTable(null); // Close to refresh
+                        setActiveQrTable(null);
                       } catch (err) {
-                        alert("Failed to generate");
+                        alert("Failed");
                       }
                     }}
-                    className="text-xs text-indigo-600 font-bold underline">
-                    Generate Now
+                    className="text-xs font-black text-indigo-600 underline">
+                    Generate QR
                   </button>
                 </div>
               )}
             </div>
-
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={() => window.print()}
-                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-200 flex items-center justify-center gap-2">
-                Print QR Card
-              </button>
-              <p className="text-[10px] text-gray-400">
-                BEEPOS Digital Menu System
-              </p>
-            </div>
+            <button
+              onClick={() => window.print()}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black hover:bg-black transition-all shadow-xl">
+              Print QR Card
+            </button>
           </div>
         </div>
       )}

@@ -680,12 +680,6 @@ class TableSection(models.Model):
         return f"{self.table.table_number}{self.label}"
     
 
-from decimal import Decimal
-from django.db import models
-from django.db.models import Q, Sum
-from django.utils import timezone
-
-
 class TableSession(models.Model):
 
     class SessionType(models.TextChoices):

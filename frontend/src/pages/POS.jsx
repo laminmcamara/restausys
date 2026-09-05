@@ -53,24 +53,27 @@ export default function POS() {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
+      // Wrap each call to ensure one failure doesn't crash the whole page
       const [tableRes, catRes, prodRes, sessionRes] = await Promise.all([
-        api.get("/tables/"),
-        api.get("/manager/categories/"),
-        api.get("/manager/products/"),
+        api.get("/tables/").catch((err) => ({ data: { results: [] } })),
+        api.get("/manager/categories/").catch((err) => ({ data: [] })),
+        api.get("/manager/products/").catch((err) => ({ data: [] })),
         api.get("/sessions/active/").catch(() => ({ data: null })),
       ]);
 
-      setTables(tableRes.data.results || tableRes.data);
-      setCategories(catRes.data.results || catRes.data);
-      setProducts(prodRes.data.results || prodRes.data);
+      setTables(tableRes.data.results || tableRes.data || []);
+      setCategories(catRes.data.results || catRes.data || []);
+      setProducts(prodRes.data.results || prodRes.data || []);
       setCurrentSession(sessionRes.data);
 
-      if (catRes.data.length > 0) setSelectedCategory(catRes.data[0].id);
+      if (catRes.data && catRes.data.length > 0) {
+        setSelectedCategory(catRes.data[0].id);
+      }
     } catch (err) {
       console.error("Failed to fetch POS data", err);
-      toast.error("Failed to load POS data");
+      // Don't let the app hang even if there's a major error
     } finally {
-      setLoading(false);
+      setLoading(false); // This MUST run to hide the loader
     }
   };
 
@@ -79,10 +82,16 @@ export default function POS() {
     setLoading(true);
     try {
       setSelectedTable(table);
+
+      // BEST PRACTICE: The backend 'open_or_create' should handle finding
+      // the existing order if the table is occupied.
       const response = await api.post("/orders/open_or_create/", {
         table: table.id,
         session: currentSession?.id,
       });
+
+      // If the table was already occupied, response.data will be the existing order
+      // If it was vacant, response.data will be the new order
       setActiveOrder(response.data);
       setView("menu");
     } catch (err) {
@@ -178,29 +187,31 @@ export default function POS() {
   };
   fetchPaymentMethods();
 
-  const handlePaymentComplete = async (orderId, methodId) => {
-    console.log("PAYMENT START:", { orderId, methodId }); // Add this!
-    try {
-      const payload = {
-        order: orderId,
-        // Use the price from the order object passed in or the active state
-        amount: activeOrder?.total_price || activeOrder?.total_amount || 0,
-        method: methodId,
-        status: "PAID",
-      };
+    const handlePaymentComplete = async (orderId, methodId) => {
+      try {
+        const payload = {
+          order: orderId,
+          amount: activeOrder?.total_price || activeOrder?.total_amount || 0,
+          method: methodId,
+          status: "PAID",
+        };
 
-      const res = await api.post("/payments/", payload);
-      console.log("PAYMENT SUCCESS:", res.data);
+        await api.post("/payments/", payload);
 
-      toast.success("Payment successful!");
-      setIsPaymentModalOpen(false);
-      setActiveOrder(null);
-      setView("mode-select");
-    } catch (err) {
-      console.error("PAYMENT FAIL:", err.response?.data);
-      toast.error("Payment failed");
-    }
-  };
+        toast.success("Payment successful!");
+        setIsPaymentModalOpen(false);
+        setActiveOrder(null);
+        setSelectedTable(null); // Clear selected table
+
+        // CRITICAL: Refresh the tables so the UI shows the table is now VACANT
+        fetchInitialData();
+
+        setView("mode-select");
+      } catch (err) {
+        console.error("PAYMENT FAIL:", err.response?.data);
+        toast.error("Payment failed");
+      }
+    };
 
   /* ================= TAKE-OUT LOGIC ================= */
   const handleTakeOutOrder = async (takeOutCart, customerInfo = {}) => {

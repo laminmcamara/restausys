@@ -14,6 +14,7 @@ import DashboardLayout from "./layout/DashboardLayout";
 import PickupDisplay from "./pages/PickupDisplay";
 import OnboardingPage from "./pages/OnboardingPage";
 
+
 function ProtectedRoute({ children }) {
   const { accessToken, authLoading } = useAuth();
   
@@ -62,7 +63,7 @@ function App() {
 
         {/* Public pickup display */}
         <Route
-          path="/display/:restaurantId"
+          path="/pickup"
           element={<PickupDisplay />}
         />
 

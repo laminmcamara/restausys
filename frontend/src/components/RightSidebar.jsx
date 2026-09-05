@@ -8,6 +8,9 @@ import {
   KeyRound,
   CreditCard,
   Activity,
+  Monitor,
+  ShieldCheck,
+  ExternalLink,
 } from "lucide-react";
 
 export default function RightSidebar() {
@@ -17,8 +20,11 @@ export default function RightSidebar() {
   const userName = user?.email || user?.username || "User";
   const restaurantName = user?.restaurant?.name || "Restaurant";
 
+  // Check for admin status in your CustomUser model
+  const isStaffOrAdmin = user?.is_staff || user?.is_superuser;
+
   return (
-    <aside className="w-64 bg-white border-l border-slate-200 p-4 space-y-4 overflow-y-auto">
+    <aside className="w-64 bg-white border-l border-slate-200 p-4 space-y-4 overflow-y-auto h-full">
       {/* Profile Card */}
       <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
         <div className="flex items-center space-x-3">
@@ -26,10 +32,12 @@ export default function RightSidebar() {
             {userName.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-800">
+            <div className="text-sm font-semibold text-slate-800 truncate w-32">
               {userName}
             </div>
-            <div className="text-xs text-slate-500">{restaurantName}</div>
+            <div className="text-xs text-slate-500 truncate w-32">
+              {restaurantName}
+            </div>
           </div>
         </div>
 
@@ -41,7 +49,7 @@ export default function RightSidebar() {
         </NavLink>
       </div>
 
-      {/* Quick Links */}
+      {/* Quick Links (Your Original Links) */}
       <div className="space-y-2">
         <NavLink
           to="/dashboard/tutorials"
@@ -77,7 +85,33 @@ export default function RightSidebar() {
           <Activity size={24} />
           <span className="text-sm font-medium">{t("profile.activity")}</span>
         </NavLink>
+
+        {/* NEW: Pickup Display Link */}
+        <NavLink
+          to="/pickup"
+          target="_blank"
+          className="flex items-center space-x-3 px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors">
+          <Monitor size={24} />
+          <span className="text-sm font-bold">Pickup Display</span>
+        </NavLink>
       </div>
+
+      {/* NEW: Admin Section (Visible to SuperUsers/Staff) */}
+      {isStaffOrAdmin && (
+        <div className="pt-4 border-t border-slate-100">
+          <a
+            href="http://localhost:8000/admin/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-between px-3 py-2 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors">
+            <div className="flex items-center space-x-3">
+              <ShieldCheck size={24} />
+              <span className="text-sm font-bold">Django Admin</span>
+            </div>
+            <ExternalLink size={14} />
+          </a>
+        </div>
+      )}
     </aside>
   );
 }

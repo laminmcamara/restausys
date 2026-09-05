@@ -37,7 +37,7 @@ const PrintableOrderDocument = ({
     const productName =
       item.product_name ||
       (item.product && (item.product.name || item.product.title)) ||
-      item.name ||
+      item.product_name ||
       "Unknown Item";
 
     // Normalize modifiers to strings for the grouping key

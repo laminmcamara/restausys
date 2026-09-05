@@ -64,7 +64,7 @@ const ProductRecipeManager = ({
                 <option
                   key={item.id}
                   value={item.id}>
-                  {item.name} ({item.unit})
+                  {item.product_name} ({item.unit})
                 </option>
               ))}
             </select>

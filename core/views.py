@@ -1435,28 +1435,20 @@ class TableViewSet(TenantModelViewSet):
         if user.is_superuser:
             restaurant_id = self.request.query_params.get("restaurant")
             tables = Table.objects.all()
-        
-        # If no specific restaurant is requested, you might want to return 
-        # nothing or only the superuser's own restaurant to prevent clutter
             if restaurant_id:
                 tables = tables.filter(restaurant_id=restaurant_id)
         
-        # Add annotations
             active_session_qs = TableSession.objects.filter(table=OuterRef("pk"), is_active=True)
             return tables.annotate(
                 has_active_session=Exists(active_session_qs),
                 active_session_id=Subquery(active_session_qs.values("id")[:1])
             ).order_by("restaurant_id", "table_number")
 
-    # 2. Handle Standard Restaurant Staff/Managers
-    # Use the restaurant associated with the user profile
+        # 2. Handle Standard Restaurant Staff/Managers
         restaurant = getattr(user, "restaurant", None)
-
         if not restaurant:
-        # If the user isn't assigned to a restaurant, they see NOTHING
             return Table.objects.none()
 
-    # Strict filtering by the user's assigned restaurant
         active_session_qs = TableSession.objects.filter(
             table=OuterRef("pk"),
             restaurant=restaurant,
@@ -1465,7 +1457,7 @@ class TableViewSet(TenantModelViewSet):
 
         return (
             Table.objects
-            .filter(restaurant=restaurant) # This is the isolation barrier
+            .filter(restaurant=restaurant)
             .annotate(
                 has_active_session=Exists(active_session_qs),
                 active_session_id=Subquery(active_session_qs.values("id")[:1])
@@ -1473,28 +1465,25 @@ class TableViewSet(TenantModelViewSet):
             .order_by("table_number")
         )
 
+    def perform_create(self, serializer):
+        """
+        Automatically assign the table to the user's restaurant on creation.
+        This ensures the UniqueConstraint(restaurant, table_number) works correctly.
+        """
+        serializer.save(restaurant=self.request.user.restaurant)
 
     @action(detail=True, methods=["post"])
     def generate_qr(self, request, pk=None):
         table = self.get_object()
-
+        # model has a complex generate_qr_code method already.
         qr_url = f"http://127.0.0.1:3000/menu/{table.id}"
-
         qr = qrcode.make(qr_url)
         buffer = BytesIO()
         qr.save(buffer, format="PNG")
-
         file_name = f"table_{table.id}_qr.png"
-
-        table.qr_code.save(
-            file_name,
-            ContentFile(buffer.getvalue()),
-            save=True
-        )
-
+        table.qr_code.save(file_name, ContentFile(buffer.getvalue()), save=True)
         return Response({"message": "QR generated successfully"})
-    
-    
+
 # TODO: Remove when staff dashboard fully API-driven      
 class TableCreateView(LoginRequiredMixin, CreateView):
     model = Table
@@ -1623,11 +1612,29 @@ class OrderViewSet(viewsets.ModelViewSet):
         restaurant = self._get_restaurant()
         table = get_object_or_404(Table, id=table_id, restaurant=restaurant)
 
-        order = Order.objects.filter(table=table, restaurant=restaurant, status='DRAFT').first()
+        # 1. Look for an existing active order (DRAFT or PLACED)
+        # We check for both so that if an order is sent to the kitchen (PLACED), 
+        # it still shows as the active order for that table.
+        order = Order.objects.filter(
+            table=table, 
+            restaurant=restaurant, 
+            status__in=['DRAFT', 'PLACED'] 
+        ).first()
+
         if order:
+            # Ensure table is marked occupied if an order exists
+            if not table.is_occupied or table.status != 'OCCUPIED':
+                table.is_occupied = True
+                table.status = 'OCCUPIED'
+                table.save()
             return Response(self.get_serializer(order).data)
 
-        ts_session, _ = TableSession.objects.get_or_create(table=table, restaurant=restaurant, is_active=True)
+        # 2. No active order found, create a new session and order
+        ts_session, _ = TableSession.objects.get_or_create(
+            table=table, 
+            restaurant=restaurant, 
+            is_active=True
+        )
 
         order = Order.objects.create(
             restaurant=restaurant, 
@@ -1637,6 +1644,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             status='DRAFT', 
             created_by=request.user,
         )
+
+        # 3. CRITICAL: Mark the table as occupied in the database
+        table.is_occupied = True
+        table.status = 'OCCUPIED'
+        table.save()
+
         return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
 
     # ===========================================================
@@ -1725,6 +1738,13 @@ class OrderViewSet(viewsets.ModelViewSet):
                 # 7. Update Order Status
                 order.status = 'PAID'
                 order.save()
+                
+                # BEST PRACTICE: Release the table immediately upon full payment
+                if order.table:
+                    order.table.status = 'VACANT'
+                    order.table.is_occupied = False
+                    order.table.save()
+                return Response({'message': 'Order settled and table released'})
 
             return Response({
                 'status': 'PAID', 
@@ -2128,17 +2148,21 @@ class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
 
         serializer.save()
 
+
+
 class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PaymentMethodSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = PaymentMethod.objects.filter(active=True)
-        print(f"DEBUG: Found {qs.count()} active payment methods in DB")
-        for pm in qs:
-            print(f"DEBUG: Method Name: '{pm.name}'")
-        return qs
-
+        # Only return methods belonging to the logged-in user's restaurant
+        if not self.request.user.restaurant:
+            return PaymentMethod.objects.none()
+            
+        return PaymentMethod.objects.filter(
+            restaurant=self.request.user.restaurant, 
+            active=True
+        )
 
 class PaymentSummaryAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]

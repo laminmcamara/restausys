@@ -180,7 +180,7 @@ const TakeOutPage = ({ products, onSendOrder }) => {
                 className="flex justify-between items-center gap-2">
                 <div className="flex-1">
                   <p className="text-sm font-bold text-slate-800 leading-tight">
-                    {item.name}
+                    {item.product_name}
                   </p>
                   <p className="text-xs text-indigo-600 font-black">
                     $

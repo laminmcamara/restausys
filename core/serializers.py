@@ -22,8 +22,8 @@ class CustomUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     class Meta:
         model = CustomUser
-        fields = ["id", "language", "username", "first_name", "last_name", "full_name", "email", "role", "restaurant"]
-        read_only_fields = ["id", "restaurant"]
+        fields = ["id", "language", "username", "first_name", "last_name", "full_name", "email", "role", "restaurant", "is_staff", "is_superuser"]
+        read_only_fields = ["id", "restaurant", "is_staff", "is_superuser"]
 
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip() or obj.username
@@ -68,7 +68,7 @@ class TableSerializer(serializers.ModelSerializer):
     has_active_session = serializers.BooleanField(read_only=True)
     class Meta:
         model = Table
-        fields = ["id", "table_number", "capacity", "qr_code", "has_active_session"]
+        fields = ["id", "table_number", "status", "capacity", "qr_code", "has_active_session"]
 
 class ModifierOptionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -144,7 +144,7 @@ class ProductSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.ReadOnlyField(source="product.name")
     total_price = serializers.SerializerMethodField()
-
+    product_name = serializers.CharField(source='product.name', read_only=True)
     class Meta:
         model = OrderItem
         fields = [
@@ -191,7 +191,11 @@ class OrderSerializer(serializers.ModelSerializer):
             "total_amount", "created_at", "session"
         ]
         read_only_fields = ["restaurant", "created_at"]
-
+    
+    def get_short_id(self, obj):
+        # Returns the last 4 chars of the UUID
+        return str(obj.id).split('-')[-1][-4:].upper()
+    
     def get_total_price(self, obj):
         # Try to get the calculated total from the model field
         val = getattr(obj, 'total_price', getattr(obj, 'total_amount', 0))
@@ -321,13 +325,14 @@ class DiscountSerializer(serializers.ModelSerializer):
         model = Discount
         fields = ["id", "name", "code", "discount_type", "value", "is_active"]
 
-# core/serializers.py
 
 class PaymentMethodSerializer(serializers.ModelSerializer):
+    is_active = serializers.BooleanField(source='active')
+
     class Meta:
         model = PaymentMethod
         # Ensure these fields exist in models.py 
-        fields = ['id', 'name', 'slug', 'active', 'requires_reference']
+        fields = ['id', 'name', 'slug', 'is_active', 'requires_reference']
 
 class PaymentSerializer(serializers.ModelSerializer):
     # We add this to see the method details in GET requests, 

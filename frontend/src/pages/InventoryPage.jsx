@@ -67,7 +67,7 @@ export default function InventoryPage() {
 
   function openEdit(item) {
     setForm({
-      name: item.name || "",
+      name: item.product_name || "",
       category: item.category || "",
       quantity: item.quantity?.toString() || "",
       unit: item.unit || "piece",
@@ -309,7 +309,9 @@ export default function InventoryPage() {
                 <tr
                   key={item.id}
                   className="hover:bg-slate-50">
-                  <td className="p-4 font-bold text-slate-900">{item.name}</td>
+                  <td className="p-4 font-bold text-slate-900">
+                    {item.product_name}
+                  </td>
                   <td className="p-4">
                     {adjustingId === item.id ? (
                       <div className="flex items-center gap-2">

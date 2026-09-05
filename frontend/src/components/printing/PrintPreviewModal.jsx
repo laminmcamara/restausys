@@ -11,7 +11,7 @@ const PrintableOrderDocument = ({ order, type = "receipt" }) => {
 
   // 1. ITEM GROUPING
   const groupedItems = rawItems.reduce((acc, item) => {
-    const productName = item.product?.name || item.name;
+    const productName = item.product?.name || item.product_name;
     const modifierString = JSON.stringify(item.modifiers || []);
     const key = `${productName}-${modifierString}`;
 

@@ -7,9 +7,9 @@ import {
   Flame,
   PackageCheck,
   AlertTriangle,
-  Receipt,
-  FileText,
   UtensilsCrossed,
+  Search,
+  X,
 } from "lucide-react";
 import api from "../services/api";
 import PrintPreviewModal from "../components/printing/PrintPreviewModal";
@@ -33,74 +33,74 @@ export default function KitchenDashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
   const [error, setError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // State to force re-render timers every minute
+  const [now, setNow] = useState(Date.now());
 
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printOrder, setPrintOrder] = useState(null);
   const [printType, setPrintType] = useState("receipt");
 
-  // 1. FIXED REFRESH LOGIC
   const fetchOrders = useCallback(async (isManual = false) => {
     if (isManual) setIsRefreshing(true);
     try {
       setError("");
       const res = await api.get("/orders/");
-      const data = Array.isArray(res.data)
-        ? res.data
-        : res.data?.results || res.data?.orders || res.data?.data || [];
-
+      const data = res.data.results || res.data || [];
       setOrders(data);
     } catch (err) {
-      console.error("Failed to fetch kitchen orders:", err);
-      setError("Failed to load kitchen orders.");
+      console.error("Kitchen fetch error:", err);
+      setError("Connection Error");
+      if (err.response?.status === 401) window.location.href = "/login";
     } finally {
       setLoading(false);
-      if (isManual) {
-        // Artificial delay for visual feedback
-        setTimeout(() => setIsRefreshing(false), 600);
-      }
+      if (isManual) setIsRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     fetchOrders();
-    const interval = setInterval(() => fetchOrders(false), 10000); // Auto-refresh every 10s
-    return () => clearInterval(interval);
+    const pollInterval = setInterval(() => fetchOrders(false), 15000);
+    const clockInterval = setInterval(() => setNow(Date.now()), 60000); // Refresh timers every minute
+    return () => {
+      clearInterval(pollInterval);
+      clearInterval(clockInterval);
+    };
   }, [fetchOrders]);
 
-  const openPrintPreview = (order, type) => {
-    setPrintOrder(order);
-    setPrintType(type);
-    setPrintModalOpen(true);
+  // CONSISTENT ID LOGIC
+  const formatOrderId = (order) => {
+    if (order.display_id) return order.display_id;
+    const idStr = String(order.id);
+    return idStr.includes("-")
+      ? idStr.split("-").pop()?.slice(-4).toUpperCase()
+      : idStr.slice(-4).toUpperCase();
   };
 
-  // 2. UPDATED STATUS ACTIONS (Using the new backend POST actions)
   const handleUpdateStatus = async (order, nextStatus) => {
     try {
       setUpdatingOrderId(order.id);
-      setError("");
-
-      // Map status to our new backend action endpoints
-      let endpoint = "";
-      if (nextStatus === ORDER_STATUSES.IN_PROGRESS)
-        endpoint = "start_preparing";
-      if (nextStatus === ORDER_STATUSES.READY) endpoint = "mark_ready";
+      let endpoint =
+        nextStatus === ORDER_STATUSES.IN_PROGRESS
+          ? "start_preparing"
+          : nextStatus === ORDER_STATUSES.READY
+          ? "mark_ready"
+          : "";
 
       if (endpoint) {
         await api.post(`/orders/${order.id}/${endpoint}/`);
       } else {
-        // Fallback to PATCH if no specific action exists
         await api.patch(`/orders/${order.id}/`, { status: nextStatus });
       }
 
-      // Optimistic UI Update
       setOrders((prev) =>
         prev.map((item) =>
           item.id === order.id ? { ...item, status: nextStatus } : item
         )
       );
     } catch (err) {
-      console.error("Failed to update order status:", err);
-      setError("Failed to update order status.");
+      setError("Failed to update status.");
     } finally {
       setUpdatingOrderId(null);
     }
@@ -117,19 +117,27 @@ export default function KitchenDashboard() {
       )
       .filter(isRecentKitchenOrder)
       .filter((order) => {
-        if (activeType === "all") return true;
-        const orderType = (
-          order.order_type ||
-          order.type ||
-          "dine_in"
-        ).toLowerCase();
-        return orderType === activeType;
+        const typeMatch =
+          activeType === "all" ||
+          (order.order_type || "dine_in").toLowerCase() === activeType;
+        if (!typeMatch) return false;
+
+        if (!searchQuery.trim()) return true;
+        const query = searchQuery.toLowerCase();
+        const shortId = formatOrderId(order).toLowerCase();
+        const table = (order.table_name || "").toLowerCase();
+        const customer = (order.customer_name || "").toLowerCase();
+        return (
+          shortId.includes(query) ||
+          table.includes(query) ||
+          customer.includes(query)
+        );
       })
       .sort(
         (a, b) =>
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       );
-  }, [orders, activeType]);
+  }, [orders, activeType, searchQuery]);
 
   const pendingOrders = visibleOrders.filter(
     (o) => normalizeStatus(o.status) === ORDER_STATUSES.PLACED
@@ -141,52 +149,74 @@ export default function KitchenDashboard() {
     (o) => normalizeStatus(o.status) === ORDER_STATUSES.READY
   );
 
-  const lateOrdersCount = visibleOrders.filter((order) => {
-    const minutes = getMinutesSince(order.created_at);
-    return (
-      minutes > 15 && normalizeStatus(order.status) !== ORDER_STATUSES.READY
-    );
-  }).length;
+  const lateOrdersCount = visibleOrders.filter(
+    (o) =>
+      getMinutesSince(o.created_at) > 15 &&
+      normalizeStatus(o.status) !== ORDER_STATUSES.READY
+  ).length;
 
   if (loading)
     return (
-      <div className="flex items-center justify-center py-20 text-gray-500 animate-pulse font-bold">
+      <div className="flex items-center justify-center py-20 text-slate-500 animate-pulse font-black tracking-widest">
         INITIALIZING KITCHEN DISPLAY...
       </div>
     );
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto p-4">
-      {/* Header */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="bg-orange-500 p-2 rounded-xl text-white">
-              <ChefHat size={24} />
-            </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">
-              Kitchen Display System
-            </h1>
+      {/* Header & Search */}
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="bg-orange-500 p-3 rounded-2xl text-white shadow-lg shadow-orange-200">
+            <ChefHat size={28} />
           </div>
-          <p className="mt-1 text-sm font-medium text-slate-500">
-            Live order tracking and preparation management
-          </p>
+          <div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase">
+              Kitchen Display
+            </h1>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              Live Prep Management
+            </p>
+          </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => fetchOrders(true)}
-          disabled={isRefreshing}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-6 py-3 text-sm font-black text-white hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50">
-          <RefreshCw
-            size={18}
-            className={isRefreshing ? "animate-spin" : ""}
-          />
-          {isRefreshing ? "REFRESHING..." : "REFRESH BOARD"}
-        </button>
+        <div className="flex flex-col md:flex-row items-center gap-3">
+          {/* Search Bar */}
+          <div className="relative w-full md:w-80">
+            <Search
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+              size={18}
+            />
+            <input
+              type="text"
+              placeholder="Search Order ID or Table..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-12 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500/20 transition-all"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          <button
+            onClick={() => fetchOrders(true)}
+            disabled={isRefreshing}
+            className="w-full md:w-auto inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-8 py-3 text-sm font-black text-white hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50">
+            <RefreshCw
+              size={18}
+              className={isRefreshing ? "animate-spin" : ""}
+            />
+            {isRefreshing ? "SYNCING..." : "REFRESH"}
+          </button>
+        </div>
       </div>
 
-      {/* Stats Summary */}
+      {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KitchenStatCard
           title="New"
@@ -207,7 +237,7 @@ export default function KitchenDashboard() {
           color="green"
         />
         <KitchenStatCard
-          title="Late"
+          title="Late (>15m)"
           value={lateOrdersCount}
           icon={<AlertTriangle />}
           color="red"
@@ -220,12 +250,12 @@ export default function KitchenDashboard() {
           <button
             key={type}
             onClick={() => setActiveType(type)}
-            className={`rounded-xl px-6 py-2 text-xs font-black uppercase tracking-widest transition-all ${
+            className={`rounded-xl px-6 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-all ${
               activeType === type
                 ? "bg-white text-slate-900 shadow-sm"
                 : "text-slate-500 hover:text-slate-700"
             }`}>
-            {formatOrderType(type)}
+            {type.replace("_", " ")}
           </button>
         ))}
       </div>
@@ -241,8 +271,13 @@ export default function KitchenDashboard() {
           onAction={(order) =>
             handleUpdateStatus(order, ORDER_STATUSES.IN_PROGRESS)
           }
-          onPrint={openPrintPreview}
+          onPrint={(o) => {
+            setPrintOrder(o);
+            setPrintType("kitchen");
+            setPrintModalOpen(true);
+          }}
           updatingOrderId={updatingOrderId}
+          formatId={formatOrderId}
         />
         <KitchenColumn
           title="PREPARING"
@@ -251,16 +286,25 @@ export default function KitchenDashboard() {
           actionLabel="MARK AS READY"
           actionIcon={<CheckCircle size={18} />}
           onAction={(order) => handleUpdateStatus(order, ORDER_STATUSES.READY)}
-          onPrint={openPrintPreview}
+          onPrint={(o) => {
+            setPrintOrder(o);
+            setPrintType("kitchen");
+            setPrintModalOpen(true);
+          }}
           updatingOrderId={updatingOrderId}
+          formatId={formatOrderId}
         />
         <KitchenColumn
-          title="READY / SERVING"
+          title="READY TO SERVE"
           color="green"
           orders={readyOrders}
-          actionLabel={null}
-          onPrint={openPrintPreview}
+          onPrint={(o) => {
+            setPrintOrder(o);
+            setPrintType("kitchen");
+            setPrintModalOpen(true);
+          }}
           updatingOrderId={updatingOrderId}
+          formatId={formatOrderId}
         />
       </div>
 
@@ -284,15 +328,14 @@ function KitchenStatCard({ title, value, icon, color }) {
     red: "bg-rose-500",
   };
   return (
-    <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
+    <div className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm flex items-center justify-between">
       <div>
         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
           {title}
         </p>
         <p className="text-3xl font-black text-slate-900">{value}</p>
       </div>
-      <div
-        className={`${colors[color]} p-3 rounded-2xl text-white shadow-lg shadow-${color}-200`}>
+      <div className={`${colors[color]} p-3 rounded-2xl text-white shadow-lg`}>
         {icon}
       </div>
     </div>
@@ -308,6 +351,7 @@ function KitchenColumn({
   onAction,
   onPrint,
   updatingOrderId,
+  formatId,
 }) {
   const accents = {
     yellow: "border-t-yellow-500",
@@ -316,12 +360,12 @@ function KitchenColumn({
   };
   return (
     <div
-      className={`bg-slate-100/50 rounded-3xl border-t-4 ${accents[color]} p-4 min-h-[70vh]`}>
-      <div className="flex items-center justify-between mb-4 px-2">
+      className={`bg-slate-100/50 rounded-[40px] border-t-8 ${accents[color]} p-5 min-h-[70vh]`}>
+      <div className="flex items-center justify-between mb-6 px-2">
         <h2 className="font-black text-slate-800 tracking-tight text-sm uppercase">
           {title}
         </h2>
-        <span className="bg-white px-3 py-1 rounded-full text-xs font-black text-slate-500 shadow-sm border border-slate-200">
+        <span className="bg-white px-4 py-1.5 rounded-full text-xs font-black text-slate-500 shadow-sm border border-slate-200">
           {orders.length}
         </span>
       </div>
@@ -335,11 +379,12 @@ function KitchenColumn({
             actionIcon={actionIcon}
             onPrint={onPrint}
             isUpdating={updatingOrderId === order.id}
+            formatId={formatId}
           />
         ))}
         {orders.length === 0 && (
           <div className="py-20 text-center text-slate-400 font-bold italic text-sm opacity-50">
-            NO ORDERS IN THIS STAGE
+            NO ACTIVE ORDERS
           </div>
         )}
       </div>
@@ -354,6 +399,7 @@ function KitchenOrderCard({
   actionIcon,
   onPrint,
   isUpdating,
+  formatId,
 }) {
   const items = normalizeItems(order);
   const minutes = getMinutesSince(order.created_at);
@@ -361,20 +407,25 @@ function KitchenOrderCard({
 
   return (
     <div
-      className={`bg-white rounded-2xl p-5 shadow-sm border-2 ${
+      className={`bg-white rounded-3xl p-5 shadow-sm border-2 transition-all ${
         isLate ? "border-rose-200 animate-pulse" : "border-transparent"
       }`}>
       <div className="flex justify-between items-start mb-4">
         <div>
           <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-            Order Ref
+            ORDER
           </span>
-          <h3 className="text-lg font-black text-slate-900 leading-none">
-            #{String(order.display_id || order.id).slice(-5)}
+          <h3 className="text-xl font-black text-slate-900 leading-none">
+            #{formatId(order)}
           </h3>
+          <p className="text-[10px] font-black text-orange-600 uppercase mt-1">
+            {order.table_name
+              ? `Table ${order.table_name}`
+              : order.customer_name || "Takeaway"}
+          </p>
         </div>
         <div
-          className={`px-3 py-1 rounded-lg flex items-center gap-1.5 ${
+          className={`px-3 py-1.5 rounded-xl flex items-center gap-1.5 ${
             isLate ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-600"
           }`}>
           <Clock size={14} />
@@ -382,17 +433,17 @@ function KitchenOrderCard({
         </div>
       </div>
 
-      <div className="bg-slate-50 rounded-xl p-3 mb-4 space-y-3">
+      <div className="bg-slate-50 rounded-2xl p-4 mb-4 space-y-3">
         {items.map((item, i) => (
           <div
             key={i}
             className="flex gap-3">
-            <span className="bg-slate-900 text-white w-6 h-6 rounded flex items-center justify-center text-xs font-black shrink-0">
+            <span className="bg-slate-900 text-white w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black shrink-0">
               {item.quantity}
             </span>
             <div>
               <p className="text-sm font-black text-slate-800 uppercase">
-                {item.name}
+                {item.product_name}
               </p>
               {item.modifiers.map((m, idx) => (
                 <p
@@ -401,6 +452,11 @@ function KitchenOrderCard({
                   • {m}
                 </p>
               ))}
+              {item.note && (
+                <p className="text-[10px] text-orange-600 font-bold mt-1 italic">
+                  Note: {item.note}
+                </p>
+              )}
             </div>
           </div>
         ))}
@@ -408,9 +464,9 @@ function KitchenOrderCard({
 
       <div className="flex gap-2 mb-3">
         <button
-          onClick={() => onPrint(order, "kitchen")}
-          className="flex-1 flex items-center justify-center gap-2 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-[10px] font-black text-slate-600 transition-colors">
-          <UtensilsCrossed size={14} /> KITCHEN TICKET
+          onClick={() => onPrint(order)}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-[10px] font-black text-slate-600 transition-colors">
+          <UtensilsCrossed size={14} /> TICKET
         </button>
       </div>
 
@@ -418,7 +474,7 @@ function KitchenOrderCard({
         <button
           onClick={() => onAction(order)}
           disabled={isUpdating}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl text-xs font-black transition-all active:scale-[0.98]">
+          className="w-full flex items-center justify-center gap-2 py-3.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-2xl text-xs font-black transition-all active:scale-[0.98] shadow-lg shadow-slate-200">
           {isUpdating ? (
             <RefreshCw
               size={14}
@@ -438,55 +494,25 @@ function KitchenOrderCard({
 function normalizeStatus(status) {
   return String(status || "").toUpperCase();
 }
-
 function normalizeItems(order) {
-  // 1. Look for items in all possible field names
-  const rawItems = order.items || order.order_items || order.orderItems || [];
-
-  if (!Array.isArray(rawItems)) return [];
-
-  return rawItems.map((item) => {
-    // 2. Try to find the name in the item itself, then in a nested product object
-    const name =
-      item.product_name ||
-      item.name ||
-      (item.product && (item.product.name || item.product.title)) ||
-      "Unknown Item";
-
-    // 3. Try to find quantity (default to 1)
-    const quantity = item.quantity || item.qty || 1;
-
-    // 4. Handle modifiers/notes
-    const modifiers = Array.isArray(item.modifiers)
-      ? item.modifiers.map((m) =>
-          typeof m === "string" ? m : m.name || m.label
-        )
-      : [];
-
-    const note = item.note || item.notes || item.special_instructions || "";
-
-    return {
-      name,
-      quantity,
-      modifiers,
-      note,
-    };
-  });
+  const rawItems = order.items || order.order_items || [];
+  return rawItems.map((item) => ({
+    product_name:
+      item.product_name || item.name || item.product?.name || "Unknown Item",
+    quantity: item.quantity || 1,
+    modifiers: Array.isArray(item.modifiers)
+      ? item.modifiers.map((m) => (typeof m === "string" ? m : m.name))
+      : [],
+    note: item.note || item.notes || "",
+  }));
 }
-
-
 function getMinutesSince(dateValue) {
   if (!dateValue) return 0;
   const diff = Date.now() - new Date(dateValue).getTime();
   return Math.max(0, Math.floor(diff / 60000));
 }
-
 function isRecentKitchenOrder(order) {
   const ageHours =
     (Date.now() - new Date(order.created_at).getTime()) / (1000 * 60 * 60);
   return ageHours <= 24;
-}
-
-function formatOrderType(type) {
-  return type.replace("_", " ");
 }
