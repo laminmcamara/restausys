@@ -1,3 +1,4 @@
+// PaymentModal.jsx
 import React from "react";
 import {
   X,
@@ -18,6 +19,8 @@ const PaymentModal = ({
   if (!isOpen || !order) return null;
 
   const [isProcessing, setIsProcessing] = React.useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = React.useState("");
+  const [error, setError] = React.useState(null);
 
   // Helper to find the right method ID by name/slug
   const getMethodId = (search) => {
@@ -28,31 +31,39 @@ const PaymentModal = ({
     );
     return found ? found.id : null;
   };
-  
-    const handlePayment = async (searchName) => {
-      const methodId = getMethodId(searchName);
-      if (!methodId) {
-        alert(`Payment method "${searchName}" not configured in backend.`);
-        return;
-      }
 
-      // Check which ID property exists
-      const orderId = order.id || order.uuid;
+  const handlePayment = async () => {
+    if (!selectedPaymentMethod) {
+      setError("Please select a payment method");
+      return;
+    }
 
-      if (!orderId) {
-        console.error("Order object missing ID:", order);
-        alert("Error: Order ID is missing. Check console.");
-        return;
-      }
+    const methodId = getMethodId(selectedPaymentMethod);
+    if (!methodId) {
+      setError(
+        `Payment method "${selectedPaymentMethod}" not configured in backend.`
+      );
+      return;
+    }
 
-      setIsProcessing(true);
-      try {
-        await onPaymentComplete(orderId, methodId);
-      } finally {
-        setIsProcessing(false);
-      }
-    };
+    // Check which ID property exists
+    const orderId = order.id || order.uuid;
 
+    if (!orderId) {
+      console.error("Order object missing ID:", order);
+      setError("Error: Order ID is missing. Check console.");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      await onPaymentComplete(orderId, methodId, selectedPaymentMethod);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -78,59 +89,37 @@ const PaymentModal = ({
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 gap-3">
-            {/* CASH */}
-            <button
-              disabled={isProcessing}
-              onClick={() => handlePayment("cash")}
-              className="flex items-center gap-4 p-4 rounded-2xl border-2 border-slate-100 hover:border-green-500 hover:bg-green-50 transition-all group">
-              <div className="w-12 h-12 bg-green-100 text-green-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Banknote size={24} />
-              </div>
-              <div className="text-left">
-                <div className="font-black text-slate-900 uppercase text-sm">
-                  Cash
-                </div>
-                <div className="text-xs text-slate-500 font-medium">
-                  Pay with physical currency
-                </div>
-              </div>
-            </button>
+          <div className="flex flex-col gap-4">
+            <select
+              value={selectedPaymentMethod}
+              onChange={(e) => setSelectedPaymentMethod(e.target.value)}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-600 transition-colors">
+              <option value="">Select Payment Method</option>
+              {methods.map((method) => (
+                <option
+                  key={method.id}
+                  value={method.name}>
+                  {method.name}
+                </option>
+              ))}
+            </select>
 
-            {/* CARD */}
             <button
               disabled={isProcessing}
-              onClick={() => handlePayment("card")}
-              className="flex items-center gap-4 p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all group">
-              <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <CreditCard size={24} />
-              </div>
-              <div className="text-left">
-                <div className="font-black text-slate-900 uppercase text-sm">
-                  Credit Card
-                </div>
-                <div className="text-xs text-slate-500 font-medium">
-                  Visa, Mastercard, Amex
-                </div>
-              </div>
-            </button>
-
-            {/* MOBILE */}
-            <button
-              disabled={isProcessing}
-              onClick={() => handlePayment("mobile")}
-              className="flex items-center gap-4 p-4 rounded-2xl border-2 border-slate-100 hover:border-orange-500 hover:bg-orange-50 transition-all group">
-              <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Smartphone size={24} />
-              </div>
-              <div className="text-left">
-                <div className="font-black text-slate-900 uppercase text-sm">
-                  Mobile Pay
-                </div>
-                <div className="text-xs text-slate-500 font-medium">
-                  QR Code, Apple Pay, Google Pay
-                </div>
-              </div>
+              onClick={handlePayment}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 bg-emerald-500 hover:brightness-110">
+              Pay Now
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                viewBox="0 0 20 20"
+                fill="currentColor">
+                <path
+                  fillRule="evenodd"
+                  d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
             </button>
           </div>
 
@@ -141,6 +130,13 @@ const PaymentModal = ({
                 size={20}
               />
               <span>Syncing with server...</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-6 flex items-center justify-center gap-2 text-red-600 font-bold">
+              <AlertCircle size={20} />
+              <span>{error}</span>
             </div>
           )}
         </div>

@@ -1,212 +1,106 @@
-import React from "react";
+import React, { useState } from "react";
+import { X, Printer, Loader2 } from "lucide-react";
+import api from "../../services/api"; // This is your Axios instance
 
-const PrintableOrderDocument = ({ order, type = "receipt" }) => {
-  if (!order) return null;
+const PrintPreviewModal = ({ open, onClose, order, type = "receipt" }) => {
+  const [isPrinting, setIsPrinting] = useState(false);
 
-  const userData = JSON.parse(localStorage.getItem("user") || "{}");
-  const restaurantName =
-    order.restaurant_name || userData.restaurant_name || "BEEPOS RESTAURANT";
-  const isKitchen = type === "kitchen" || type === "bar";
-  const rawItems = order.items || order.order_items || [];
+  if (!open || !order) return null;
 
-  // 1. ITEM GROUPING
-  const groupedItems = rawItems.reduce((acc, item) => {
-    const productName = item.product?.name || item.product_name;
-    const modifierString = JSON.stringify(item.modifiers || []);
-    const key = `${productName}-${modifierString}`;
+  const handleBackendPrint = async () => {
+    try {
+      setIsPrinting(true);
+      const action = type === "kitchen" ? "print-kitchen" : "print-receipt";
 
-    if (!acc[key]) {
-      acc[key] = { ...item, display_name: productName };
-    } else {
-      acc[key].quantity = (acc[key].quantity || 0) + (item.quantity || 1);
+      // 1. Use Axios to fetch the HTML with the Authorization header
+      // Your 'api' instance should already have the interceptor for the token,
+      // but we can also be explicit:
+      const token = localStorage.getItem("token");
+
+      const response = await api.get(`/orders/${order.id}/${action}/`, {
+        responseType: "text", // We want the raw HTML string from the backend
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "text/html",
+        },
+      });
+
+      // 2. Open a blank window
+      const printWindow = window.open("", "_blank", "width=450,height=600");
+
+      if (printWindow) {
+        // 3. Inject the HTML we just fetched into the new window
+        printWindow.document.open();
+        printWindow.document.write(response.data);
+        printWindow.document.close();
+        // The <script> window.print() inside the HTML will now trigger automatically
+      } else {
+        alert("Popup blocked! Please allow popups to print.");
+      }
+
+      onClose();
+    } catch (err) {
+      console.error("Print Error:", err);
+      alert("Authentication failed or server error. Please try again.");
+    } finally {
+      setIsPrinting(false);
     }
-    return acc;
-  }, {});
-
-  const displayItems = Object.values(groupedItems);
-
-  // 2. TABLE IDENTIFIER
-  let tableDisplay = "T/O";
-  if (order.table_number || order.table_name) {
-    const val = String(order.table_number || order.table_name);
-    tableDisplay = val.startsWith("T") ? val : `T${val}`;
-  } else if (order.customer_name && order.customer_name !== "Guest") {
-    tableDisplay = order.customer_name.toUpperCase();
-  }
-
-  const formatMoney = (val) => Number(val || 0).toFixed(2);
+  };
 
   return (
-    <div className="printable-document">
-      {/* WATERMARK FOR CANCELED ORDERS */}
-      {order.status === "CANCELED" && (
-        <div className="void-watermark">VOID / CANCELED</div>
-      )}
-
-      {isKitchen ? (
-        /* KITCHEN TICKET - High contrast, large fonts */
-        <div className="kitchen-ticket">
-          <div className="kitchen-header">
-            <h1 className={tableDisplay.length > 4 ? "text-xl" : ""}>
-              {tableDisplay}
-            </h1>
-            <div className="order-meta">
-              <span>#{String(order.display_id || order.id).slice(-5)}</span>
-              <span>
-                {new Date().toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-            </div>
-          </div>
-
-          <div className="item-list">
-            {displayItems.map((item, idx) => (
-              <div
-                key={idx}
-                className="kitchen-item">
-                <span className="qty">{item.quantity}x</span>
-                <div className="details">
-                  <span className="name">{item.display_name}</span>
-                  {item.modifiers?.map((m, i) => (
-                    <span
-                      key={i}
-                      className="mod">
-                      • {m.name}
-                    </span>
-                  ))}
-                  {item.notes && (
-                    <span className="item-note">** {item.notes}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+          <h3 className="text-xl font-black text-slate-900 uppercase">
+            Print {type}
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <X
+              size={24}
+              className="text-slate-400"
+            />
+          </button>
         </div>
-      ) : (
-        /* CUSTOMER RECEIPT - Detailed breakdown */
-        <div className="customer-receipt">
-          <div className="receipt-header">
-            <h2 className="restaurant-name">{restaurantName}</h2>
-            <p className="receipt-subtext">
-              Order #{order.display_id || order.id}
-            </p>
-            <p className="receipt-subtext">{new Date().toLocaleString()}</p>
-            <p className="receipt-subtext font-bold">Table: {tableDisplay}</p>
+
+        <div className="p-12 flex flex-col items-center justify-center text-center">
+          <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mb-4">
+            <Printer
+              size={40}
+              className="text-slate-900"
+            />
           </div>
+          <h4 className="text-lg font-bold text-slate-900">Ready to Print?</h4>
+          <p className="text-slate-500 max-w-[280px]">
+            This will generate a thermal-optimized ticket for the {type}.
+          </p>
+        </div>
 
-          <div className="receipt-divider"></div>
-
-          <table className="receipt-table">
-            <thead>
-              <tr>
-                <th className="text-left">Item</th>
-                <th className="text-right">Qty</th>
-                <th className="text-right">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayItems.map((item, idx) => (
-                <tr key={idx}>
-                  <td className="text-left">
-                    {item.display_name}
-                    {item.modifiers?.map((m, i) => (
-                      <div
-                        key={i}
-                        className="receipt-mod">
-                        +{m.name}
-                      </div>
-                    ))}
-                  </td>
-                  <td className="text-right">{item.quantity}</td>
-                  <td className="text-right">
-                    {formatMoney(
-                      (item.final_price || item.price) * item.quantity
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="receipt-divider"></div>
-
-          <div className="receipt-totals">
-            <div className="total-row">
-              <span>Subtotal</span>
-              <span>${formatMoney(order.total_price || order.total)}</span>
-            </div>
-            {order.payment_method && (
-              <div className="total-row text-xs italic">
-                <span>Paid via {order.payment_method.toUpperCase()}</span>
-              </div>
+        <div className="p-6 border-t border-slate-100 bg-white flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 px-6 py-3 border-2 border-slate-200 rounded-2xl font-black text-slate-600 hover:bg-slate-50">
+            CANCEL
+          </button>
+          <button
+            onClick={handleBackendPrint}
+            disabled={isPrinting}
+            className="flex-[2] flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-black hover:bg-slate-800 shadow-lg disabled:opacity-50">
+            {isPrinting ? (
+              <Loader2
+                className="animate-spin"
+                size={20}
+              />
+            ) : (
+              <Printer size={20} />
             )}
-            <div className="total-row grand-total">
-              <span>TOTAL</span>
-              <span>${formatMoney(order.total_price || order.total)}</span>
-            </div>
-          </div>
-
-          <div className="receipt-footer">
-            <p>Thank you for your visit!</p>
-            <p className="powered-by">Powered by BEEPOS</p>
-          </div>
+            {isPrinting ? "PREPARING..." : "PRINT NOW"}
+          </button>
         </div>
-      )}
-
-      <style>{`
-        .printable-document {
-          font-family: 'Courier New', Courier, monospace;
-          color: #000;
-          background: #fff;
-          width: 300px;
-          margin: 0 auto;
-          padding: 10px;
-          position: relative;
-        }
-
-        .void-watermark {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%) rotate(-45deg);
-          font-size: 40px;
-          color: rgba(255, 0, 0, 0.2);
-          border: 5px solid rgba(255, 0, 0, 0.2);
-          padding: 10px;
-          z-index: 10;
-          pointer-events: none;
-          white-space: nowrap;
-        }
-
-        .kitchen-header h1 { font-size: 64px; text-align: center; margin: 0; border-bottom: 3px solid #000; line-height: 1.1; }
-        .kitchen-header h1.text-xl { font-size: 32px; }
-        .order-meta { display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; margin-top: 5px; }
-        .kitchen-item { display: flex; font-size: 24px; font-weight: bold; padding: 12px 0; border-bottom: 1px solid #000; }
-        .qty { margin-right: 15px; }
-        .mod { display: block; font-size: 16px; font-weight: normal; margin-left: 10px; }
-        .item-note { display: block; font-size: 14px; color: #000; margin-top: 4px; font-style: italic; }
-
-        .restaurant-name { font-size: 20px; text-align: center; text-transform: uppercase; margin: 0; font-weight: 900; }
-        .receipt-subtext { text-align: center; font-size: 12px; margin: 2px 0; }
-        .receipt-divider { border-top: 1px dashed #000; margin: 10px 0; }
-        .receipt-table { width: 100%; font-size: 14px; border-collapse: collapse; }
-        .receipt-table th { border-bottom: 1px solid #000; padding-bottom: 5px; }
-        .receipt-mod { font-size: 11px; font-style: italic; margin-left: 5px; }
-        .total-row { display: flex; justify-content: space-between; padding: 2px 0; }
-        .grand-total { font-size: 22px; font-weight: bold; border-top: 2px solid #000; margin-top: 5px; padding-top: 5px; }
-        .receipt-footer { text-align: center; margin-top: 30px; font-size: 12px; }
-        .powered-by { font-size: 8px; color: #888; margin-top: 10px; }
-
-        @media print {
-          body * { visibility: hidden; }
-          .printable-document, .printable-document * { visibility: visible; }
-          .printable-document { position: absolute; left: 0; top: 0; width: 100%; }
-        }
-      `}</style>
+      </div>
     </div>
   );
 };
 
-export default PrintableOrderDocument;
+export default PrintPreviewModal;

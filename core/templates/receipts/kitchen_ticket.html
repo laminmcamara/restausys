@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>KITCHEN #{{ order.id|truncatechars:4 }}</title>
+    <style>
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            width: 72mm;
+            margin: 0 auto;
+            padding: 2mm;
+            background: white;
+            color: black;
+        }
+        @media print {
+            @page {
+                size: auto;
+                margin: 0;
+            }
+            body {
+                margin: 0 auto;
+            }
+        }
+
+        .header { text-align: center; border-bottom: 2px solid black; padding-bottom: 5px; margin-bottom: 5px; }
+        .table-no { font-size: 40px; font-weight: bold; display: block; }
+        .order-info { font-size: 14px; font-weight: bold; }
+        .item-list { margin-top: 10px; }
+        .item { font-size: 22px; font-weight: bold; border-bottom: 1px solid #ccc; padding: 5px 0; }
+        .qty { font-size: 28px; margin-right: 10px; border: 2px solid black; padding: 0 5px; }
+        .mods { font-size: 16px; font-weight: normal; margin-left: 40px; }
+        .note { font-size: 16px; background: #eee; padding: 2px; margin-top: 5px; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <span class="table-no">TABLE: {{ order.table.table_number|default:"T/O" }}</span>
+        <div class="order-info">
+            #{{ order.id|truncatechars:4|upper }} | {{ order.created_at|date:"M d, Y" }} {{ order.created_at|time:"H:i" }}
+        </div>
+    </div>
+
+    <div class="item-list">
+        {% for item in items %}
+        <div class="item">
+            <span class="qty">{{ item.quantity }}</span>{{ item.product.name }}
+            {% for mod in item.modifiers.all %}
+                <div class="mods">+ {{ mod.name }}</div>
+            {% endfor %}
+            {% if item.notes %}
+                <div class="note">** {{ item.notes }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        window.onload = function() {
+            window.print();
+            setTimeout(() => { if(window.opener) window.close(); }, 500);
+        };
+    </script>
+</body>
+</html>

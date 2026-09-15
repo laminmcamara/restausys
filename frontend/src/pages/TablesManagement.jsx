@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import api from "../services/api";
 
+const TABLE_FETCH_INTERVAL = 15000;
+
 export default function TablesManagement() {
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,10 +21,11 @@ export default function TablesManagement() {
   const [tableNumber, setTableNumber] = useState("");
   const [capacity, setCapacity] = useState("");
   const [activeQrTable, setActiveQrTable] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchTables();
-    const interval = setInterval(fetchTables, 15000);
+    const interval = setInterval(fetchTables, TABLE_FETCH_INTERVAL);
     return () => clearInterval(interval);
   }, []);
 
@@ -31,6 +34,7 @@ export default function TablesManagement() {
       const res = await api.get("/tables/");
       setTables(res.data.results || res.data || []);
     } catch (err) {
+      setError("Error fetching tables");
       console.error("Error fetching tables:", err);
     } finally {
       setLoading(false);
@@ -49,7 +53,8 @@ export default function TablesManagement() {
       setShowModal(false);
       fetchTables();
     } catch (err) {
-      alert("Error saving table. Ensure the table number is unique.");
+      setError("Error saving table");
+      console.error("Error saving table:", err);
     }
   };
 
@@ -59,6 +64,7 @@ export default function TablesManagement() {
       await api.delete(`/tables/${table.id}/`);
       fetchTables();
     } catch (err) {
+      setError("Error deleting table");
       console.error("Error deleting table:", err);
     }
   };
@@ -78,6 +84,15 @@ export default function TablesManagement() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+        <p className="text-red-500 font-medium">{error}</p>
+      </div>
+    );
+  }
+
+  
   return (
     <div className="p-6 max-w-7xl mx-auto bg-slate-50 min-h-screen">
       {/* Header */}

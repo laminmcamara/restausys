@@ -18,6 +18,8 @@ from django.utils.translation import gettext_lazy as _
 from django.utils.text import slugify
 import secrets
 import uuid
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 from django.db.models.functions import Coalesce
 
@@ -573,6 +575,7 @@ class Table(models.Model):
 
     access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     qr_code = models.ImageField(upload_to="qr_codes/", blank=True, null=True)
+    is_occupied = models.BooleanField(default=False)
 
     status = models.CharField(
         max_length=20,
@@ -659,8 +662,16 @@ class Table(models.Model):
         if active_session:
             return self.Status.OCCUPIED
 
-        return self.Status.AVAILABLE    
-    
+        return self.Status.AVAILABLE 
+       
+    @property
+    def current_status(self):
+        active_session = self.sessions.filter(is_active=True).exists()
+
+        if active_session:
+            return self.Status.OCCUPIED
+
+        return self.Status.AVAILABLE
 
 class TableSection(models.Model):
     table = models.ForeignKey(
@@ -857,6 +868,10 @@ class TableSession(models.Model):
             "is_active",
             "closed_at",
         ])
+        self.table.status = Table.Status.AVAILABLE
+        self.table.save()
+        self.table.refresh_from_db()
+
 
     # -------------------------------------------------
 
@@ -868,6 +883,7 @@ class TableSession(models.Model):
             return f"{self.table.table_number}{self.section.label} Session"
 
         return f"Full Table {self.table.table_number} Session"
+    
     
 # =============================================================================
 # === INVENTORY & RECIPES =====================================================
@@ -1286,6 +1302,7 @@ class Order(TimeStampedModel):
 
     # ✅ Prevent double inventory deduction
     inventory_deducted = models.BooleanField(default=False)
+    payment_method = models.ForeignKey('PaymentMethod', on_delete=models.SET_NULL, null=True, blank=True)
 
     # -------------------------------------------------
     # RELATIONS
@@ -1538,7 +1555,6 @@ class Order(TimeStampedModel):
     # =============================================================================
 
     def save(self, *args, **kwargs):
-
         creating = self._state.adding
 
         previous_status = None
@@ -1549,7 +1565,7 @@ class Order(TimeStampedModel):
                 .first()
             )
 
-        # ✅ Auto-generate order number
+        # Auto-generate order number
         if creating and not self.order_number:
             last_number = (
                 Order.objects.filter(restaurant=self.restaurant)
@@ -1557,12 +1573,12 @@ class Order(TimeStampedModel):
             )
             self.order_number = (last_number or 0) + 1
 
+        # Save once (after setting order_number)
         super().save(*args, **kwargs)
 
         # ✅ Kitchen ticket auto-create
-        if (
-            self.status == self.Status.IN_PROGRESS
-            and previous_status != self.Status.IN_PROGRESS
+        if self.status == self.Status.IN_PROGRESS and (
+            creating or previous_status != self.Status.IN_PROGRESS
         ):
             KitchenTicket.objects.get_or_create(order=self)
 
@@ -1576,6 +1592,7 @@ class Order(TimeStampedModel):
                 self.session.closed_at = timezone.now()
                 self.session.save()
 
+        
     # =============================================================================
     # HELPERS
     # =============================================================================
@@ -1587,8 +1604,12 @@ class Order(TimeStampedModel):
     def __str__(self):
         return f"Order #{self.order_number} - {self.restaurant.name}"
     
-# Add this to your existing models.py
-
+    def calculate_total(self):
+        total = 0
+        for item in self.items.all():
+            total += item.final_price * item.quantity
+        return total
+    
 class ProductIngredient(models.Model):
     """
     Links a Product to an InventoryItem (The Recipe).
@@ -1883,7 +1904,16 @@ class KitchenTicket(models.Model):
         actor=actor
         )
     
-    
+    @property
+    def status_display(self):
+        if self.status == self.Status.QUEUED:
+            return "Queued"
+        elif self.status == self.Status.PREPARING:
+            return "Preparing"
+        elif self.status == self.Status.COMPLETED:
+            return "Completed"
+        else:
+            return "Unknown"
     
 class AnalyticsSnapshot(models.Model):
     restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE, related_name='analytics')
@@ -2039,25 +2069,16 @@ class Rider(models.Model):
 
 
 class PaymentMethod(models.Model):
-    restaurant = models.ForeignKey(
-        "core.Restaurant",
-        on_delete=models.CASCADE,
-        related_name="payment_methods"
-    )
-
     name = models.CharField(max_length=50)
     slug = models.SlugField(max_length=50, blank=True)
     active = models.BooleanField(default=True)
     requires_reference = models.BooleanField(default=False)
-    
-    class Meta:
-        unique_together = ("restaurant", "name")
+    restaurant = models.ForeignKey(Restaurant, on_delete=models.CASCADE, null=True, blank=True)
 
     def __str__(self):
-        return f"{self.restaurant.name} - {self.name}"
-    
-    
-    
+        return self.name
+
+
 class Payment(TimeStampedModel):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -2085,19 +2106,12 @@ class Payment(TimeStampedModel):
         related_name="payments"
     )
 
-    stripe_payment_intent = models.CharField(
-        max_length=200,
-        blank=True,
-        null=True,
-        help_text="Stripe PaymentIntent ID, if applicable."
-    )
-
     amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         help_text="Amount paid for this transaction."
     )
-    
+
     fee_percentage = models.DecimalField(
         max_digits=5,
         decimal_places=2,
@@ -2122,34 +2136,8 @@ class Payment(TimeStampedModel):
 
     def __str__(self):
         return f"{self.order.id} - {self.method} - {self.amount} ({self.status})"
-    
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["stripe_payment_intent"],
-                name="unique_stripe_intent",
-                condition=models.Q(stripe_payment_intent__isnull=False)
-            )
-        ]
-        
-        
-    class Meta:
-        indexes = [
-            models.Index(fields=["order"]),
-            models.Index(fields=["status"]),
-            models.Index(fields=["stripe_payment_intent"]),
-        ]
-    
-    
-class PaymentIntentLog(models.Model):
-    intent_id = models.CharField(max_length=200, unique=True)
-    payload = models.JSONField()
-    received_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return self.intent_id
-    
-    
+
 class DailyReport(models.Model):
     restaurant = models.ForeignKey("core.Restaurant", on_delete=models.CASCADE)
     date = models.DateField()

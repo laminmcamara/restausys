@@ -48,9 +48,8 @@ from .webhook_utils import trigger_outbound_webhook  # Import the utility
 from decimal import Decimal
 from django.conf import settings
 import random
-
+from .print_utils import build_kitchen_ticket_text, build_receipt_text
 from openpyxl import Workbook
-
 # DRF
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
@@ -59,8 +58,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .permissions import IsOwnerOrManager
 from django.core.serializers.json import DjangoJSONEncoder
+from rest_framework.response import Response
+from rest_framework.status import HTTP_403_FORBIDDEN, HTTP_200_OK
 
-from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.decorators import api_view, permission_classes, action, renderer_classes
+from rest_framework.renderers import StaticHTMLRenderer
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.urls import reverse
 from rest_framework.viewsets import ModelViewSet
 from rest_framework import filters
@@ -1082,8 +1085,7 @@ def create_draft_order_api(request):
         "type": order.type,
     })
 
-class PosOrderScreenTakeoutView(LoginRequiredMixin, TemplateView):
-    template_name = "core/direct_takeaway_order.html"
+
     
     
 class OrderSuccessView(LoginRequiredMixin, DetailView):
@@ -1540,6 +1542,8 @@ class TableDeleteView(LoginRequiredMixin, DeleteView):
             restaurant=self.request.user.restaurant
         )
 
+
+
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
@@ -1547,7 +1551,6 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         restaurant = self._get_restaurant()
         if restaurant:
-            # We use select_related/prefetch_related to optimize the Dashboard fetch
             return Order.objects.filter(restaurant=restaurant).order_by('-created_at')
         return Order.objects.none()
 
@@ -1581,6 +1584,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 restaurant=restaurant, 
                 is_active=True
             )
+            table = takeout_table
         else:
             table_id = request.data.get('table') or request.data.get('table_id')
             if not table_id:
@@ -1597,7 +1601,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             restaurant=restaurant,
             created_by=request.user,
             session=session_obj,
-            table=takeout_table if is_takeout else table
+            table=table
         )
         
         if hasattr(order, 'calculate_totals'):
@@ -1612,9 +1616,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         restaurant = self._get_restaurant()
         table = get_object_or_404(Table, id=table_id, restaurant=restaurant)
 
-        # 1. Look for an existing active order (DRAFT or PLACED)
-        # We check for both so that if an order is sent to the kitchen (PLACED), 
-        # it still shows as the active order for that table.
         order = Order.objects.filter(
             table=table, 
             restaurant=restaurant, 
@@ -1622,14 +1623,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         ).first()
 
         if order:
-            # Ensure table is marked occupied if an order exists
-            if not table.is_occupied or table.status != 'OCCUPIED':
-                table.is_occupied = True
+            if table.status != 'OCCUPIED':
                 table.status = 'OCCUPIED'
                 table.save()
             return Response(self.get_serializer(order).data)
 
-        # 2. No active order found, create a new session and order
         ts_session, _ = TableSession.objects.get_or_create(
             table=table, 
             restaurant=restaurant, 
@@ -1645,30 +1643,16 @@ class OrderViewSet(viewsets.ModelViewSet):
             created_by=request.user,
         )
 
-        # 3. CRITICAL: Mark the table as occupied in the database
-        table.is_occupied = True
         table.status = 'OCCUPIED'
         table.save()
 
         return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
-
-    # ===========================================================
-    # WORKFLOW ACTIONS (For Orders Dashboard)
-    # ===========================================================
 
     @action(detail=True, methods=['post'])
     def send_to_kitchen(self, request, pk=None):
         order = self.get_object()
         order.status = 'PLACED'
         order.save()
-        
-        # TRIGGER KITCHEN PRINTING HERE
-        try:
-            from .utils import trigger_kitchen_print # Your printing utility
-            trigger_kitchen_print(order) 
-        except Exception as e:
-            print(f"Printing failed: {e}")
-
         return Response({'status': 'Order sent to kitchen'})
     
     @action(detail=True, methods=['post'])
@@ -1694,72 +1678,83 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
-        # 1. Get order and restaurant
         order = self.get_object()
         restaurant = self._get_restaurant()
-        
-        # 2. Get method name from frontend (default to Cash)
-        method_name = request.data.get("payment_method", "Cash")
-        if not method_name:
-            method_name = "Cash"
+        method_name = request.data.get("payment_method", "Cash") or "Cash"
 
-        # 3. IMPORT MODELS LOCALLY TO AVOID CIRCULAR IMPORTS
         from core.models import Payment, PaymentMethod
-        from django.db import transaction
-
+    
         try:
-            # 4. Find or Create the PaymentMethod object
             method_obj, _ = PaymentMethod.objects.get_or_create(
                 restaurant=restaurant, 
                 name__iexact=method_name,
                 defaults={'name': method_name.capitalize(), 'active': True}
             )
 
+            print(f"Method name: {method_name}")
+            print(f"Method obj: {method_obj}")
+
             with transaction.atomic():
-                # 5. Determine the correct amount field
-                # Some versions of your model use 'total_price', others 'total'
-                amount_to_pay = 0
-                if hasattr(order, 'total_price'):
-                    amount_to_pay = order.total_price
-                elif hasattr(order, 'total'):
-                    amount_to_pay = order.total
-                
-                # 6. Create/Update Payment record
-                # Note: Check if your Payment model uses 'method' or 'payment_method'
-                payment, created = Payment.objects.update_or_create(
+                amount_to_pay = getattr(order, 'total_price', getattr(order, 'total', 0))
+            
+                Payment.objects.update_or_create(
                     order=order,
                     defaults={
                         "amount": amount_to_pay,
-                        "method": method_obj, # Using 'method' based on your previous error log
+                        "method": method_obj,
                         "status": "PAID",
                     },
                 )
 
-                # 7. Update Order Status
                 order.status = 'PAID'
+                if method_name:
+                    order.payment_method = method_obj  # Update the payment method
+                    print(f"Order payment method: {order.payment_method}")
                 order.save()
-                
-                # BEST PRACTICE: Release the table immediately upon full payment
+            
                 if order.table:
                     order.table.status = 'VACANT'
                     order.table.is_occupied = False
                     order.table.save()
+            
                 return Response({'message': 'Order settled and table released'})
 
-            return Response({
-                'status': 'PAID', 
-                'order_id': order.id,
-                'method': method_obj.name
-            })
-
         except Exception as e:
-            # This will print the EXACT error to your terminal so you can see it
             print(f"CRITICAL ERROR IN MARK_PAID: {str(e)}")
-            return Response(
-                {"error": str(e)}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+    # ===========================================================
+    # PRINTING ACTIONS (Uses StaticHTMLRenderer to avoid DRF UI)
+    # ===========================================================
+    
+    @action(detail=True, methods=['get'], url_path='print-receipt', renderer_classes=[StaticHTMLRenderer])
+    def print_receipt(self, request, pk=None):
+        order = self.get_object()
+        # Use .all() to get items for the template
+        items = order.items.all()
+        total_payment = order.payments.aggregate(total=Sum('amount'))['total'] if order.payments.exists() else 0
+
+        html_content = render_to_string('receipts/order_receipt.html', {
+            'order': order,
+            'items': items,
+            'restaurant': order.restaurant,
+            'total_payment': total_payment,
+        })
+        return Response(html_content)
+
+    @action(detail=True, methods=['get'], url_path='print-kitchen', renderer_classes=[StaticHTMLRenderer])
+    def print_kitchen(self, request, pk=None):
+        order = self.get_object()
+        items = order.items.all()
+        
+        html_content = render_to_string('receipts/kitchen_ticket.html', {
+            'order': order,
+            'items': items,
+        })
+        return Response(html_content)
+
+        
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [IsAuthenticated]
@@ -2164,6 +2159,8 @@ class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
             active=True
         )
 
+from django.db.models import Q, Sum
+
 class PaymentSummaryAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -2173,34 +2170,75 @@ class PaymentSummaryAPIView(APIView):
             return Response({"error": "Restaurant not found"}, status=404)
 
         today = timezone.now().date()
+        
+        # All orders for this restaurant
         orders = Order.objects.filter(restaurant=restaurant)
-        
-        # FIXED: Changed 'total_amount' to 'total' based on your model choices
-        total_today = orders.filter(created_at__date=today).aggregate(Sum('total'))['total__sum'] or 0
-        total_paid = orders.filter(status='paid').aggregate(Sum('total'))['total__sum'] or 0
-        pending = orders.filter(status='pending').aggregate(Sum('total'))['total__sum'] or 0
+        today_orders = orders.filter(created_at__date=today)
 
-        # Get recent payments
-        recent_payments = orders.order_by('-created_at')[:10]
-        
+        # Revenue & paid stats
+        total_today = today_orders.aggregate(total=Sum('total'))['total'] or 0
+        total_paid = orders.filter(
+            payment_status=Order.PaymentStatus.PAID
+        ).aggregate(total=Sum('total'))['total'] or 0
+
+        # Unpaid / Pending (active table balances)
+        unpaid_pending = orders.filter(
+            Q(status__in=['SERVED', 'PLACED', 'PENDING']) &
+            Q(payment_status='UNPAID')
+        ).aggregate(total=Sum('total'))['total'] or 0
+
+        # Counts & volumes
+        total_count = orders.count()
+        gross_sales_volume = orders.aggregate(total=Sum('total'))['total'] or 0
+        confirmed_in_bank_drawer = orders.filter(
+            payment_status=Order.PaymentStatus.PAID,
+            status='paid'
+        ).aggregate(total=Sum('total'))['total'] or 0
+
+        # By payment method (using substring match on payment_method name)
+        cash = orders.filter(
+            payment_method__name__icontains='cash'
+        ).aggregate(total=Sum('total'))['total'] or 0
+
+        credit_card = orders.filter(
+            Q(payment_method__name__icontains='card') |
+            Q(payment_method__name__icontains='credit')
+        ).aggregate(total=Sum('total'))['total'] or 0
+
+        mobile_pay = orders.filter(
+            payment_method__name__icontains='mobile'
+        ).aggregate(total=Sum('total'))['total'] or 0
+
+        # Recent payments (last 10 orders)
+        recent_orders = orders.order_by('-created_at')[:10]
+
         return Response({
             "stats": {
                 "total_today": float(total_today),
                 "total_paid": float(total_paid),
-                "pending": float(pending)
+                "pending": float(unpaid_pending),
+                "total_count": total_count,
+                "total_amount": float(gross_sales_volume),
+                "gross_sales_volume": float(gross_sales_volume),
+                "confirmed_in_bank_drawer": float(confirmed_in_bank_drawer),
+                "cash": float(cash),
+                "credit_card": float(credit_card),
+                "mobile": float(mobile_pay),
+                "active_table_balances": float(unpaid_pending),
+                "unpaid_pending": float(unpaid_pending),
             },
             "payments": [
                 {
-                    "id": o.id,
-                    "order_number": o.order_number or f"ORD-{o.id}",
-                    "amount": float(o.total), # FIXED: Changed o.total_amount to o.total
-                    "status": o.status,
-                    "date": o.created_at.strftime("%Y-%m-%d %H:%M")
-                } for o in recent_payments
-            ]
+                    "id": str(o.id),
+                    "order_number": getattr(o, "order_number", None) or f"ORD-{str(o.id)[:6].upper()}",
+                    "method_name": o.payment_method.name if o.payment_method else None,
+                    "amount": float(o.total) if o.total else 0.0,
+                    "status": o.payment_status if hasattr(o, 'payment_status') else o.status,
+                    "date": o.created_at.strftime("%Y-%m-%d %H:%M"),
+                }
+                for o in recent_orders
+            ],
         })
-
-
 # ======================================================================
 # POS API ENDPOINTS
 # ======================================================================
@@ -2361,18 +2399,16 @@ def mark_as_paid(request, pk):
     return redirect("core:order-receipt", pk=order.pk)
 
 
-@require_GET
 def order_status_api(request, token, order_id):
-
     # ✅ Validate QR session
     if not validate_qr_session(request, token):
-        return render(request, "customer/session_expired.html")
+        return Response({"error": "Session expired"}, status=HTTP_403_FORBIDDEN)
 
     table_id = request.session.get("table_id")
     restaurant_id = request.session.get("restaurant_id")
 
     if not table_id or not restaurant_id:
-        return JsonResponse({"error": "Unauthorized"}, status=403)
+        return Response({"error": "Unauthorized"}, status=HTTP_403_FORBIDDEN)
 
     order = get_object_or_404(
         Order,
@@ -2381,10 +2417,8 @@ def order_status_api(request, token, order_id):
         restaurant_id=restaurant_id
     )
 
-    return JsonResponse({
-        "status": order.status
-    })
-    
+    return Response({"status": order.status}, status=HTTP_200_OK)
+
     
 @require_POST
 @transaction.atomic
@@ -4941,22 +4975,38 @@ class PaymentViewSet(viewsets.ModelViewSet):
     def summary(self, request):
         """Logic for your existing PaymentsPage"""
         today = timezone.now().date()
-        payments = Payment.objects.filter(created_at__date=today)
-        
+        payments = (
+            Payment.objects
+            .filter(created_at__date=today)
+            .select_related("method", "order")
+        )
+
         stats = {
             "total_today": sum(p.amount for p in payments),
-            "total_paid": sum(p.amount for p in payments if p.status == 'paid'),
-            "pending": sum(p.amount for p in payments if p.status == 'pending'),
+            "total_paid": sum(p.amount for p in payments if p.status == 'PAID'),
+            "pending": sum(p.amount for p in payments if p.status == 'PENDING'),
+            "total_count": payments.count(),  # Use payments.count() instead of queryset.count()
+            "total_amount": sum(p.amount for p in payments),
+            "gross_sales_volume": sum(p.order.total for p in payments),
+            "confirmed_in_bank_drawer": sum(p.amount for p in payments if p.status == 'CONFIRMED'), 
+            "cash": sum(p.amount for p in payments if p.method and p.method.name == 'cash'),
+            "credit_card": sum(p.amount for p in payments if p.method and p.method.name == 'card'),
+            "mobile": sum(
+                            p.amount for p in payments
+                            if p.method and "mobile" in p.method.name.lower()),      
         }
-        
-        # Simplified list for the table
-        payment_list = [{
-            "id": p.id,
-            "order_number": p.order.id,
-            "amount": float(p.amount),
-            "status": p.status,
-            "date": p.created_at.strftime("%Y-%m-%d %H:%M")
-        } for p in payments]
+
+        payment_list = [
+            {
+                "id": str(p.id),
+                "order_number": p.order.short_id() if hasattr(p.order, 'short_id') and callable(p.order.short_id) else str(p.order.id)[:4],
+                "method_name": p.method.name if p.method else None,
+                "amount": float(p.amount),
+                "status": p.status,
+                "date": p.created_at.strftime("%Y-%m-%d %H:%M"),
+            }
+            for p in payments
+        ]
 
         return Response({"stats": stats, "payments": payment_list})
 
@@ -4964,26 +5014,37 @@ class PaymentViewSet(viewsets.ModelViewSet):
         """Handle new payment from POS"""
         order_id = request.data.get('order')
         amount = request.data.get('amount')
-        method_id = request.data.get('method')
+        method_name = request.data.get('method') or "Cash"
+
+        from core.models import Payment, PaymentMethod
 
         try:
             with transaction.atomic():
                 order = Order.objects.get(id=order_id)
-                
+                restaurant = order.restaurant
+
+                # Resolve or create PaymentMethod
+                method_obj, _ = PaymentMethod.objects.get_or_create(
+                    restaurant=restaurant,
+                    name__iexact=method_name,
+                    defaults={"name": method_name.capitalize(), "active": True},
+                )
+
                 # 1. Create the Payment Record
                 payment = Payment.objects.create(
                     order=order,
                     amount=amount,
-                    method_id=method_id,
-                    status='PAID'
+                    method=method_obj,  # Use FK, not method_name
+                    status='PAID',
                 )
 
                 # 2. Update the Order Status 
-                # THIS IS CRITICAL: It triggers the inventory deduction signal
-                order.status = 'PAID' 
+                order.status = 'PAID'
+                order.payment_method = method_obj  # Update order payment method
                 order.save()
 
                 return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
         except Order.DoesNotExist:
             return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:

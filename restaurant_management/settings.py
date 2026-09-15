@@ -81,8 +81,9 @@ INSTALLED_APPS = [
     # 3. Third‑party apps
     "crispy_forms",
     "crispy_bootstrap5",
+    "corsheaders", 
     "rest_framework",
-
+    "rest_framework_simplejwt",
     # 4. Local apps
     "core.apps.CoreConfig",
     # "staff",
@@ -311,7 +312,7 @@ SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
-X_FRAME_OPTIONS = "DENY"
+X_FRAME_OPTIONS = "SAMEORIGIN"
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 SESSION_COOKIE_HTTPONLY = True
@@ -407,4 +408,16 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "https://yourfrontenddomain.com",
+]
+
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
 ]

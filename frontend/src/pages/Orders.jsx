@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
 import api from "../services/api";
-import PrintPreviewModal from "../components/printing/PrintPreviewModal";
 import {
   Printer,
   ChevronRight,
@@ -20,12 +19,8 @@ export default function Orders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [printModalOpen, setPrintModalOpen] = useState(false);
-  const [printOrder, setPrintOrder] = useState(null);
-  const [printType, setPrintType] = useState("receipt");
-
-  // Search state
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = React.useState("");
 
   useEffect(() => {
     fetchOrders();
@@ -38,13 +33,10 @@ export default function Orders() {
     try {
       const res = await api.get("/orders/");
       const data = Array.isArray(res.data) ? res.data : res.data.results || [];
-
-      // SORTING LOGIC: Newest first
       const sortedOrders = [...data].sort(
         (a, b) =>
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
-
       setOrders(sortedOrders);
     } catch (err) {
       console.error("Fetch failed:", err);
@@ -54,8 +46,32 @@ export default function Orders() {
     }
   };
 
-  // CONSISTENT ID LOGIC: Matches Pickup Display
+  const handlePrint = async (orderId, type) => {
+    try {
+      const action = type === "kitchen" ? "print-kitchen" : "print-receipt";
+      const response = await api.get(`/orders/${orderId}/${action}/`, {
+        responseType: "text",
+        headers: {
+          Accept: "text/html",
+        },
+      });
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        printWindow.document.write(response.data);
+        printWindow.document.close();
+      } else {
+        alert("Please allow popups to print.");
+      }
+    } catch (err) {
+      console.error("Print error:", err);
+      alert(
+        "Failed to load print document. Check your connection or login status."
+      );
+    }
+  };
+
   const formatOrderId = (order) => {
+    if (!order) return "";
     if (order.display_id) return order.display_id;
     const idStr = String(order.id);
     return idStr.includes("-")
@@ -63,16 +79,13 @@ export default function Orders() {
       : idStr.slice(-4).toUpperCase();
   };
 
-  // Filtered Orders Logic
   const filteredOrders = useMemo(() => {
     if (!searchQuery.trim()) return orders;
-
     const query = searchQuery.toLowerCase();
     return orders.filter((order) => {
       const shortId = formatOrderId(order).toLowerCase();
       const tableName = (order.table_name || "").toLowerCase();
       const customerName = (order.customer_name || "").toLowerCase();
-
       return (
         shortId.includes(query) ||
         tableName.includes(query) ||
@@ -83,8 +96,18 @@ export default function Orders() {
 
   const triggerAction = async (orderId, actionName) => {
     try {
-      await api.post(`/orders/${orderId}/${actionName}/`);
-      fetchOrders();
+      if (actionName === "mark_paid") {
+        if (!selectedPaymentMethod) {
+          alert("Please select a payment method");
+          return;
+        }
+        await api.post(`/orders/${orderId}/${actionName}/`, {
+          payment_method: selectedPaymentMethod,
+        });
+      } else {
+        await api.post(`/orders/${orderId}/${actionName}/`);
+      }
+      fetchOrders(); // Call fetchOrders after triggering the action
     } catch (err) {
       alert(err.response?.data?.error || `Failed to perform ${actionName}`);
     }
@@ -149,6 +172,19 @@ export default function Orders() {
       btnText: null,
       icon: AlertCircle,
     },
+    DEFAULT: {
+      color: "bg-slate-400",
+      border: "border-l-slate-400",
+      label: "Unknown",
+      action: null,
+      btnText: null,
+      icon: AlertCircle,
+    },
+  };
+
+  const getStatusConfig = (order) => {
+    const config = statusConfig[order.status];
+    return config || statusConfig.DEFAULT;
   };
 
   if (loading && orders.length === 0) {
@@ -175,7 +211,6 @@ export default function Orders() {
         </div>
 
         <div className="flex items-center gap-3 w-full md:w-auto">
-          {/* Search Input */}
           <div className="relative flex-1 md:w-64">
             <Search
               className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
@@ -196,14 +231,13 @@ export default function Orders() {
               </button>
             )}
           </div>
-
           <button
             onClick={fetchOrders}
             disabled={isRefreshing}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm active:scale-95 disabled:opacity-50">
             <RefreshCw
-              size={16}
               className={isRefreshing ? "animate-spin" : ""}
+              size={16}
             />
             {isRefreshing ? "..." : "Refresh"}
           </button>
@@ -225,14 +259,14 @@ export default function Orders() {
       ) : (
         <div className="grid gap-6">
           {filteredOrders.map((order) => {
-            const config = statusConfig[order.status] || statusConfig.DRAFT;
+            const config = getStatusConfig(order);
             const Icon = config.icon;
             const shortId = formatOrderId(order);
 
             return (
               <div
                 key={order.id}
-                className={`bg-white border border-slate-200 border-l-[6px] ${config.border} rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all animate-in fade-in slide-in-from-top-2`}>
+                className={`bg-white border border-slate-200 border-l-[6px] ${config.border} rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all`}>
                 <div className="p-5">
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex gap-4">
@@ -250,7 +284,7 @@ export default function Orders() {
                             {config.label}
                           </span>
                         </div>
-                        <p className="text-sm text-slate-500 font-bold uppercase tracking-tight mt-0.5">
+                        <p className="text-sm text-slate-500 font-bold uppercase mt-0.5">
                           {order.table_name
                             ? `Table ${order.table_name}`
                             : order.customer_name || "Takeaway"}
@@ -281,7 +315,7 @@ export default function Orders() {
                             {item.quantity}
                           </span>
                           <span className="text-slate-800 font-bold">
-                            {item.product?.name || item.product_name}
+                            {item.product_name || item.product?.name}
                           </span>
                         </div>
                         <span className="text-slate-500 font-mono font-bold">
@@ -294,32 +328,47 @@ export default function Orders() {
                   <div className="flex justify-between items-center pt-5 mt-2 border-t border-slate-50">
                     <div className="flex gap-2">
                       <button
-                        onClick={() => {
-                          setPrintOrder(order);
-                          setPrintType("bill");
-                          setPrintModalOpen(true);
-                        }}
-                        className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-600 transition-colors">
-                        <Printer size={14} /> BILL
-                      </button>
-                      <button
-                        onClick={() => {
-                          setPrintOrder(order);
-                          setPrintType("receipt");
-                          setPrintModalOpen(true);
-                        }}
+                        onClick={() => handlePrint(order.id, "receipt")}
                         className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-600 transition-colors">
                         <Receipt size={14} /> RECEIPT
                       </button>
                     </div>
 
                     {config.action && (
-                      <button
-                        onClick={() => triggerAction(order.id, config.action)}
-                        className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 ${config.color} hover:brightness-110`}>
-                        {config.btnText}
-                        <ChevronRight size={18} />
-                      </button>
+                      <div>
+                        {config.action === "mark_paid" ? (
+                          <div className="flex flex-col gap-2">
+                            <select
+                              value={selectedPaymentMethod}
+                              onChange={(e) =>
+                                setSelectedPaymentMethod(e.target.value)
+                              }
+                              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs font-black text-slate-600 transition-colors">
+                              <option value="">Select Payment Method</option>
+                              <option value="cash">Cash</option>
+                              <option value="credit_card">Credit Card</option>
+                              <option value="mobile_pay">Mobile Pay</option>
+                            </select>
+                            <button
+                              onClick={() =>
+                                triggerAction(order.id, config.action)
+                              }
+                              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 ${config.color} hover:brightness-110`}>
+                              {config.btnText}
+                              <ChevronRight size={18} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() =>
+                              triggerAction(order.id, config.action)
+                            }
+                            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-black text-sm text-white shadow-lg transition-all active:scale-95 ${config.color} hover:brightness-110`}>
+                            {config.btnText}
+                            <ChevronRight size={18} />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -327,15 +376,6 @@ export default function Orders() {
             );
           })}
         </div>
-      )}
-
-      {printOrder && (
-        <PrintPreviewModal
-          open={printModalOpen}
-          onClose={() => setPrintModalOpen(false)}
-          order={printOrder}
-          type={printType}
-        />
       )}
     </div>
   );

@@ -89,18 +89,16 @@ class ProductVariantSerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
     variants = ProductVariantSerializer(many=True, read_only=True)
-    # Define price as a read-only method field to avoid model field validation
-    price = serializers.SerializerMethodField()
+    # Alias base_price to price for frontend compatibility
+    price = serializers.DecimalField(source='base_price', max_digits=10, decimal_places=2, read_only=True)
 
     class Meta:
         model = Product
-        # ONLY include fields that DEFINITELY exist in your models.py Product class
-        # Based on your errors, 'base_price' exists, but 'price' does not.
         fields = [
             "id", "name", "description", "base_price", "price", 
             "image", "is_available", "category", "modifier_groups", "variants"
         ]
-
+        
     def get_price(self, obj):
         # Return base_price as the price for the frontend
         return str(obj.base_price)
@@ -139,67 +137,54 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
 # ==============================================================================
-# ✅ ORDER ITEM SERIALIZER (FIXED FIELD NAMES)
+# ✅ SINGLE UNIFIED ORDER ITEM SERIALIZER
 # ==============================================================================
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.ReadOnlyField(source="product.name")
     total_price = serializers.SerializerMethodField()
-    product_name = serializers.CharField(source='product.name', read_only=True)
+    
     class Meta:
         model = OrderItem
         fields = [
-            "id",
-            "product",
-            "product_name",
-            "variant",
-            "quantity",
-            "final_price",   # This is the unit price in  model
-            "notes",
-            "modifiers",
-            "status",
-            "total_price",
+            "id", "product", "product_name", "variant", 
+            "quantity", "final_price", "notes", "modifiers", 
+            "status", "total_price", "order"
         ]
 
     def get_total_price(self, obj):
-        # Ensure we handle potential None values
         price = obj.final_price or 0
         qty = obj.quantity or 0
         return price * qty
 
+
 # ==============================================================================
-# ✅ ORDER SERIALIZER (FIXED TOTALS & CREATION)
+# ✅ SINGLE UNIFIED ORDER SERIALIZER
 # ==============================================================================
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, required=False)
     staff_name = serializers.ReadOnlyField(source="created_by.username")
     table_name = serializers.ReadOnlyField(source="table.table_number", default="Takeout")
     
-    table = serializers.PrimaryKeyRelatedField(
-        queryset=Table.objects.all(),
-        required=False,
-        allow_null=True
-    )
-
+    # Added these for the Dashboard and Printing
     total_price = serializers.SerializerMethodField()
     total_amount = serializers.SerializerMethodField()
+    short_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
-            "id", "restaurant", "table", "table_name", "status", 
+            "id", "short_id", 'payment_method', "restaurant", "table", "table_name", "status", 
             "order_type", "items", "staff_name", "total_price", 
             "total_amount", "created_at", "session"
         ]
         read_only_fields = ["restaurant", "created_at"]
     
     def get_short_id(self, obj):
-        # Returns the last 4 chars of the UUID
-        return str(obj.id).split('-')[-1][-4:].upper()
-    
+        return str(obj.id)[-4:].upper()
+
     def get_total_price(self, obj):
-        # Try to get the calculated total from the model field
+        # Logic: Use model field if available, otherwise calculate
         val = getattr(obj, 'total_price', getattr(obj, 'total_amount', 0))
-        # If the model field is 0, try to calculate it on the fly for the response
         if not val or val == 0:
             val = sum((item.final_price * item.quantity) for item in obj.items.all())
         return "{:.2f}".format(float(val))
@@ -209,49 +194,64 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        items_data = validated_data.pop('items', [])
+        # Extract items from the raw request data
         request = self.context.get('request')
-        user = request.user if request else None
-        restaurant = user.restaurant if user else None
+        if not request:
+            raise serializers.ValidationError("No request in serializer context.")
 
-        # 1. Handle Virtual Table for Takeout
+        items_data = request.data.get('items', [])
+        restaurant = request.user.restaurant
+        session = TableSession.objects.get(restaurant=restaurant)
+
+        # Handle Takeout
         if validated_data.get('order_type') == 'TAKEOUT' and not validated_data.get('table'):
             virtual_table, _ = Table.objects.get_or_create(
                 restaurant=restaurant,
                 table_number="TO",
-                defaults={'capacity': 0, 'is_active': False}
+                defaults={'capacity': 0}
             )
             validated_data['table'] = virtual_table
 
-        # 2. Inject Context Data
-        if restaurant:
-            validated_data['restaurant'] = restaurant
-        if user:
-            validated_data['created_by'] = user
+        # ✅ Assign payment_method if provided in the request
+        payment_method_id = request.data.get("payment_method")
+        if payment_method_id:
+            from .models import PaymentMethod
+            pm = PaymentMethod.objects.filter(
+                id=payment_method_id,
+                restaurant=restaurant
+            ).first()
+            if pm:
+                validated_data["payment_method"] = pm
+            else:
+                logger.warning(
+                    f"PaymentMethod {payment_method_id} not found for restaurant {restaurant.id}"
+                )
 
-        # 3. Create the Order
-        order = Order.objects.create(**validated_data)
-        
-        # 4. Create Order Items
+        # Create the order instance
+        order = Order.objects.create(
+            session=session,
+            restaurant=restaurant,
+            created_by=request.user,
+            **{k: v for k, v in validated_data.items() if k != "items"}
+        )
+
+        # Create order items
         for item_data in items_data:
-            modifiers = item_data.pop('modifiers', [])
-            product = item_data.get('product')
-            
-            # FIX: Use 'final_price' instead of 'unit_price' to match your model
-            if not item_data.get('final_price'):
-                item_data['final_price'] = getattr(product, 'price', getattr(product, 'base_price', 0))
-            
-            oi = OrderItem.objects.create(order=order, **item_data)
-            if modifiers:
-                oi.modifiers.set(modifiers)
-            oi.save()
-        
-        # 5. Calculate Totals
+            product = Product.objects.get(id=item_data['product'])
+            OrderItem.objects.create(
+                order=order,
+                product=product,
+                quantity=item_data.get('quantity', 1),
+                final_price=item_data.get('final_price', product.base_price),
+                notes=item_data.get('notes', '')
+            )
+
         if hasattr(order, 'calculate_totals'):
             order.calculate_totals()
-        
-        order.save()
+
+        # validated_data["session"] = session  # not needed anymore; already used above
         return order
+
 # ==============================================================================
 # ✅ KITCHEN & PRINTING
 # ==============================================================================
@@ -340,6 +340,20 @@ class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = ['id', 'order', 'method', 'amount', 'status', 'transaction_id', 'created_at']
+        
+class PaymentSummarySerializer(serializers.ModelSerializer):
+    method_name = serializers.CharField(source="method.name", read_only=True)
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "order_number",  # or whatever you use
+            "method_name",
+            "amount",
+            "status",
+            "created_at",
+        ]
 
 class SettingsSerializer(serializers.ModelSerializer):
     class Meta:

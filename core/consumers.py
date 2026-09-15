@@ -246,7 +246,6 @@ class POSConsumer(SafeConsumer):
 
 
 class KitchenDisplayConsumer(SafeConsumer):
-
     async def connect(self):
         self.restaurant_id = self.scope["url_route"]["kwargs"]["restaurant_id"]
         self.group_name = f"kitchen_{self.restaurant_id}"
@@ -265,9 +264,9 @@ class KitchenDisplayConsumer(SafeConsumer):
 
     # ✅ UNIVERSAL ORDER HANDLER
     async def order_status_update(self, event):
+        logger.info(f"Received message: {event}")
         await self.safe_send(event["data"])
-        
-        
+
 class RestaurantConsumer(SafeConsumer):
 
     async def connect(self):

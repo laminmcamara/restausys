@@ -46,38 +46,6 @@ export default function POS() {
   const [printData, setPrintData] = useState(null);
   const [printType, setPrintType] = useState("receipt");
 
-  useEffect(() => {
-    fetchInitialData();
-  }, []);
-
-  const fetchInitialData = async () => {
-    setLoading(true);
-    try {
-      // Wrap each call to ensure one failure doesn't crash the whole page
-      const [tableRes, catRes, prodRes, sessionRes] = await Promise.all([
-        api.get("/tables/").catch((err) => ({ data: { results: [] } })),
-        api.get("/manager/categories/").catch((err) => ({ data: [] })),
-        api.get("/manager/products/").catch((err) => ({ data: [] })),
-        api.get("/sessions/active/").catch(() => ({ data: null })),
-      ]);
-
-      setTables(tableRes.data.results || tableRes.data || []);
-      setCategories(catRes.data.results || catRes.data || []);
-      setProducts(prodRes.data.results || prodRes.data || []);
-      setCurrentSession(sessionRes.data);
-
-      if (catRes.data && catRes.data.length > 0) {
-        setSelectedCategory(catRes.data[0].id);
-      }
-    } catch (err) {
-      console.error("Failed to fetch POS data", err);
-      // Don't let the app hang even if there's a major error
-    } finally {
-      setLoading(false); // This MUST run to hide the loader
-    }
-  };
-
-  /* ================= DINE-IN LOGIC ================= */
   const handleTableSelect = async (table) => {
     setLoading(true);
     try {
@@ -101,8 +69,6 @@ export default function POS() {
       setLoading(false);
     }
   };
-
-  /* ================= ORDER ACTIONS ================= */
 
   const addToOrder = async (itemData) => {
     if (!activeOrder || !activeOrder.id) {
@@ -164,7 +130,6 @@ export default function POS() {
     }
   };
 
-  /* ================= PAYMENT LOGIC ================= */
   const handlePayment = () => {
     if (!activeOrder || activeOrder.items.length === 0) {
       toast.error("Cannot pay for an empty order");
@@ -185,35 +150,33 @@ export default function POS() {
       toast.error("Could not load payment methods");
     }
   };
-  fetchPaymentMethods();
 
-    const handlePaymentComplete = async (orderId, methodId) => {
-      try {
-        const payload = {
-          order: orderId,
-          amount: activeOrder?.total_price || activeOrder?.total_amount || 0,
-          method: methodId,
-          status: "PAID",
-        };
+  const handlePaymentComplete = async (orderId, methodId, paymentMethod) => {
+    try {
+      const payload = {
+        order: orderId,
+        amount: activeOrder?.total_price || activeOrder?.total_amount || 0,
+        payment_method: paymentMethod,
+        status: "PAID",
+      };
 
-        await api.post("/payments/", payload);
+      await api.post("/payments/", payload);
 
-        toast.success("Payment successful!");
-        setIsPaymentModalOpen(false);
-        setActiveOrder(null);
-        setSelectedTable(null); // Clear selected table
+      toast.success("Payment successful!");
+      setIsPaymentModalOpen(false);
+      setActiveOrder(null);
+      setSelectedTable(null); // Clear selected table
 
-        // CRITICAL: Refresh the tables so the UI shows the table is now VACANT
-        fetchInitialData();
+      // CRITICAL: Refresh the tables so the UI shows the table is now VACANT
+      fetchInitialData();
 
-        setView("mode-select");
-      } catch (err) {
-        console.error("PAYMENT FAIL:", err.response?.data);
-        toast.error("Payment failed");
-      }
-    };
+      setView("mode-select");
+    } catch (err) {
+      console.error("PAYMENT FAIL:", err.response?.data);
+      toast.error("Payment failed");
+    }
+  };
 
-  /* ================= TAKE-OUT LOGIC ================= */
   const handleTakeOutOrder = async (takeOutCart, customerInfo = {}) => {
     if (!takeOutCart || takeOutCart.length === 0) {
       alert("Cart is empty");
@@ -250,18 +213,37 @@ export default function POS() {
     }
   };
 
-  /* ================= VIEW RENDERING ================= */
+  const fetchInitialData = async () => {
+    setLoading(true);
+    try {
+      // Wrap each call to ensure one failure doesn't crash the whole page
+      const [tableRes, catRes, prodRes, sessionRes] = await Promise.all([
+        api.get("/tables/").catch((err) => ({ data: { results: [] } })),
+        api.get("/manager/categories/").catch((err) => ({ data: [] })),
+        api.get("/manager/products/").catch((err) => ({ data: [] })),
+        api.get("/sessions/active/").catch(() => ({ data: null })),
+      ]);
 
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-slate-50">
-        <Loader2
-          className="animate-spin text-indigo-600"
-          size={48}
-        />
-      </div>
-    );
-  }
+      setTables(tableRes.data.results || tableRes.data || []);
+      setCategories(catRes.data.results || catRes.data || []);
+      setProducts(prodRes.data.results || prodRes.data || []);
+      setCurrentSession(sessionRes.data);
+
+      if (catRes.data && catRes.data.length > 0) {
+        setSelectedCategory(catRes.data[0].id);
+      }
+    } catch (err) {
+      console.error("Failed to fetch POS data", err);
+      // Don't let the app hang even if there's a major error
+    } finally {
+      setLoading(false); // This MUST run to hide the loader
+    }
+  };
+
+  useEffect(() => {
+    fetchInitialData();
+    fetchPaymentMethods();
+  }, []);
 
   const renderContent = () => {
     // 1. MODE SELECTION
@@ -485,6 +467,17 @@ export default function POS() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-50">
+        <Loader2
+          className="animate-spin text-indigo-600"
+          size={48}
+        />
+      </div>
+    );
+  }
+
   return (
     <>
       {renderContent()}
@@ -494,7 +487,7 @@ export default function POS() {
         isOpen={isModalOpen}
         product={activeProduct}
         onClose={() => setIsModalOpen(false)}
-        onAddToCart={addToOrder}
+        onAddToCart={(itemData) => addToOrder(itemData)}
       />
 
       <PaymentModal
@@ -502,7 +495,9 @@ export default function POS() {
         order={activeOrder}
         methods={paymentMethods}
         onClose={() => setIsPaymentModalOpen(false)}
-        onPaymentComplete={handlePaymentComplete}
+        onPaymentComplete={(orderId, methodId, paymentMethod) =>
+          handlePaymentComplete(orderId, methodId, paymentMethod)
+        }
       />
 
       {showPrintModal && (

@@ -9,7 +9,8 @@ const DineInPage = ({ floorTables, onTableSelect }) => {
       table.has_active_session ||
       table.is_occupied ||
       table.current_order ||
-      table.status === "OCCUPIED"
+      table.status === "OCCUPIED" ||
+      table.status === "VACANT" 
     );
   };
 

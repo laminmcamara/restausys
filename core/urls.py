@@ -52,7 +52,7 @@ urlpatterns = [
     path("api/v1/settings/", settings_api, name="settings-api"),
     path("api/v1/manager/staff/", staff_list_create_api, name="staff-list-create-api"),
     path("api/v1/manager/staff/<int:pk>/", staff_detail_api, name="staff-detail-api"),
-    
+    path('orders/<str:token>/<int:order_id>/status/', order_status_api, name='order_status_api'),
     # 3. Auth & User
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

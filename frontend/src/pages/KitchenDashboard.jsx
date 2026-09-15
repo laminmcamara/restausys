@@ -12,7 +12,6 @@ import {
   X,
 } from "lucide-react";
 import api from "../services/api";
-import PrintPreviewModal from "../components/printing/PrintPreviewModal";
 
 const ORDER_STATUSES = {
   DRAFT: "DRAFT",
@@ -38,38 +37,63 @@ export default function KitchenDashboard() {
   // State to force re-render timers every minute
   const [now, setNow] = useState(Date.now());
 
-  const [printModalOpen, setPrintModalOpen] = useState(false);
-  const [printOrder, setPrintOrder] = useState(null);
-  const [printType, setPrintType] = useState("receipt");
-
-  const fetchOrders = useCallback(async (isManual = false) => {
-    if (isManual) setIsRefreshing(true);
-    try {
-      setError("");
-      const res = await api.get("/orders/");
-      const data = res.data.results || res.data || [];
-      setOrders(data);
-    } catch (err) {
-      console.error("Kitchen fetch error:", err);
-      setError("Connection Error");
-      if (err.response?.status === 401) window.location.href = "/login";
-    } finally {
-      setLoading(false);
-      if (isManual) setIsRefreshing(false);
-    }
-  }, []);
+  const fetchOrders = useCallback(
+    async (isManual = false) => {
+      if (isManual) setIsRefreshing(true);
+      try {
+        setError("");
+        const res = await api.get("/orders/");
+        const data = res.data.results || res.data || [];
+        setOrders(data);
+      } catch (err) {
+        console.error("Kitchen fetch error:", err);
+        setError("Connection Error");
+        if (err.response?.status === 401) window.location.href = "/login";
+      } finally {
+        setLoading(false);
+        if (isManual) setIsRefreshing(false);
+      }
+    },
+    [activeType, searchQuery]
+  );
 
   useEffect(() => {
     fetchOrders();
     const pollInterval = setInterval(() => fetchOrders(false), 15000);
-    const clockInterval = setInterval(() => setNow(Date.now()), 60000); // Refresh timers every minute
+    const clockInterval = setInterval(() => setNow(Date.now()), 60000);
     return () => {
       clearInterval(pollInterval);
       clearInterval(clockInterval);
     };
   }, [fetchOrders]);
 
-  // CONSISTENT ID LOGIC
+  // NEW TAB PRINTING LOGIC
+  const handlePrintKitchen = async (orderId) => {
+    try {
+      // 1. Fetch the print HTML using the authenticated api instance
+      const response = await api.get(`/orders/${orderId}/print-kitchen/`, {
+        responseType: "text", // We want the raw HTML string
+        headers: {
+          Accept: "text/html",
+        },
+      });
+
+      // 2. Open a new blank window
+      const printWindow = window.open("", "_blank");
+
+      if (printWindow) {
+        // 3. Write the HTML content from the server into the new window
+        printWindow.document.write(response.data);
+        printWindow.document.close();
+      } else {
+        alert("Please allow popups for this site to print.");
+      }
+    } catch (err) {
+      console.error("Print error:", err);
+      alert("Failed to generate print ticket. Please check connection.");
+    }
+  };
+
   const formatOrderId = (order) => {
     if (order.display_id) return order.display_id;
     const idStr = String(order.id);
@@ -86,10 +110,23 @@ export default function KitchenDashboard() {
           ? "start_preparing"
           : nextStatus === ORDER_STATUSES.READY
           ? "mark_ready"
+          : nextStatus === ORDER_STATUSES.SERVED
+          ? "mark_served"
+          : nextStatus === ORDER_STATUSES.COMPLETED
+          ? "mark_paid"
           : "";
 
       if (endpoint) {
-        await api.post(`/orders/${order.id}/${endpoint}/`);
+        if (endpoint === "mark_paid") {
+          const paymentMethod = prompt(
+            "Select payment method (cash, credit_card, mobile_pay)"
+          );
+          await api.post(`/orders/${order.id}/${endpoint}/`, {
+            payment_method: paymentMethod,
+          });
+        } else {
+          await api.post(`/orders/${order.id}/${endpoint}/`);
+        }
       } else {
         await api.patch(`/orders/${order.id}/`, { status: nextStatus });
       }
@@ -137,7 +174,7 @@ export default function KitchenDashboard() {
         (a, b) =>
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       );
-  }, [orders, activeType, searchQuery]);
+  }, [orders, activeType, searchQuery, now]);
 
   const pendingOrders = visibleOrders.filter(
     (o) => normalizeStatus(o.status) === ORDER_STATUSES.PLACED
@@ -181,7 +218,6 @@ export default function KitchenDashboard() {
         </div>
 
         <div className="flex flex-col md:flex-row items-center gap-3">
-          {/* Search Bar */}
           <div className="relative w-full md:w-80">
             <Search
               className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
@@ -202,7 +238,6 @@ export default function KitchenDashboard() {
               </button>
             )}
           </div>
-
           <button
             onClick={() => fetchOrders(true)}
             disabled={isRefreshing}
@@ -271,11 +306,7 @@ export default function KitchenDashboard() {
           onAction={(order) =>
             handleUpdateStatus(order, ORDER_STATUSES.IN_PROGRESS)
           }
-          onPrint={(o) => {
-            setPrintOrder(o);
-            setPrintType("kitchen");
-            setPrintModalOpen(true);
-          }}
+          onPrint={handlePrintKitchen}
           updatingOrderId={updatingOrderId}
           formatId={formatOrderId}
         />
@@ -286,11 +317,7 @@ export default function KitchenDashboard() {
           actionLabel="MARK AS READY"
           actionIcon={<CheckCircle size={18} />}
           onAction={(order) => handleUpdateStatus(order, ORDER_STATUSES.READY)}
-          onPrint={(o) => {
-            setPrintOrder(o);
-            setPrintType("kitchen");
-            setPrintModalOpen(true);
-          }}
+          onPrint={handlePrintKitchen}
           updatingOrderId={updatingOrderId}
           formatId={formatOrderId}
         />
@@ -298,22 +325,14 @@ export default function KitchenDashboard() {
           title="READY TO SERVE"
           color="green"
           orders={readyOrders}
-          onPrint={(o) => {
-            setPrintOrder(o);
-            setPrintType("kitchen");
-            setPrintModalOpen(true);
-          }}
+          actionLabel="MARK AS SERVED"
+          actionIcon={<PackageCheck size={18} />}
+          onAction={(order) => handleUpdateStatus(order, ORDER_STATUSES.SERVED)}
+          onPrint={handlePrintKitchen}
           updatingOrderId={updatingOrderId}
           formatId={formatOrderId}
         />
       </div>
-
-      <PrintPreviewModal
-        open={printModalOpen}
-        onClose={() => setPrintModalOpen(false)}
-        order={printOrder}
-        type={printType}
-      />
     </div>
   );
 }
@@ -330,7 +349,7 @@ function KitchenStatCard({ title, value, icon, color }) {
   return (
     <div className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm flex items-center justify-between">
       <div>
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
           {title}
         </p>
         <p className="text-3xl font-black text-slate-900">{value}</p>
@@ -464,7 +483,7 @@ function KitchenOrderCard({
 
       <div className="flex gap-2 mb-3">
         <button
-          onClick={() => onPrint(order)}
+          onClick={() => onPrint(order.id)}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-[10px] font-black text-slate-600 transition-colors">
           <UtensilsCrossed size={14} /> TICKET
         </button>
