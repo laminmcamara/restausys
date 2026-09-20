@@ -7,17 +7,44 @@ const api = axios.create({
   baseURL: BASE_URL,
 });
 
+const refreshClient = axios.create({
+  baseURL: BASE_URL,
+});
+
+let refreshPromise = null;
+
+function getAccessToken() {
+  return localStorage.getItem("accessToken");
+}
+
+function getRefreshToken() {
+  return localStorage.getItem("refreshToken");
+}
+
+function saveTokens(data) {
+  if (data.access) {
+    localStorage.setItem("accessToken", data.access);
+  }
+
+  // Required when ROTATE_REFRESH_TOKENS is enabled
+  if (data.refresh) {
+    localStorage.setItem("refreshToken", data.refresh);
+  }
+}
+
+function logout() {
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("refreshToken");
+  window.location.href = "/";
+}
+
 /* ================= REQUEST INTERCEPTOR ================= */
 
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem("accessToken");
+    const token = getAccessToken();
 
-    console.log("API REQUEST:", {
-      url: `${config.baseURL || ""}${config.url || ""}`,
-      method: config.method,
-      hasToken: Boolean(token),
-    });
+    config.headers = config.headers || {};
 
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -32,52 +59,60 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => response,
+
   async (error) => {
     const originalRequest = error.config;
+    const status = error.response?.status;
 
-    console.error("API ERROR:", {
-      url: `${originalRequest?.baseURL || ""}${originalRequest?.url || ""}`,
-      status: error.response?.status,
-      data: error.response?.data,
-    });
-
-    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      const refreshToken = localStorage.getItem("refreshToken");
-
-      if (!refreshToken) {
-        localStorage.clear();
-        window.location.href = "/";
-        return Promise.reject(error);
-      }
-
-      try {
-        const response = await axios.post(`${BASE_URL}/token/refresh/`, {
-          refresh: refreshToken,
-        });
-
-        const newAccess = response.data.access;
-
-        localStorage.setItem("accessToken", newAccess);
-
-        originalRequest.headers = originalRequest.headers || {};
-        originalRequest.headers.Authorization = `Bearer ${newAccess}`;
-
-        return api(originalRequest);
-      } catch (refreshError) {
-        console.error(
-          "TOKEN REFRESH FAILED:",
-          refreshError.response?.data || refreshError.message
-        );
-
-        localStorage.clear();
-        window.location.href = "/";
-        return Promise.reject(refreshError);
-      }
+    if (
+      status !== 401 ||
+      !originalRequest ||
+      originalRequest._retry ||
+      originalRequest.url?.includes("/token/refresh/")
+    ) {
+      return Promise.reject(error);
     }
 
-    return Promise.reject(error);
+    originalRequest._retry = true;
+
+    const refreshToken = getRefreshToken();
+
+    if (!refreshToken) {
+      logout();
+      return Promise.reject(error);
+    }
+
+    try {
+      // Reuse one refresh request if several API requests fail together
+      if (!refreshPromise) {
+        refreshPromise = refreshClient
+          .post("/token/refresh/", {
+            refresh: refreshToken,
+          })
+          .then((response) => {
+            saveTokens(response.data);
+            return response.data.access;
+          })
+          .finally(() => {
+            refreshPromise = null;
+          });
+      }
+
+      const newAccessToken = await refreshPromise;
+
+      originalRequest.headers = originalRequest.headers || {};
+      originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+
+      return api(originalRequest);
+    } catch (refreshError) {
+      console.error(
+        "TOKEN REFRESH FAILED:",
+        refreshError.response?.data || refreshError.message
+      );
+
+      logout();
+      return Promise.reject(refreshError);
+    }
   }
 );
 

@@ -296,39 +296,53 @@ def create_default_payment_methods(sender, instance, created, **kwargs):
 
 # Here's how you can use a signal to update the order instance:
 
-@receiver(post_save, sender=Order)
-def update_order_payment_method(sender, instance, **kwargs):
+
+@receiver(post_save, sender=Restaurant)
+def create_default_payment_methods(
+    sender,
+    instance,
+    created,
+    **kwargs,
+):
+    if not created:
+        return
+
+    default_methods = [
+        {
+            "name": PaymentMethod.MethodType.CASH,
+            "active": True,
+            "requires_reference": False,
+        },
+        {
+            "name": PaymentMethod.MethodType.CARD,
+            "active": True,
+            "requires_reference": False,
+        },
+        {
+            "name": PaymentMethod.MethodType.MOBILE,
+            "active": True,
+            "requires_reference": True,
+        },
+    ]
+
     try:
-        payment_method = getattr(instance, "payment_method", None)
-        if payment_method is None:
-            return
+        for method_data in default_methods:
+            PaymentMethod.objects.get_or_create(
+                restaurant=instance,
+                name=method_data["name"],
+                defaults={
+                    "active": method_data["active"],
+                    "requires_reference": method_data[
+                        "requires_reference"
+                    ],
+                },
+            )
 
-        name_map = {
-            "cash": ["cash", "Cash"],
-            "card": ["card", "Card", "Credit_card"],
-            "mobile": ["mobile", "Mobile", "Mobile_pay"]
-        }
-
-        name = getattr(payment_method, "name", None)
-        if not name:
-            logger.error("Selected payment method has no name.")
-            return
-
-        standard_name = None
-        for standard, variations in name_map.items():
-            if name.lower() in [v.lower() for v in variations]:
-                standard_name = standard
-                break
-
-        if standard_name:
-            instance.payment_method = payment_method
-            instance.save(update_fields=["payment_method"])
-        else:
-            logger.error(f"Invalid payment method selected: {name}")
-
-    except Exception as e:
-        logger.error(f"Error updating order payment method: {str(e)}")
-
+    except Exception:
+        logger.exception(
+            "Error creating default payment methods for restaurant %s",
+            instance.id,
+        )
         
 @receiver(post_save, sender=Table)
 def broadcast_table_status(sender, instance, **kwargs):

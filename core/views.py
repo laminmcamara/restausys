@@ -44,6 +44,8 @@ from django.db.models import Sum, Count, Avg, Prefetch, Exists, OuterRef, Subque
 from django.db.models.functions import TruncDate, TruncHour, Coalesce
 from core.utils import has_active_subscription
 from .webhook_utils import trigger_outbound_webhook  # Import the utility
+from django.views.decorators.cache import never_cache
+from django.utils.decorators import method_decorator
 
 from decimal import Decimal
 from django.conf import settings
@@ -84,24 +86,59 @@ from core.services.printer_service import create_kitchen_print_job
 # CORE IMPORTS
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import (Company, 
-    Order, OrderItem, Category, Product,
-    Table, TableSession, Payment, KitchenTicket, Settings, ModifierGroup, ModifierOption, Restaurant, ProductVariant, CustomUser, Menu, InventoryItem, CashierShift, Subscription, Customer, Plan, WebhookConfiguration, Discount, Session, ProductIngredient, PaymentMethod,
-
+from .models import (
+    Category,
+    Company,
+    CustomUser,
+    Session,
+    Customer,
+    Discount,
+    InventoryItem,
+    KitchenTicket,
+    Menu,
+    ModifierGroup,
+    ModifierOption,
+    Order,
+    OrderItem,
+    Payment,
+    PaymentMethod,
+    Plan,
+    Product,
+    ProductIngredient,
+    ProductVariant,
+    Restaurant,
+    Settings,
+    Subscription,
+    Table,
+    TableSession,
+    WebhookConfiguration,
 )
+
 from .serializers import (
-    OrderSerializer, OrderItemSerializer,
-    CategorySerializer, ProductSerializer,
-    TableSerializer, PaymentSerializer, CustomUserSerializer, MenuSerializer, ModifierOptionSerializer,  ModifierGroupSerializer, SubscriptionSerializer, MenuSerializer, SettingsSerializer, StaffUserSerializer,
+    CategorySerializer,
+    ChangePasswordSerializer,
+    CustomUserSerializer,
+    CustomerSerializer,
+    DiscountSerializer,
+    InventoryItemSerializer,
+    MenuSerializer,
+    ModifierGroupSerializer,
+    ModifierOptionSerializer,
+    OrderItemSerializer,
+    OrderSerializer,
+    PaymentMethodSerializer,
+    PaymentSerializer,
+    ProductSerializer,
+    PublicCategorySerializer,
+    PublicOrderCreateSerializer,
+    PublicTableSerializer,
+    SessionSerializer,
+    SettingsSerializer,
     StaffCreateSerializer,
     StaffUpdateSerializer,
-    CustomerSerializer,
-    InventoryItemSerializer,
-    DiscountSerializer,
-    ChangePasswordSerializer,
+    SubscriptionSerializer,
+    TableSerializer,
     WebhookConfigurationSerializer,
-    SessionSerializer, PaymentSerializer,  PaymentMethodSerializer,
- 
 )
 
 import secrets
@@ -114,6 +151,7 @@ from django.db.models.functions import ExtractHour
 from django.db import transaction
 import stripe
 from django.core.files.base import ContentFile
+from django.db.models import Q
 
 from django.contrib.auth import login
 from .forms import RestaurantRegistrationForm
@@ -1254,65 +1292,238 @@ def table_cart_api(request, token):
     })
 
 
-def table_checkout(request, token):
 
-    if not validate_qr_session(request, token):
-        return render(request, "customer/session_expired.html")
 
-    table = get_object_or_404(
-        Table.objects.select_related("restaurant"),
-        access_token=token,
-        is_active=True
-    )
+class PublicTableMenuAPIView(APIView):
+    permission_classes = []
 
-    cart = request.session.get("cart", {})
+    def get_table(self, token):
+        return get_object_or_404(
+            Table.objects.select_related(
+                "restaurant",
+            ),
+            access_token=token,
+        )
 
-    if not cart:
-        return redirect("public_table_menu", token=token)
+    def get(self, request, token):
+        table = self.get_table(token)
 
-    cart_items = []
-    total = 0
-
-    MAX_QTY_PER_ITEM = 50
-
-    for product_id, quantity in cart.items():
-
-        try:
-            quantity = int(quantity)
-        except (TypeError, ValueError):
-            continue
-
-        if quantity <= 0 or quantity > MAX_QTY_PER_ITEM:
-            continue
-
-        try:
-            product = Product.objects.get(
-                id=product_id,
-                category__menu__restaurant=table.restaurant,
-                is_available=True
+        if table.current_status in [
+            Table.Status.NEEDS_CLEANING,
+            Table.Status.MERGED,
+        ]:
+            return Response(
+                {
+                    "detail": (
+                        "This table is currently unavailable."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
             )
-        except Product.DoesNotExist:
-            continue
 
-        item_total = product.price * quantity
-        total += item_total
+        menu = (
+            Menu.objects
+            .filter(
+                restaurant_id=table.restaurant_id,
+                is_active=True,
+            )
+            .prefetch_related(
+                "categories__products",
+            )
+            .first()
+        )
 
-        cart_items.append({
-            "product": product,
-            "quantity": quantity,
-            "total": item_total
-        })
+        categories = (
+            menu.categories.all()
+            if menu
+            else Category.objects.none()
+        )
 
-    if not cart_items:
-        return redirect("public_table_menu", token=token)
+        return Response(
+            {
+                "table": PublicTableSerializer(
+                    table
+                ).data,
+                "categories": PublicCategorySerializer(
+                    categories,
+                    many=True,
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+        
+class PublicTableOrderAPIView(APIView):
+    permission_classes = []
 
-    return render(request, "core/table_checkout.html", {
-        "table": table,
-        "cart_items": cart_items,
-        "total": total
-    })
-    
-    
+    MAX_ITEMS = 50
+    MAX_QUANTITY_PER_ITEM = 50
+
+    def get_table(self, token):
+        return get_object_or_404(
+            Table.objects.select_related(
+                "restaurant",
+            ),
+            access_token=token,
+        )
+
+    @transaction.atomic
+    def post(self, request, token):
+        table = self.get_table(token)
+
+        if table.current_status in [
+            Table.Status.NEEDS_CLEANING,
+            Table.Status.MERGED,
+        ]:
+            return Response(
+                {
+                    "detail": (
+                        "This table is currently unavailable."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = PublicOrderCreateSerializer(
+            data=request.data,
+        )
+
+        serializer.is_valid(
+            raise_exception=True,
+        )
+
+        validated_data = serializer.validated_data
+        items_data = validated_data["items"]
+
+        if len(items_data) > self.MAX_ITEMS:
+            return Response(
+                {
+                    "detail": (
+                        "Too many different items "
+                        "in one order."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        products_by_id = {}
+
+        for item_data in items_data:
+            product = item_data["product"]
+
+            if product.id in products_by_id:
+                return Response(
+                    {
+                        "detail": (
+                            "Duplicate products must be "
+                            "combined into one item."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            products_by_id[product.id] = product
+
+        product_ids = list(
+            products_by_id.keys()
+        )
+
+        valid_products = (
+            Product.objects
+            .filter(
+                id__in=product_ids,
+                is_available=True,
+                category__menu__restaurant_id=(
+                    table.restaurant_id
+                ),
+            )
+            .select_related(
+                "category",
+                "category__menu",
+            )
+        )
+
+        valid_products_by_id = {
+            product.id: product
+            for product in valid_products
+        }
+
+        if len(valid_products_by_id) != len(
+            product_ids
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "One or more selected products "
+                        "are unavailable."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order_type = validated_data.get(
+            "order_type",
+            Order.OrderType.DINE_IN,
+        )
+
+        order = Order.objects.create(
+            restaurant=table.restaurant,
+            table=table,
+            order_type=order_type,
+            status=Order.Status.PLACED,
+            payment_status=Order.PaymentStatus.UNPAID,
+            notes=validated_data.get(
+                "notes",
+                "",
+            ),
+        )
+
+        for item_data in items_data:
+            product = valid_products_by_id[
+                item_data["product"].id
+            ]
+
+            quantity = item_data["quantity"]
+
+            OrderItem.objects.create(
+                order=order,
+                product=product,
+                quantity=quantity,
+                final_price=product.base_price,
+                notes="",
+            )
+
+        if hasattr(order, "calculate_totals"):
+            order.calculate_totals()
+            order.refresh_from_db()
+
+        table.status = Table.Status.OCCUPIED
+        table.is_occupied = True
+
+        table.save(
+            update_fields=[
+                "status",
+                "is_occupied",
+            ]
+        )
+
+        return Response(
+            {
+                "order": {
+                    "id": str(order.id),
+                    "order_number": order.order_number,
+                    "status": order.status,
+                    "payment_status": (
+                        order.payment_status
+                    ),
+                    "total": str(order.total),
+                },
+                "table": PublicTableSerializer(
+                    table
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        ) 
+
 class PlaceOrderAPIView(APIView):
     """
     API View to handle order placement from the POS.
@@ -1426,399 +1637,2244 @@ class PlaceOrderAPIView(APIView):
 # ======================================================================
 # ======================== API VIEWSETS ================================
 # ======================================================================
-class TableViewSet(TenantModelViewSet):
+class TableViewSet(viewsets.ModelViewSet):
     serializer_class = TableSerializer
-    permission_classes = [IsAuthenticated, IsStaffOfRestaurant]
 
-    def get_queryset(self):
-        user = self.request.user
-
-        # 1. Handle Superuser (Admin) Logic
-        if user.is_superuser:
-            restaurant_id = self.request.query_params.get("restaurant")
-            tables = Table.objects.all()
-            if restaurant_id:
-                tables = tables.filter(restaurant_id=restaurant_id)
-        
-            active_session_qs = TableSession.objects.filter(table=OuterRef("pk"), is_active=True)
-            return tables.annotate(
-                has_active_session=Exists(active_session_qs),
-                active_session_id=Subquery(active_session_qs.values("id")[:1])
-            ).order_by("restaurant_id", "table_number")
-
-        # 2. Handle Standard Restaurant Staff/Managers
-        restaurant = getattr(user, "restaurant", None)
-        if not restaurant:
-            return Table.objects.none()
-
-        active_session_qs = TableSession.objects.filter(
-            table=OuterRef("pk"),
-            restaurant=restaurant,
-            is_active=True
-        )
-
-        return (
-            Table.objects
-            .filter(restaurant=restaurant)
-            .annotate(
-                has_active_session=Exists(active_session_qs),
-                active_session_id=Subquery(active_session_qs.values("id")[:1])
-            )
-            .order_by("table_number")
-        )
-
-    def perform_create(self, serializer):
-        """
-        Automatically assign the table to the user's restaurant on creation.
-        This ensures the UniqueConstraint(restaurant, table_number) works correctly.
-        """
-        serializer.save(restaurant=self.request.user.restaurant)
-
-    @action(detail=True, methods=["post"])
-    def generate_qr(self, request, pk=None):
-        table = self.get_object()
-        # model has a complex generate_qr_code method already.
-        qr_url = f"http://127.0.0.1:3000/menu/{table.id}"
-        qr = qrcode.make(qr_url)
-        buffer = BytesIO()
-        qr.save(buffer, format="PNG")
-        file_name = f"table_{table.id}_qr.png"
-        table.qr_code.save(file_name, ContentFile(buffer.getvalue()), save=True)
-        return Response({"message": "QR generated successfully"})
-
-# TODO: Remove when staff dashboard fully API-driven      
-class TableCreateView(LoginRequiredMixin, CreateView):
-    model = Table
-    fields = ["table_number", "capacity"]
-    template_name = "core/table_form.html"
-    success_url = reverse_lazy("core:tables")
-
-    def dispatch(self, request, *args, **kwargs):
-        # Cache restaurant once
-        self.restaurant = Restaurant.objects.filter(
-            users=request.user
-        ).first()
-
-        if not self.restaurant:
-            return redirect("core:dashboard")
-
-        return super().dispatch(request, *args, **kwargs)
-
-    def form_valid(self, form):
-        form.instance.restaurant = self.restaurant
-        return super().form_valid(form)
-    
-    
-# TODO: Remove when staff dashboard fully API-driven      
-class TableUpdateView(LoginRequiredMixin, UpdateView):
-    model = Table
-    fields = ["table_number", "capacity"]
-    template_name = "core/table_form.html"
-    success_url = reverse_lazy("core:tables")
-
-    def dispatch(self, request, *args, **kwargs):
-        if not hasattr(request.user, "restaurant"):
-            return redirect("core:dashboard")
-        return super().dispatch(request, *args, **kwargs)
-
-    def get_queryset(self):
-        return Table.objects.filter(
-            restaurant=self.request.user.restaurant
-        )
-        
-        
-class TableDeleteView(LoginRequiredMixin, DeleteView):
-    model = Table
-    template_name = "core/table_confirm_delete.html"
-    success_url = reverse_lazy("core:tables")
-
-    def dispatch(self, request, *args, **kwargs):
-        if not hasattr(request.user, "restaurant"):
-            return redirect("core:dashboard")
-        return super().dispatch(request, *args, **kwargs)
-
-    def get_queryset(self):
-        return Table.objects.filter(
-            restaurant=self.request.user.restaurant
-        )
-
-
-
-class OrderViewSet(viewsets.ModelViewSet):
-    serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        restaurant = self._get_restaurant()
-        if restaurant:
-            return Order.objects.filter(restaurant=restaurant).order_by('-created_at')
-        return Order.objects.none()
+    permission_classes = [
+        IsAuthenticated,
+    ]
 
     def _get_restaurant(self):
         user = self.request.user
-        res = getattr(user, "restaurant", None)
-        if not res and hasattr(user, 'userprofile'):
-            res = user.userprofile.restaurant
-        return res
+
+        if not user or not user.is_authenticated:
+            return None
+
+        restaurant = getattr(
+            user,
+            "restaurant",
+            None,
+        )
+
+        if restaurant is None:
+            profile = getattr(
+                user,
+                "userprofile",
+                None,
+            )
+
+            if profile is not None:
+                restaurant = getattr(
+                    profile,
+                    "restaurant",
+                    None,
+                )
+
+        return restaurant
+
+    def get_queryset(self):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            return Table.objects.none()
+
+        return (
+            Table.objects
+            .filter(
+                restaurant_id=restaurant.id,
+            )
+            .order_by(
+                "table_number",
+                "id",
+            )
+        )
+
+    def _get_table_status(self, table):
+        return str(
+            getattr(
+                table,
+                "status",
+                "AVAILABLE",
+            )
+        ).upper()
+
+    def _set_table_occupied(self, table):
+        if table is None:
+            return
+
+        changed_fields = []
+
+        if hasattr(table, "status"):
+            occupied_value = getattr(
+                Table.Status,
+                "OCCUPIED",
+                "OCCUPIED",
+            )
+
+            if table.status != occupied_value:
+                table.status = occupied_value
+                changed_fields.append(
+                    "status"
+                )
+
+        if hasattr(table, "is_occupied"):
+            if table.is_occupied is not True:
+                table.is_occupied = True
+                changed_fields.append(
+                    "is_occupied"
+                )
+
+        if changed_fields:
+            table.save(
+                update_fields=changed_fields,
+            )
+
+    def _set_table_vacant(self, table):
+        if table is None:
+            return
+
+        changed_fields = []
+
+        if hasattr(table, "status"):
+            available_value = getattr(
+                Table.Status,
+                "AVAILABLE",
+                "AVAILABLE",
+            )
+
+            if table.status != available_value:
+                table.status = available_value
+                changed_fields.append(
+                    "status"
+                )
+
+        if hasattr(table, "is_occupied"):
+            if table.is_occupied is not False:
+                table.is_occupied = False
+                changed_fields.append(
+                    "is_occupied"
+                )
+
+        if changed_fields:
+            table.save(
+                update_fields=changed_fields,
+            )
+
+    def _close_table_session(
+        self,
+        table_session,
+    ):
+        if table_session is None:
+            return
+
+        changed_fields = []
+
+        if hasattr(
+            table_session,
+            "is_active",
+        ):
+            if table_session.is_active is not False:
+                table_session.is_active = False
+                changed_fields.append(
+                    "is_active"
+                )
+
+        if hasattr(
+            table_session,
+            "closed_at",
+        ):
+            if table_session.closed_at is None:
+                table_session.closed_at = timezone.now()
+                changed_fields.append(
+                    "closed_at"
+                )
+
+        if changed_fields:
+            table_session.save(
+                update_fields=changed_fields,
+            )
+
+    def _release_table_sessions(self, table):
+        if table is None:
+            return
+
+        sessions = (
+            TableSession.objects
+            .select_for_update()
+            .filter(
+                table_id=table.id,
+                restaurant_id=table.restaurant_id,
+                is_active=True,
+            )
+        )
+
+        for table_session in sessions:
+            self._close_table_session(
+                table_session
+            )
+
+    def _has_active_table_session(self, table):
+        if table is None:
+            return False
+
+        return (
+            TableSession.objects
+            .filter(
+                table_id=table.id,
+                restaurant_id=table.restaurant_id,
+                is_active=True,
+            )
+            .exists()
+        )
+
+    def _normalize_table_number(
+        self,
+        value,
+    ):
+        return str(
+            value or ""
+        ).strip()
+
+    def _table_number_exists(
+        self,
+        restaurant,
+        table_number,
+        exclude_pk=None,
+    ):
+        queryset = Table.objects.filter(
+            restaurant_id=restaurant.id,
+            table_number__iexact=table_number,
+        )
+
+        if exclude_pk is not None:
+            queryset = queryset.exclude(
+                pk=exclude_pk,
+            )
+
+        return queryset.exists()
+
+    def perform_create(self, serializer):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            raise PermissionDenied(
+                "User is not assigned to a restaurant."
+            )
+
+        requested_table_number = (
+            self._normalize_table_number(
+                serializer.validated_data.get(
+                    "table_number",
+                    "",
+                )
+            )
+        )
+
+        if not requested_table_number:
+            raise ValidationError(
+                {
+                    "table_number": (
+                        "Table number is required."
+                    )
+                }
+            )
+
+        if self._table_number_exists(
+            restaurant=restaurant,
+            table_number=requested_table_number,
+        ):
+            raise ValidationError(
+                {
+                    "table_number": (
+                        "This table already exists "
+                        "in your restaurant."
+                    )
+                }
+            )
+
+        save_kwargs = {
+            "restaurant": restaurant,
+            "table_number": requested_table_number,
+        }
+
+        if hasattr(
+            Table,
+            "Status",
+        ):
+            save_kwargs["status"] = (
+                Table.Status.AVAILABLE
+            )
+
+        if hasattr(
+            Table,
+            "is_occupied",
+        ):
+            save_kwargs["is_occupied"] = False
+
+        serializer.save(
+            **save_kwargs
+        )
+
+    def perform_update(self, serializer):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            raise PermissionDenied(
+                "User is not assigned to a restaurant."
+            )
+
+        table = self.get_object()
+
+        validated_data = (
+            serializer.validated_data
+        )
+
+        new_table_number = (
+            self._normalize_table_number(
+                validated_data.get(
+                    "table_number",
+                    table.table_number,
+                )
+            )
+        )
+
+        if not new_table_number:
+            raise ValidationError(
+                {
+                    "table_number": (
+                        "Table number is required."
+                    )
+                }
+            )
+
+        if self._table_number_exists(
+            restaurant=restaurant,
+            table_number=new_table_number,
+            exclude_pk=table.pk,
+        ):
+            raise ValidationError(
+                {
+                    "table_number": (
+                        "This table already exists "
+                        "in your restaurant."
+                    )
+                }
+            )
+
+        serializer.validated_data.pop(
+            "restaurant",
+            None,
+        )
+
+        serializer.validated_data.pop(
+            "status",
+            None,
+        )
+
+        serializer.validated_data.pop(
+            "is_occupied",
+            None,
+        )
+
+        serializer.save(
+            table_number=new_table_number,
+        )
+
+    def perform_destroy(self, instance):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            raise PermissionDenied(
+                "User is not assigned to a restaurant."
+            )
+
+        table = (
+            Table.objects
+            .select_for_update()
+            .filter(
+                pk=instance.pk,
+                restaurant_id=restaurant.id,
+            )
+            .first()
+        )
+
+        if table is None:
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Table does not belong "
+                        "to your restaurant."
+                    )
+                }
+            )
+
+        table_status = (
+            self._get_table_status(table)
+        )
+
+        is_occupied = (
+            getattr(
+                table,
+                "is_occupied",
+                False,
+            )
+            or table_status
+            in {
+                "OCCUPIED",
+                "IN_USE",
+            }
+        )
+
+        if is_occupied:
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Occupied tables cannot "
+                        "be deleted."
+                    )
+                }
+            )
+
+        if self._has_active_table_session(
+            table
+        ):
+            raise ValidationError(
+                {
+                    "detail": (
+                        "Tables with active "
+                        "sessions cannot be deleted."
+                    )
+                }
+            )
+
+        table.delete()
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="generate_qr",
+        url_name="generate-qr",
+    )
+    @transaction.atomic
+    def generate_qr(
+        self,
+        request,
+        pk=None,
+    ):
+        table = self.get_object()
+
+        if not hasattr(
+            table,
+            "generate_qr_code",
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "QR code generation is "
+                        "not available on the "
+                        "Table model."
+                    )
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+
+        table.generate_qr_code()
+        table.refresh_from_db()
+
+        return Response(
+            self.get_serializer(
+                table
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="release",
+        url_name="release",
+    )
+    @transaction.atomic
+    def release(
+        self,
+        request,
+        pk=None,
+    ):
+        table = (
+            Table.objects
+            .select_for_update()
+            .filter(
+                pk=pk,
+                restaurant_id=(
+                    self._get_restaurant().id
+                    if self._get_restaurant()
+                    else None
+                ),
+            )
+            .first()
+        )
+
+        if table is None:
+            return Response(
+                {
+                    "detail": "Table not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if self._has_active_table_session(
+            table
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "The table still has an "
+                        "active table session."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        self._set_table_vacant(table)
+
+        return Response(
+            self.get_serializer(
+                table
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+        
+        
+        
+class OrderViewSet(viewsets.ModelViewSet):
+    serializer_class = OrderSerializer
+    permission_classes = [
+        IsAuthenticated,
+    ]
+
+    def _get_restaurant(self):
+        user = self.request.user
+
+        if not user or not user.is_authenticated:
+            return None
+
+        restaurant = getattr(
+            user,
+            "restaurant",
+            None,
+        )
+
+        if restaurant is None:
+            profile = getattr(
+                user,
+                "userprofile",
+                None,
+            )
+
+            if profile is not None:
+                restaurant = getattr(
+                    profile,
+                    "restaurant",
+                    None,
+                )
+
+        return restaurant
+
+    def get_queryset(self):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            return Order.objects.none()
+
+        return (
+            Order.objects
+            .filter(
+                restaurant_id=restaurant.id,
+            )
+            .select_related(
+                "restaurant",
+                "customer",
+                "table",
+                "section",
+                "session",
+                "payment_method",
+                "created_by",
+            )
+            .prefetch_related(
+                "items",
+                "items__product",
+                "items__variant",
+                "items__modifiers",
+                "payments",
+            )
+            .order_by(
+                "-created_at",
+                "-id",
+            )
+        )
+    
+    def _get_register_session(self, restaurant):
+        """
+        Return the current open register session.
+
+        Change POSSession to RegisterSession if that
+        is the model used by your project.
+        """
+
+        try:
+            session_model = POSSession
+        except NameError:
+            session_model = None
+
+        if session_model is None:
+            return None
+
+        filters = {
+            "restaurant_id": restaurant.id,
+            "status": "OPEN",
+        }
+
+        model_field_names = {
+            field.name
+            for field in session_model._meta.get_fields()
+        }
+
+        if "opened_by" in model_field_names:
+            filters["opened_by"] = self.request.user
+
+        return (
+            session_model.objects
+            .filter(**filters)
+            .order_by("-opened_at", "-id")
+            .first()
+        )
+
+    def _get_active_table_session(
+        self,
+        table,
+        restaurant,
+    ):
+        session = (
+            TableSession.objects
+            .select_for_update()
+            .filter(
+                table_id=table.id,
+                restaurant_id=restaurant.id,
+                is_active=True,
+            )
+            .order_by("-id")
+            .first()
+        )
+
+        if session is not None:
+            return session
+
+        return TableSession.objects.create(
+            table=table,
+            restaurant=restaurant,
+            is_active=True,
+        )
+
+    def _get_takeout_table(self, restaurant):
+        table = (
+            Table.objects
+            .select_for_update()
+            .filter(
+                restaurant_id=restaurant.id,
+                table_number="TO",
+            )
+            .first()
+        )
+
+        if table is not None:
+            return table
+
+        return Table.objects.create(
+            restaurant=restaurant,
+            table_number="TO",
+            capacity=0,
+            status=Table.Status.AVAILABLE,
+        )
+
+    def _set_table_occupied(self, table):
+        if table is None:
+            return
+
+        changed_fields = []
+
+        if hasattr(table, "status"):
+            occupied_value = getattr(
+                Table.Status,
+                "OCCUPIED",
+                "OCCUPIED",
+            )
+
+            if table.status != occupied_value:
+                table.status = occupied_value
+                changed_fields.append("status")
+
+        if hasattr(table, "is_occupied"):
+            if table.is_occupied is not True:
+                table.is_occupied = True
+                changed_fields.append("is_occupied")
+
+        if changed_fields:
+            table.save(
+                update_fields=changed_fields,
+            )
+
+    def _set_table_vacant(self, table):
+        if table is None:
+            return
+
+        changed_fields = []
+
+        if hasattr(table, "status"):
+            available_value = getattr(
+                Table.Status,
+                "AVAILABLE",
+                "AVAILABLE",
+            )
+
+            if table.status != available_value:
+                table.status = available_value
+                changed_fields.append("status")
+
+        if hasattr(table, "is_occupied"):
+            if table.is_occupied is not False:
+                table.is_occupied = False
+                changed_fields.append("is_occupied")
+
+        if changed_fields:
+            table.save(
+                update_fields=changed_fields,
+            )
+
+    def _close_table_session(self, session):
+        if session is None:
+            return
+
+        changed_fields = []
+
+        if hasattr(session, "is_active"):
+            if session.is_active is not False:
+                session.is_active = False
+                changed_fields.append("is_active")
+
+        if hasattr(session, "closed_at"):
+            if session.closed_at is None:
+                session.closed_at = timezone.now()
+                changed_fields.append("closed_at")
+
+        if changed_fields:
+            session.save(
+                update_fields=changed_fields,
+            )
+
+    def _has_other_open_orders(self, order):
+        if order.table_id is None:
+            return False
+
+        open_statuses = [
+            Order.Status.DRAFT,
+            Order.Status.PLACED,
+            Order.Status.IN_PROGRESS,
+            Order.Status.READY,
+            Order.Status.SERVED,
+        ]
+
+        unpaid_statuses = [
+            Order.PaymentStatus.UNPAID,
+            Order.PaymentStatus.PARTIALLY_PAID,
+        ]
+
+        return (
+            Order.objects
+            .filter(
+                table_id=order.table_id,
+                restaurant_id=order.restaurant_id,
+                status__in=open_statuses,
+                payment_status__in=unpaid_statuses,
+            )
+            .exclude(
+                pk=order.pk,
+            )
+            .exists()
+        )
+
+    def _release_order_table(self, order):
+        """
+        Release the table only when no other unpaid
+        open orders remain on that table.
+        """
+
+        if order is None:
+            return
+
+        if order.table_id is None:
+            return
+
+        if self._has_other_open_orders(order):
+            return
+
+        table = (
+            Table.objects
+            .select_for_update()
+            .filter(
+                pk=order.table_id,
+                restaurant_id=order.restaurant_id,
+            )
+            .first()
+        )
+
+        if table is not None:
+            self._set_table_vacant(table)
+
+        if order.session_id is not None:
+            session = (
+                TableSession.objects
+                .select_for_update()
+                .filter(
+                    pk=order.session_id,
+                    table_id=order.table_id,
+                    restaurant_id=order.restaurant_id,
+                    is_active=True,
+                )
+                .first()
+            )
+
+            if session is not None:
+                self._close_table_session(
+                    session
+                )
+
+    def _order_type_is_takeout(self, order_type):
+        normalized = str(
+            order_type or ""
+        ).strip().upper()
+
+        return normalized in {
+            "TAKEOUT",
+            "TAKE_OUT",
+            "TAKE-AWAY",
+            "TAKE_AWAY",
+        }
+
+    def _get_order_type(self, serializer):
+        return serializer.validated_data.get(
+            "order_type",
+            Order.OrderType.DINE_IN,
+        )
+
+    def _get_table_for_create(
+        self,
+        request,
+        restaurant,
+        order_type,
+    ):
+        if self._order_type_is_takeout(
+            order_type
+        ):
+            return self._get_takeout_table(
+                restaurant
+            )
+
+        table_id = (
+            request.data.get("table")
+            or request.data.get("table_id")
+        )
+
+        if not table_id:
+            raise ValidationError(
+                {
+                    "table": (
+                        "Table ID is required "
+                        "for dine-in orders."
+                    )
+                }
+            )
+
+        table = get_object_or_404(
+            Table.objects.select_for_update(),
+            pk=table_id,
+            restaurant_id=restaurant.id,
+        )
+
+        table_status = str(
+            getattr(
+                table,
+                "current_status",
+                getattr(
+                    table,
+                    "status",
+                    "AVAILABLE",
+                ),
+            )
+        ).upper()
+
+        blocked_statuses = {
+            "NEEDS_CLEANING",
+            "MERGED",
+            "INACTIVE",
+        }
+
+        if table_status in blocked_statuses:
+            raise ValidationError(
+                {
+                    "table": (
+                        "This table cannot accept "
+                        "new orders."
+                    )
+                }
+            )
+
+        return table
+
+    def _clean_order_data(
+        self,
+        serializer,
+    ):
+        validated_data = dict(
+            serializer.validated_data
+        )
+
+        fields_managed_by_view = [
+            "restaurant",
+            "created_by",
+            "session",
+            "table",
+        ]
+
+        for field_name in fields_managed_by_view:
+            validated_data.pop(
+                field_name,
+                None,
+            )
+
+        validated_data.setdefault(
+            "status",
+            Order.Status.DRAFT,
+        )
+
+        validated_data.setdefault(
+            "payment_status",
+            Order.PaymentStatus.UNPAID,
+        )
+
+        return validated_data
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         restaurant = self._get_restaurant()
-        if not restaurant:
-            return Response({"error": "User not associated with a restaurant"}, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        order_type = serializer.validated_data.get('order_type', 'DINE_IN')
-        is_takeout = order_type in ['TAKEOUT', 'TAKE_AWAY', 'TAKE_OUT']
-        
-        if is_takeout:
-            takeout_table, _ = Table.objects.get_or_create(
-                restaurant=restaurant, 
-                table_number="TO", 
-                defaults={'capacity': 0}
-            )
-            session_obj, _ = TableSession.objects.get_or_create(
-                table=takeout_table, 
-                restaurant=restaurant, 
-                is_active=True
-            )
-            table = takeout_table
-        else:
-            table_id = request.data.get('table') or request.data.get('table_id')
-            if not table_id:
-                return Response({"error": "Table ID is required for Dine-in"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            table = get_object_or_404(Table, id=table_id, restaurant=restaurant)
-            session_obj, _ = TableSession.objects.get_or_create(
-                table=table, 
-                restaurant=restaurant, 
-                is_active=True
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
 
-        order = serializer.save(
-            restaurant=restaurant,
-            created_by=request.user,
-            session=session_obj,
-            table=table
+        serializer = self.get_serializer(
+            data=request.data,
         )
-        
-        if hasattr(order, 'calculate_totals'):
-            order.calculate_totals()
-        
-        order.save()
-        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=["post"], url_path='open_or_create')
-    def open_or_create(self, request):
-        table_id = request.data.get("table_id") or request.data.get("table")
-        restaurant = self._get_restaurant()
-        table = get_object_or_404(Table, id=table_id, restaurant=restaurant)
+        serializer.is_valid(
+            raise_exception=True,
+        )
 
-        order = Order.objects.filter(
-            table=table, 
-            restaurant=restaurant, 
-            status__in=['DRAFT', 'PLACED'] 
-        ).first()
+        order_type = self._get_order_type(
+            serializer
+        )
 
-        if order:
-            if table.status != 'OCCUPIED':
-                table.status = 'OCCUPIED'
-                table.save()
-            return Response(self.get_serializer(order).data)
+        table = self._get_table_for_create(
+            request=request,
+            restaurant=restaurant,
+            order_type=order_type,
+        )
 
-        ts_session, _ = TableSession.objects.get_or_create(
-            table=table, 
-            restaurant=restaurant, 
-            is_active=True
+        register_session = (
+            self._get_register_session(
+                restaurant
+            )
+        )
+
+        if register_session is None:
+            return Response(
+                {
+                    "detail": (
+                        "Open the register before "
+                        "creating an order."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        table_session = (
+            self._get_active_table_session(
+                table=table,
+                restaurant=restaurant,
+            )
+        )
+
+        validated_data = (
+            self._clean_order_data(
+                serializer
+            )
         )
 
         order = Order.objects.create(
-            restaurant=restaurant, 
-            table=table, 
-            session=ts_session,
-            order_type='DINE_IN', 
-            status='DRAFT', 
+            restaurant=restaurant,
+            created_by=request.user,
+            session=table_session,
+            table=table,
+            **validated_data,
+        )
+
+        if hasattr(
+            order,
+            "calculate_totals",
+        ):
+            order.calculate_totals()
+            order.refresh_from_db()
+
+        if not self._order_type_is_takeout(
+            order_type
+        ):
+            self._set_table_occupied(
+                table
+            )
+
+        output_serializer = self.get_serializer(
+            order
+        )
+
+        headers = self.get_success_headers(
+            output_serializer.data
+        )
+
+        return Response(
+            output_serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="open_or_create",
+        url_name="open-or-create",
+    )
+    
+    @action(
+    detail=False,
+    methods=["post"],
+    url_path="create_takeout",
+    url_name="create-takeout",
+)
+    @transaction.atomic
+    def create_takeout(
+            self,
+            request,
+        ):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+            )
+
+            
+        register_session = (
+                self._get_register_session(
+                restaurant
+                )
+            )
+
+        if register_session is None:
+            return Response(
+                    {
+                    "detail": (
+                        "Open the register before "
+                            "creating an order."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+            )
+
+        items = request.data.get(
+                "items",
+                [],
+            )
+
+        if not isinstance(items, list):
+            return Response(
+                    {
+                        "items": (
+                            "Items must be a list."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not items:
+            return Response(
+                    {
+                        "items": (
+                            "At least one item is required."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        takeout_table = (
+                self._get_takeout_table(
+                    restaurant
+                )
+            )
+
+        table_session = (
+                self._get_active_table_session(
+                table=takeout_table,
+                restaurant=restaurant,
+                )
+            )
+
+        notes = str(
+            request.data.get(
+                "notes",
+                "",
+            )
+        ).strip()
+
+        order = Order.objects.create(
+        restaurant=restaurant,
+        created_by=request.user,
+        session=table_session,
+        table=takeout_table,
+        order_type=Order.OrderType.TAKEOUT,
+        status=Order.Status.DRAFT,
+        payment_status=(
+                Order.PaymentStatus.UNPAID
+        ),
+        notes=notes,
+            )
+
+        for item_data in items:
+            product_id = item_data.get(
+                "product"
+            )
+
+            quantity = item_data.get(
+                "quantity"
+            )
+
+            try:
+                quantity = int(quantity)
+            except (
+                TypeError,
+                ValueError,
+            ):
+                raise ValidationError(
+                    {
+                        "quantity": (
+                            "Quantity must be an integer."
+                        )
+                    }
+                )
+
+            if quantity < 1 or quantity > 50:
+                raise ValidationError(
+                    {
+                    "quantity": (
+                        "Quantity must be between "
+                            "1 and 50."
+                        )
+                    }
+                )
+
+            product = get_object_or_404(
+            Product,
+            pk=product_id,
+            is_available=True,
+            category__menu__restaurant_id=(
+                    restaurant.id
+                ),
+            )
+
+            order_item = OrderItem.objects.create(
+            order=order,
+            product=product,
+            quantity=quantity,
+            final_price=product.base_price,
+            notes="",
+            )
+
+            modifier_ids = item_data.get(
+                "modifiers",
+                [],
+            )
+
+            if modifier_ids:
+                modifier_objects = (
+                    ModifierOption.objects
+                    .filter(
+                        id__in=modifier_ids,
+                    )
+                )
+
+                order_item.modifiers.set(
+                    modifier_objects
+                )
+
+            if hasattr(
+                order,
+                "calculate_totals",
+            ):
+                order.calculate_totals()
+                order.refresh_from_db()
+
+            return Response(
+                self.get_serializer(
+                    order
+                ).data,
+                status=status.HTTP_201_CREATED,
+            )
+    
+    @transaction.atomic
+    def open_or_create(self, request):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        table_id = (
+            request.data.get("table")
+            or request.data.get("table_id")
+        )
+
+        if not table_id:
+            return Response(
+                {
+                    "detail": (
+                        "Table ID is required."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        table = get_object_or_404(
+            Table.objects.select_for_update(),
+            pk=table_id,
+            restaurant_id=restaurant.id,
+        )
+
+        table_status = str(
+            getattr(
+                table,
+                "current_status",
+                getattr(
+                    table,
+                    "status",
+                    "AVAILABLE",
+                ),
+            )
+        ).upper()
+
+        blocked_statuses = {
+            "NEEDS_CLEANING",
+            "MERGED",
+            "INACTIVE",
+        }
+
+        if table_status in blocked_statuses:
+            return Response(
+                {
+                    "detail": (
+                        "This table cannot accept "
+                        "new orders."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        open_order_statuses = [
+            Order.Status.DRAFT,
+            Order.Status.PLACED,
+            Order.Status.IN_PROGRESS,
+            Order.Status.READY,
+            Order.Status.SERVED,
+        ]
+
+        unpaid_statuses = [
+            Order.PaymentStatus.UNPAID,
+            Order.PaymentStatus.PARTIALLY_PAID,
+        ]
+
+        existing_order = (
+            Order.objects
+            .select_for_update()
+            .filter(
+                table_id=table.id,
+                restaurant_id=restaurant.id,
+                status__in=open_order_statuses,
+                payment_status__in=unpaid_statuses,
+            )
+            .prefetch_related(
+                "items",
+                "items__product",
+                "items__modifiers",
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if existing_order is not None:
+            self._set_table_occupied(
+                table
+            )
+
+            return Response(
+                self.get_serializer(
+                    existing_order
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        register_session = (
+            self._get_register_session(
+                restaurant
+            )
+        )
+
+        if register_session is None:
+            return Response(
+                {
+                    "detail": (
+                        "Open the register before "
+                        "creating an order."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        table_session = (
+            self._get_active_table_session(
+                table=table,
+                restaurant=restaurant,
+            )
+        )
+
+        order = Order.objects.create(
+            restaurant=restaurant,
+            table=table,
+            session=table_session,
+            order_type=Order.OrderType.DINE_IN,
+            status=Order.Status.DRAFT,
+            payment_status=Order.PaymentStatus.UNPAID,
             created_by=request.user,
         )
 
-        table.status = 'OCCUPIED'
-        table.save()
+        self._set_table_occupied(
+            table
+        )
 
-        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
+        return Response(
+            self.get_serializer(
+                order
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
 
-    @action(detail=True, methods=['post'])
-    def send_to_kitchen(self, request, pk=None):
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="send_to_kitchen",
+        url_name="send-to-kitchen",
+    )
+    @transaction.atomic
+    def send_to_kitchen(
+        self,
+        request,
+        pk=None,
+    ):
         order = self.get_object()
-        order.status = 'PLACED'
-        order.save()
-        return Response({'status': 'Order sent to kitchen'})
-    
-    @action(detail=True, methods=['post'])
-    def start_preparing(self, request, pk=None):
-        order = self.get_object()
-        order.status = 'IN_PROGRESS'
-        order.save()
-        return Response({'status': 'Preparation started'})
 
-    @action(detail=True, methods=['post'])
-    def mark_ready(self, request, pk=None):
-        order = self.get_object()
-        order.status = 'READY'
-        order.save()
-        return Response({'status': 'Order ready for pickup/service'})
-
-    @action(detail=True, methods=['post'])
-    def mark_served(self, request, pk=None):
-        order = self.get_object()
-        order.status = 'SERVED'
-        order.save()
-        return Response({'status': 'Order served'})
-
-    @action(detail=True, methods=['post'])
-    def mark_paid(self, request, pk=None):
-        order = self.get_object()
-        restaurant = self._get_restaurant()
-        method_name = request.data.get("payment_method", "Cash") or "Cash"
-
-        from core.models import Payment, PaymentMethod
-    
-        try:
-            method_obj, _ = PaymentMethod.objects.get_or_create(
-                restaurant=restaurant, 
-                name__iexact=method_name,
-                defaults={'name': method_name.capitalize(), 'active': True}
+        if order.payment_status == (
+            Order.PaymentStatus.PAID
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Paid orders cannot be "
+                        "sent back to the kitchen."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-            print(f"Method name: {method_name}")
-            print(f"Method obj: {method_obj}")
+        if order.payment_status == (
+            Order.PaymentStatus.REFUNDED
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Refunded orders cannot be "
+                        "sent to the kitchen."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            with transaction.atomic():
-                amount_to_pay = getattr(order, 'total_price', getattr(order, 'total', 0))
-            
-                Payment.objects.update_or_create(
-                    order=order,
-                    defaults={
-                        "amount": amount_to_pay,
-                        "method": method_obj,
-                        "status": "PAID",
-                    },
+        has_items = order.items.exists()
+
+        if not has_items:
+            return Response(
+                {
+                    "detail": (
+                        "Cannot send an empty order "
+                        "to the kitchen."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allowed_statuses = [
+            Order.Status.DRAFT,
+            Order.Status.PLACED,
+        ]
+
+        if order.status not in allowed_statuses:
+            return Response(
+                {
+                    "detail": (
+                        f"Order cannot be sent to the "
+                        f"kitchen from status "
+                        f"{order.status}."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order.status = Order.Status.PLACED
+
+        order.save(
+            update_fields=[
+                "status",
+            ]
+        )
+
+        return Response(
+            self.get_serializer(
+                order
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="start_preparing",
+        url_name="start-preparing",
+    )
+    @transaction.atomic
+    def start_preparing(
+        self,
+        request,
+        pk=None,
+    ):
+        order = self.get_object()
+
+        if order.status != (
+            Order.Status.PLACED
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Only placed orders can "
+                        "start preparation."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order.status = (
+            Order.Status.IN_PROGRESS
+        )
+
+        order.save(
+            update_fields=[
+                "status",
+            ]
+        )
+
+        return Response(
+            self.get_serializer(
+                order
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def _normalize_payment_method(
+        self,
+        value,
+    ):
+        normalized = str(
+            value or "cash"
+        ).strip().lower()
+
+        normalized = normalized.replace(
+            "_",
+            " ",
+        ).replace(
+            "-",
+            " ",
+        )
+
+        normalized = " ".join(
+            normalized.split()
+        )
+
+        if "cash" in normalized:
+            return "cash"
+
+        if (
+            "card" in normalized
+            or "credit" in normalized
+            or "debit" in normalized
+            or "visa" in normalized
+            or "master" in normalized
+        ):
+            return "card"
+
+        if (
+            "mobile" in normalized
+            or "momo" in normalized
+            or "mtn" in normalized
+            or "airtel" in normalized
+            or "orange" in normalized
+        ):
+            return "mobile"
+
+        return normalized
+
+    def _get_restaurant_payment_method(
+        self,
+        restaurant,
+        requested_method,
+    ):
+        method = (
+            PaymentMethod.objects
+            .filter(
+                id=requested_method,
+                restaurant_id=restaurant.id,
+            )
+            .first()
+        )
+
+        if method is not None:
+            is_active = getattr(
+                method,
+                "active",
+                getattr(
+                    method,
+                    "is_active",
+                    True,
+                ),
+            )
+
+            if not is_active:
+                raise ValidationError(
+                    {
+                        "payment_method": (
+                            "This payment method "
+                            "is inactive."
+                        )
+                    }
                 )
 
-                order.status = 'PAID'
-                if method_name:
-                    order.payment_method = method_obj  # Update the payment method
-                    print(f"Order payment method: {order.payment_method}")
-                order.save()
-            
-                if order.table:
-                    order.table.status = 'VACANT'
-                    order.table.is_occupied = False
-                    order.table.save()
-            
-                return Response({'message': 'Order settled and table released'})
+            return method
 
-        except Exception as e:
-            print(f"CRITICAL ERROR IN MARK_PAID: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        method_name = (
+            self._normalize_payment_method(
+                requested_method
+            )
+        )
 
+        active_filter = Q(
+            active=True
+        )
 
-    # ===========================================================
-    # PRINTING ACTIONS (Uses StaticHTMLRenderer to avoid DRF UI)
-    # ===========================================================
-    
-    @action(detail=True, methods=['get'], url_path='print-receipt', renderer_classes=[StaticHTMLRenderer])
-    def print_receipt(self, request, pk=None):
+        payment_method_fields = {
+            field.name
+            for field in PaymentMethod._meta.get_fields()
+        }
+
+        if (
+            "is_active" in payment_method_fields
+            and "active" not in payment_method_fields
+        ):
+            active_filter = Q(
+                is_active=True
+            )
+
+        method_query = (
+            PaymentMethod.objects
+            .filter(
+                restaurant_id=restaurant.id,
+            )
+            .filter(active_filter)
+        )
+
+        if (
+            "slug" in payment_method_fields
+        ):
+            method_query = method_query.filter(
+                Q(name__iexact=method_name)
+                | Q(slug__iexact=method_name)
+            )
+        else:
+            method_query = method_query.filter(
+                name__iexact=method_name
+            )
+
+        method = (
+            method_query
+            .order_by("id")
+            .first()
+        )
+
+        if method is None:
+            raise ValidationError(
+                {
+                    "payment_method": (
+                        f"Payment method "
+                        f"'{method_name}' does not "
+                        "exist for this restaurant."
+                    )
+                }
+            )
+
+        return method
+
+    @transaction.atomic
+    def _mark_order_paid(
+        self,
+        order,
+        restaurant,
+        requested_method,
+    ):
+        locked_order = (
+            Order.objects
+            .select_for_update()
+            .select_related(
+                "restaurant",
+                "payment_method",
+                "table",
+                "session",
+            )
+            .get(
+                pk=order.pk,
+                restaurant_id=restaurant.id,
+            )
+        )
+
+        if locked_order.payment_status == (
+            Order.PaymentStatus.PAID
+        ):
+            self._release_order_table(
+                locked_order
+            )
+
+            return (
+                locked_order,
+                None,
+                False,
+            )
+
+        if locked_order.payment_status == (
+            Order.PaymentStatus.REFUNDED
+        ):
+            raise ValidationError(
+                {
+                    "payment_status": (
+                        "A refunded order cannot "
+                        "be paid."
+                    )
+                }
+            )
+
+        if hasattr(
+            locked_order,
+            "calculate_totals",
+        ):
+            locked_order.calculate_totals()
+            locked_order.refresh_from_db()
+
+        amount_to_pay = (
+            locked_order.total
+            or Decimal("0.00")
+        )
+
+        if amount_to_pay <= Decimal(
+            "0.00"
+        ):
+            raise ValidationError(
+                {
+                    "amount": (
+                        "Cannot mark an order with "
+                        "a zero total as paid."
+                    )
+                }
+            )
+
+        method_obj = (
+            self._get_restaurant_payment_method(
+                restaurant=restaurant,
+                requested_method=requested_method,
+            )
+        )
+
+        payment, created = (
+            Payment.objects
+            .select_for_update()
+            .update_or_create(
+                order=locked_order,
+                defaults={
+                    "amount": amount_to_pay,
+                    "method": method_obj,
+                    "status": "PAID",
+                },
+            )
+        )
+
+        locked_order.payment_method = (
+            method_obj
+        )
+
+        locked_order.payment_status = (
+            Order.PaymentStatus.PAID
+        )
+
+        locked_order.save(
+            update_fields=[
+                "payment_method",
+                "payment_status",
+            ]
+        )
+
+        self._release_order_table(
+            locked_order
+        )
+
+        return (
+            locked_order,
+            payment,
+            created,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="mark_paid",
+        url_name="mark-paid",
+    )
+    def mark_paid(
+        self,
+        request,
+        pk=None,
+    ):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         order = self.get_object()
-        # Use .all() to get items for the template
-        items = order.items.all()
-        total_payment = order.payments.aggregate(total=Sum('amount'))['total'] if order.payments.exists() else 0
 
-        html_content = render_to_string('receipts/order_receipt.html', {
-            'order': order,
-            'items': items,
-            'restaurant': order.restaurant,
-            'total_payment': total_payment,
-        })
-        return Response(html_content)
+        requested_method = (
+            request.data.get(
+                "payment_method"
+            )
+            or request.data.get("method")
+            or "cash"
+        )
 
-    @action(detail=True, methods=['get'], url_path='print-kitchen', renderer_classes=[StaticHTMLRenderer])
-    def print_kitchen(self, request, pk=None):
-        order = self.get_object()
-        items = order.items.all()
-        
-        html_content = render_to_string('receipts/kitchen_ticket.html', {
-            'order': order,
-            'items': items,
-        })
-        return Response(html_content)
+        try:
+            (
+                locked_order,
+                payment,
+                created,
+            ) = self._mark_order_paid(
+                order=order,
+                restaurant=restaurant,
+                requested_method=requested_method,
+            )
+        except ValidationError as error:
+            return Response(
+                error.detail,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        
+        if payment is None:
+            return Response(
+                {
+                    "detail": (
+                        "Order is already paid."
+                    ),
+                    "order_id": str(
+                        locked_order.id
+                    ),
+                    "payment_status": (
+                        locked_order.payment_status
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment_method_name = getattr(
+            payment.method,
+            "name",
+            None,
+        )
+
+        return Response(
+            {
+                "message": (
+                    "Payment confirmed and "
+                    "table released."
+                ),
+                "payment": {
+                    "id": str(payment.id),
+                    "amount": str(
+                        payment.amount
+                    ),
+                    "status": payment.status,
+                    "method": payment_method_name,
+                    "created": created,
+                },
+                "order": self.get_serializer(
+                    locked_order
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="complete",
+        url_name="complete",
+    )
+    @transaction.atomic
+    def complete(
+        self,
+        request,
+        pk=None,
+    ):
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        order = (
+            Order.objects
+            .select_for_update()
+            .select_related(
+                "table",
+                "session",
+            )
+            .get(
+                pk=self.get_object().pk,
+                restaurant_id=restaurant.id,
+            )
+        )
+
+        if order.payment_status != (
+            Order.PaymentStatus.PAID
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Order must be paid before "
+                        "completion."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if order.status == (
+            Order.Status.COMPLETED
+        ):
+            self._release_order_table(
+                order
+                )
+
+            return Response(
+                    {
+                        "detail": (
+                            "Order is already completed."
+                        ),
+                        "order": self.get_serializer(
+                            order
+                        ).data,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            if hasattr(
+                order,
+                "deduct_inventory",
+            ):
+                order.deduct_inventory()
+
+            order.status = (
+                Order.Status.COMPLETED
+            )
+
+            order.save(
+                update_fields=[
+                    "status",
+                ]
+            )
+
+            self._release_order_table(
+                order
+            )
+
+            return Response(
+                {
+                    "message": (
+                        "Order completed and "
+                        "table released."
+                    ),
+                    "order": self.get_serializer(
+                        order
+                    ).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        @action(
+            detail=True,
+            methods=["post"],
+            url_path="refund",
+            url_name="refund",
+        )
+        @transaction.atomic
+        def refund(
+            self,
+            request,
+            pk=None,
+        ):
+            restaurant = self._get_restaurant()
+
+            if restaurant is None:
+                return Response(
+                    {
+                        "detail": (
+                            "User is not associated "
+                            "with a restaurant."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            order = (
+                Order.objects
+                .select_for_update()
+                .select_related(
+                    "table",
+                    "session",
+                )
+                .get(
+                    pk=self.get_object().pk,
+                    restaurant_id=restaurant.id,
+                )
+            )
+
+            if order.payment_status != (
+                Order.PaymentStatus.PAID
+            ):
+                return Response(
+                    {
+                        "detail": (
+                            "Only paid orders can "
+                            "be refunded."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            order.payment_status = (
+                Order.PaymentStatus.REFUNDED
+            )
+
+            order.status = (
+                Order.Status.CANCELED
+            )
+
+            order.save(
+                update_fields=[
+                    "payment_status",
+                    "status",
+                ]
+            )
+
+            self._release_order_table(
+                order
+            )
+
+            Payment.objects.filter(
+                order=order,
+            ).update(
+                status="REFUNDED",
+            )
+
+            return Response(
+                {
+                    "message": (
+                        "Order refunded and "
+                        "table released."
+                    ),
+                    "order": self.get_serializer(
+                        order
+                    ).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        @action(
+            detail=True,
+            methods=["get"],
+            url_path="print-receipt",
+            url_name="print-receipt",
+            renderer_classes=[
+                StaticHTMLRenderer,
+            ],
+        )
+        def print_receipt(
+            self,
+            request,
+            pk=None,
+        ):
+            order = self.get_object()
+
+            items = order.items.all()
+
+            total_payment = (
+                order.payments.aggregate(
+                    total=Sum("amount"),
+                )["total"]
+                or Decimal("0.00")
+            )
+
+            html_content = render_to_string(
+                "receipts/order_receipt.html",
+                {
+                    "order": order,
+                    "items": items,
+                    "restaurant": order.restaurant,
+                    "total_payment": total_payment,
+                },
+            )
+
+            return Response(
+                html_content,
+                content_type="text/html",
+            )
+
+        @action(
+            detail=True,
+            methods=["get"],
+            url_path="print-kitchen",
+            url_name="print-kitchen",
+            renderer_classes=[
+                StaticHTMLRenderer,
+            ],
+        )
+        def print_kitchen(
+            self,
+            request,
+            pk=None,
+        ):
+            order = self.get_object()
+
+            items = order.items.all()
+
+            html_content = render_to_string(
+                "receipts/kitchen_ticket.html",
+                {
+                    "order": order,
+                    "items": items,
+                },
+            )
+
+            return Response(
+                html_content,
+                content_type="text/html",
+            )
+            
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [
+        IsAuthenticated,
+    ]
 
-    def get_queryset(self):
+    def _get_restaurant(self):
         user = self.request.user
 
-        qs = OrderItem.objects.select_related(
-            "order",
-            "order__restaurant",
-            "product",
-        ).prefetch_related("modifiers")
+        if not user or not user.is_authenticated:
+            return None
 
-        if user.is_superuser:
-            return qs
+        restaurant = getattr(
+            user,
+            "restaurant",
+            None,
+        )
 
-        restaurant = getattr(user, "restaurant", None)
+        if restaurant is None:
+            profile = getattr(
+                user,
+                "userprofile",
+                None,
+            )
+
+            if profile is not None:
+                restaurant = getattr(
+                    profile,
+                    "restaurant",
+                    None,
+                )
+
+        return restaurant
+
+    def get_queryset(self):
+        restaurant = self._get_restaurant()
 
         if restaurant is None:
             return OrderItem.objects.none()
 
-        return qs.filter(order__restaurant=restaurant)
+        return (
+            OrderItem.objects
+            .filter(
+                order__restaurant_id=restaurant.id,
+            )
+            .select_related(
+                "order",
+                "order__restaurant",
+                "product",
+                "variant",
+            )
+            .prefetch_related(
+                "modifiers",
+            )
+            .order_by(
+                "-id",
+            )
+        )
 
     def perform_create(self, serializer):
-        user = self.request.user
-        order_id = self.request.data.get("order")
+        restaurant = self._get_restaurant()
+
+        if restaurant is None:
+            raise PermissionDenied(
+                "User is not assigned to a restaurant."
+            )
+
+        order_id = self.request.data.get(
+            "order"
+        )
 
         if not order_id:
-            raise ValidationError({"order": "Order ID is required."})
-
-        if user.is_superuser:
-            order = get_object_or_404(
-                Order,
-                id=order_id,
-            )
-        else:
-            restaurant = getattr(user, "restaurant", None)
-
-            if restaurant is None:
-                raise PermissionDenied("No restaurant assigned.")
-
-            order = get_object_or_404(
-                Order,
-                id=order_id,
-                restaurant=restaurant,
+            raise ValidationError(
+                {
+                    "order": (
+                        "Order ID is required."
+                    )
+                }
             )
 
-        item = serializer.save(order=order)
+        order = get_object_or_404(
+            Order,
+            id=order_id,
+            restaurant_id=restaurant.id,
+        )
+
+        if order.payment_status == Order.PaymentStatus.PAID:
+            raise ValidationError(
+                {
+                    "order": (
+                        "Paid orders cannot receive "
+                        "new items."
+                    )
+                }
+            )
+
+        if order.status in [
+            Order.Status.COMPLETED,
+            Order.Status.CANCELED,
+        ]:
+            raise ValidationError(
+                {
+                    "order": (
+                        "Completed or canceled orders "
+                        "cannot receive items."
+                    )
+                }
+            )
+
+        item = serializer.save(
+            order=order,
+        )
 
         order.calculate_totals()
+
+        return item
 
     def perform_update(self, serializer):
         item = serializer.save()
 
-        # Recalculate order totals after changing quantity/item fields
         item.order.calculate_totals()
 
     def perform_destroy(self, instance):
         order = instance.order
+
         instance.delete()
 
-        # Recalculate order totals after removing an item
         order.calculate_totals()
-        
         
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
@@ -2159,86 +4215,492 @@ class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
             active=True
         )
 
-from django.db.models import Q, Sum
 
+
+@method_decorator(never_cache, name="dispatch")
 class PaymentSummaryAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [
+        permissions.IsAuthenticated,
+    ]
+
+    def get_restaurant(self, request):
+        """
+        Return the restaurant assigned to the authenticated user.
+        """
+
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return None
+
+        return getattr(user, "restaurant", None)
+
+    def get_today_bounds(self):
+        """
+        Return today's local date and timezone-aware boundaries.
+
+        Make sure settings.py contains:
+
+            TIME_ZONE = "Asia/Hong_Kong"
+            USE_TZ = True
+        """
+
+        now_local = timezone.localtime(
+            timezone.now()
+        )
+
+        start_of_today = now_local.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+        end_of_today = (
+            start_of_today
+            + timezone.timedelta(days=1)
+        )
+
+        return (
+            now_local.date(),
+            start_of_today,
+            end_of_today,
+        )
+
+    def money(self, value):
+        """
+        Convert Decimal or None into a JSON-safe float.
+        """
+
+        return float(
+            value or Decimal("0.00")
+        )
+
+    def get_method_display_name(self, payment_method):
+        if not payment_method:
+            return None
+
+        if hasattr(
+            payment_method,
+            "get_name_display",
+        ):
+            return payment_method.get_name_display()
+
+        return payment_method.name
+
+    def get_order_payload(self, order):
+        """
+        Convert one Order into the frontend transaction shape.
+        """
+
+        payment_method = order.payment_method
+        created_at = order.created_at
+
+        local_created_at = None
+
+        if created_at:
+            local_created_at = timezone.localtime(
+                created_at
+            )
+
+        if payment_method:
+            method_code = payment_method.name
+            method_display_name = (
+                self.get_method_display_name(
+                    payment_method
+                )
+            )
+        else:
+            method_code = None
+            method_display_name = None
+
+        if order.order_number is not None:
+            order_reference = (
+                f"ORD-{order.order_number}"
+            )
+        else:
+            order_reference = (
+                f"ORD-{str(order.id)[:6].upper()}"
+            )
+
+        return {
+            # Order.id is a UUID in your model.
+            "id": str(order.id),
+
+            # Human-readable order reference.
+            "order_number": order_reference,
+
+            "method": method_code,
+            "method_name": method_display_name,
+
+            "amount": self.money(order.total),
+
+            # Uses Order.payment_status as the source of truth.
+            "status": order.payment_status,
+
+            "created_at": (
+                created_at.isoformat()
+                if created_at
+                else None
+            ),
+
+            "date": (
+                local_created_at.strftime(
+                    "%Y-%m-%d %H:%M"
+                )
+                if local_created_at
+                else None
+            ),
+        }
 
     def get(self, request):
-        restaurant = getattr(request.user, 'restaurant', None)
-        if not restaurant:
-            return Response({"error": "Restaurant not found"}, status=404)
+        user = request.user
 
-        today = timezone.now().date()
-        
-        # All orders for this restaurant
-        orders = Order.objects.filter(restaurant=restaurant)
-        today_orders = orders.filter(created_at__date=today)
-
-        # Revenue & paid stats
-        total_today = today_orders.aggregate(total=Sum('total'))['total'] or 0
-        total_paid = orders.filter(
-            payment_status=Order.PaymentStatus.PAID
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        # Unpaid / Pending (active table balances)
-        unpaid_pending = orders.filter(
-            Q(status__in=['SERVED', 'PLACED', 'PENDING']) &
-            Q(payment_status='UNPAID')
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        # Counts & volumes
-        total_count = orders.count()
-        gross_sales_volume = orders.aggregate(total=Sum('total'))['total'] or 0
-        confirmed_in_bank_drawer = orders.filter(
-            payment_status=Order.PaymentStatus.PAID,
-            status='paid'
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        # By payment method (using substring match on payment_method name)
-        cash = orders.filter(
-            payment_method__name__icontains='cash'
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        credit_card = orders.filter(
-            Q(payment_method__name__icontains='card') |
-            Q(payment_method__name__icontains='credit')
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        mobile_pay = orders.filter(
-            payment_method__name__icontains='mobile'
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        # Recent payments (last 10 orders)
-        recent_orders = orders.order_by('-created_at')[:10]
-
-        return Response({
-            "stats": {
-                "total_today": float(total_today),
-                "total_paid": float(total_paid),
-                "pending": float(unpaid_pending),
-                "total_count": total_count,
-                "total_amount": float(gross_sales_volume),
-                "gross_sales_volume": float(gross_sales_volume),
-                "confirmed_in_bank_drawer": float(confirmed_in_bank_drawer),
-                "cash": float(cash),
-                "credit_card": float(credit_card),
-                "mobile": float(mobile_pay),
-                "active_table_balances": float(unpaid_pending),
-                "unpaid_pending": float(unpaid_pending),
-            },
-            "payments": [
+        if not user.is_authenticated:
+            return Response(
                 {
-                    "id": str(o.id),
-                    "order_number": getattr(o, "order_number", None) or f"ORD-{str(o.id)[:6].upper()}",
-                    "method_name": o.payment_method.name if o.payment_method else None,
-                    "amount": float(o.total) if o.total else 0.0,
-                    "status": o.payment_status if hasattr(o, 'payment_status') else o.status,
-                    "date": o.created_at.strftime("%Y-%m-%d %H:%M"),
-                }
-                for o in recent_orders
-            ],
-        })
+                    "detail": "Authentication required."
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        restaurant = self.get_restaurant(request)
+
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "Authenticated user is not assigned "
+                        "to a restaurant."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        (
+            today,
+            start_of_today,
+            end_of_today,
+        ) = self.get_today_bounds()
+
+        # ==========================================================
+        # TENANT BOUNDARY
+        # ==========================================================
+        #
+        # Every statistic and every recent order is derived from
+        # this queryset. Never use Order.objects.all() below.
+        #
+        orders = (
+            Order.objects
+            .filter(
+                restaurant_id=restaurant.id,
+            )
+            .select_related(
+                "restaurant",
+                "payment_method",
+            )
+        )
+
+        # ==========================================================
+        # DATE FILTERS
+        # ==========================================================
+
+        today_orders = orders.filter(
+            created_at__gte=start_of_today,
+            created_at__lt=end_of_today,
+        )
+
+        # ==========================================================
+        # STATUS FILTERS
+        # ==========================================================
+
+        paid_statuses = {
+            Order.PaymentStatus.PAID,
+            "PAID",
+            "paid",
+            "Paid",
+        }
+
+        unpaid_statuses = {
+            Order.PaymentStatus.UNPAID,
+            "UNPAID",
+            "unpaid",
+            "Unpaid",
+        }
+
+        partially_paid_statuses = {
+            Order.PaymentStatus.PARTIALLY_PAID,
+            "PARTIALLY_PAID",
+            "partially_paid",
+            "Partially Paid",
+        }
+
+        excluded_order_statuses = {
+            Order.Status.CANCELED,
+            Order.Status.COMPLETED,
+            "CANCELED",
+            "COMPLETED",
+            "canceled",
+            "completed",
+        }
+
+        paid_orders = orders.filter(
+            payment_status__in=paid_statuses,
+        )
+
+        paid_today_orders = today_orders.filter(
+            payment_status__in=paid_statuses,
+        )
+
+        # Pending means unpaid or partially paid and not canceled
+        # or completed.
+        unpaid_pending_orders = (
+            orders
+            .filter(
+                Q(
+                    payment_status__in=unpaid_statuses
+                )
+                | Q(
+                    payment_status__in=partially_paid_statuses
+                )
+            )
+            .exclude(
+                status__in=excluded_order_statuses,
+            )
+        )
+
+        # ==========================================================
+        # TOTALS
+        # ==========================================================
+
+        total_today = (
+            today_orders.aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        total_paid = (
+            paid_orders.aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        total_paid_today = (
+            paid_today_orders.aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        unpaid_pending = (
+            unpaid_pending_orders.aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        gross_sales_volume = (
+            orders.aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        # ==========================================================
+        # PAID TOTALS BY PAYMENT METHOD
+        # ==========================================================
+
+        cash = (
+            paid_orders
+            .filter(
+                Q(
+                    payment_method__name__iexact="cash"
+                )
+                | Q(
+                    payment_method__slug__iexact="cash"
+                )
+            )
+            .aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        card = (
+            paid_orders
+            .filter(
+                Q(
+                    payment_method__name__iexact="card"
+                )
+                | Q(
+                    payment_method__slug__iexact="card"
+                )
+                | Q(
+                    payment_method__name__iexact="credit card"
+                )
+                | Q(
+                    payment_method__slug__iexact="credit-card"
+                )
+            )
+            .aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        mobile = (
+            paid_orders
+            .filter(
+                Q(
+                    payment_method__name__iexact="mobile"
+                )
+                | Q(
+                    payment_method__slug__iexact="mobile"
+                )
+                | Q(
+                    payment_method__name__iexact="mobile_pay"
+                )
+                | Q(
+                    payment_method__slug__iexact="mobile-pay"
+                )
+                | Q(
+                    payment_method__name__iexact="mobile payment"
+                )
+                | Q(
+                    payment_method__slug__iexact="mobile-payment"
+                )
+                | Q(
+                    payment_method__name__iexact="momo"
+                )
+                | Q(
+                    payment_method__slug__iexact="momo"
+                )
+            )
+            .aggregate(
+                total=Sum("total"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        # ==========================================================
+        # RECENT ORDERS
+        # ==========================================================
+        #
+        # This includes unpaid orders, so the frontend heading
+        # should say "Recent Orders", not "Recent Transactions".
+        #
+        recent_orders = (
+            orders
+            .order_by("-created_at")[:10]
+        )
+
+        payments = [
+            self.get_order_payload(order)
+            for order in recent_orders
+        ]
+
+        # ==========================================================
+        # SERVER DIAGNOSTICS
+        # ==========================================================
+        #
+        # Keep temporarily while testing. Remove later.
+        #
+        print(
+            "PAYMENT SUMMARY TOTALS:",
+            {
+                "user_id": user.id,
+                "username": user.username,
+                "restaurant_id": restaurant.id,
+                "restaurant_name": restaurant.name,
+                "today": str(today),
+                "start_of_today": str(
+                    start_of_today
+                ),
+                "end_of_today": str(
+                    end_of_today
+                ),
+                "all_orders": orders.count(),
+                "today_orders": today_orders.count(),
+                "paid_orders": paid_orders.count(),
+                "paid_today_orders": (
+                    paid_today_orders.count()
+                ),
+                "unpaid_pending_orders": (
+                    unpaid_pending_orders.count()
+                ),
+                "total_today": str(total_today),
+                "total_paid": str(total_paid),
+                "total_paid_today": str(
+                    total_paid_today
+                ),
+                "unpaid_pending": str(
+                    unpaid_pending
+                ),
+                "cash": str(cash),
+                "card": str(card),
+                "mobile": str(mobile),
+            },
+            flush=True,
+        )
+
+        response_data = {
+            "restaurant": {
+                "id": restaurant.id,
+                "name": restaurant.name,
+            },
+            "stats": {
+                "total_today": self.money(
+                    total_today
+                ),
+                "total_paid": self.money(
+                    total_paid
+                ),
+                "total_paid_today": self.money(
+                    total_paid_today
+                ),
+                "pending": self.money(
+                    unpaid_pending
+                ),
+                "unpaid_pending": self.money(
+                    unpaid_pending
+                ),
+                "active_table_balances": self.money(
+                    unpaid_pending
+                ),
+                "total_count": orders.count(),
+                "total_amount": self.money(
+                    gross_sales_volume
+                ),
+                "gross_sales_volume": self.money(
+                    gross_sales_volume
+                ),
+                "confirmed_in_bank_drawer": self.money(
+                    total_paid_today
+                ),
+                "cash": self.money(cash),
+                "credit_card": self.money(card),
+                "card": self.money(card),
+                "mobile": self.money(mobile),
+                "mobile_pay": self.money(mobile),
+            },
+            "payments": payments,
+        }
+
+        response = Response(
+            response_data,
+            status=status.HTTP_200_OK,
+        )
+
+        response["Cache-Control"] = (
+            "no-store, no-cache, "
+            "must-revalidate, max-age=0"
+        )
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+
+        return response
 # ======================================================================
 # POS API ENDPOINTS
 # ======================================================================
@@ -3339,14 +5801,11 @@ def create_draft_order_api(request):
     with transaction.atomic():
 
         order = Order.objects.create(
-            restaurant=restaurant,
-            created_by=request.user,
-            status=Order.Status.DRAFT,
-            type=order_type,
-            table_id=table_id if order_type == Order.Type.DINE_IN else None,
-            shift=active_shift,
-            notes=notes,
-            total=0
+        restaurant=restaurant,
+        created_by=request.user,
+        session=register_session,
+        table=table,
+        **validated_data,
         )
 
     return JsonResponse({

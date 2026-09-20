@@ -13,6 +13,8 @@ import Login from "./pages/Login";
 import DashboardLayout from "./layout/DashboardLayout";
 import PickupDisplay from "./pages/PickupDisplay";
 import OnboardingPage from "./pages/OnboardingPage";
+import PublicTableMenu from "./pages/PublicTableMenu";
+import POS from "./pages/POS";
 
 
 function ProtectedRoute({ children }) {
@@ -59,6 +61,11 @@ function App() {
         <Route
           path="/onboarding"
           element={<OnboardingPage />}
+        />
+
+        <Route
+          path="/table/:token/"
+          element={<PublicTableMenu />}
         />
 
         {/* Public pickup display */}

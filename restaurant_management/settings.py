@@ -13,6 +13,7 @@ from django.urls import reverse_lazy
 import os
 import logging
 import environ
+from corsheaders.defaults import default_headers
 
 # ==============================================================================
 # BASE & ENVIRONMENT CONFIGURATION
@@ -205,7 +206,7 @@ LANGUAGES = [
     ("tr", _("Turkish")), 
 ]
 
-TIME_ZONE = "UTC"
+TIME_ZONE = "Asia/Hong_Kong"
 USE_I18N = True
 USE_TZ = True
 
@@ -411,6 +412,9 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_ALLOW_HEADERS = [
+    *default_headers,
+    "cache-control",
+    "pragma",
     "accept",
     "accept-encoding",
     "authorization",
