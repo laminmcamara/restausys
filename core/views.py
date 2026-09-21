@@ -90,7 +90,6 @@ from .models import (
     Category,
     Company,
     CustomUser,
-    Session,
     Customer,
     Discount,
     InventoryItem,
@@ -104,6 +103,7 @@ from .models import (
     PaymentMethod,
     Plan,
     Product,
+    Session as RegisterSession,
     ProductIngredient,
     ProductVariant,
     Restaurant,
@@ -1580,24 +1580,88 @@ class PlaceOrderAPIView(APIView):
 
                 # 4. Process Order Items
                 for item_data in items:
-                    product_id = item_data.get('product_id')
-                    quantity = int(item_data.get('quantity', 1))
-                    modifier_ids = item_data.get('modifier_option_ids', [])
-                    
+                    product_id = (
+                    item_data.get("product_id")
+                    or item_data.get("product")
+                    )
+
+                    if not product_id:
+                        raise ValidationError(
+                    {
+                        "product": (
+                        "Product is required."
+                        )
+                    }
+                )
+
+                    try:
+                        quantity = int(
+                        item_data.get(
+                        "quantity",
+                        1,
+                        )
+                        )
+                    except (
+                    TypeError,
+                    ValueError,
+                    ):
+                        raise ValidationError(
+                        {
+                            "quantity": (
+                            "Quantity must be an integer."
+                            )
+                        }
+                    )
+
+                    if quantity < 1 or quantity > 50:
+                        raise ValidationError(
+                        {
+                        "quantity": (
+                        "Quantity must be between "
+                        "1 and 50."
+                        )
+                        }
+                    )
+
+                    modifier_ids = (
+                    item_data.get(
+                    "modifier_option_ids"
+                    )
+                    or item_data.get(
+                    "modifiers"
+                    )
+                    or []
+                    )
+
+                    product = get_object_or_404(
+                    Product,
+                    pk=product_id,
+                    is_available=True,
+                    category__menu__restaurant_id=(
+                    order.restaurant_id
+                    ),
+                    )
+
                     order_item = OrderItem.objects.create(
-                        order=order,
-                        product_id=product_id,
-                        quantity=quantity,
-                        status="QUEUED"
+                    order=order,
+                    product=product,
+                    quantity=quantity,
+                    final_price=product.base_price,
+                    status="QUEUED",
+                    notes=item_data.get(
+                    "notes",
+                    "",
+                    ),
                     )
 
                     if modifier_ids:
-                        order_item.modifiers.set(modifier_ids)
-
-                    order_item.recalculate_price()
+                        order_item.modifiers.set(
+                        modifier_ids
+                    )
 
                 # 5. Finalize Order Totals
                 order.calculate_totals()
+                order.refresh_from_db()
 
             # ===========================================================
             # WEBHOOK TRIGGER (Outside the transaction block)
@@ -2148,6 +2212,7 @@ class TableViewSet(viewsets.ModelViewSet):
         
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
+
     permission_classes = [
         IsAuthenticated,
     ]
@@ -2212,40 +2277,23 @@ class OrderViewSet(viewsets.ModelViewSet):
                 "-id",
             )
         )
-    
+
     def _get_register_session(self, restaurant):
         """
-        Return the current open register session.
-
-        Change POSSession to RegisterSession if that
-        is the model used by your project.
+        The register model is core.Session.
+        Order.session remains TableSession.
         """
 
-        try:
-            session_model = POSSession
-        except NameError:
-            session_model = None
-
-        if session_model is None:
-            return None
-
-        filters = {
-            "restaurant_id": restaurant.id,
-            "status": "OPEN",
-        }
-
-        model_field_names = {
-            field.name
-            for field in session_model._meta.get_fields()
-        }
-
-        if "opened_by" in model_field_names:
-            filters["opened_by"] = self.request.user
-
         return (
-            session_model.objects
-            .filter(**filters)
-            .order_by("-opened_at", "-id")
+            RegisterSession.objects
+            .filter(
+                restaurant_id=restaurant.id,
+                status="OPEN",
+            )
+            .order_by(
+                "-start_time",
+                "-id",
+            )
             .first()
         )
 
@@ -2254,7 +2302,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         table,
         restaurant,
     ):
-        session = (
+        table_session = (
             TableSession.objects
             .select_for_update()
             .filter(
@@ -2266,8 +2314,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             .first()
         )
 
-        if session is not None:
-            return session
+        if table_session is not None:
+            return table_session
 
         return TableSession.objects.create(
             table=table,
@@ -2294,6 +2342,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             table_number="TO",
             capacity=0,
             status=Table.Status.AVAILABLE,
+            is_occupied=False,
         )
 
     def _set_table_occupied(self, table):
@@ -2311,12 +2360,16 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             if table.status != occupied_value:
                 table.status = occupied_value
-                changed_fields.append("status")
+                changed_fields.append(
+                    "status"
+                )
 
         if hasattr(table, "is_occupied"):
             if table.is_occupied is not True:
                 table.is_occupied = True
-                changed_fields.append("is_occupied")
+                changed_fields.append(
+                    "is_occupied"
+                )
 
         if changed_fields:
             table.save(
@@ -2338,40 +2391,60 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             if table.status != available_value:
                 table.status = available_value
-                changed_fields.append("status")
+                changed_fields.append(
+                    "status"
+                )
 
         if hasattr(table, "is_occupied"):
             if table.is_occupied is not False:
                 table.is_occupied = False
-                changed_fields.append("is_occupied")
+                changed_fields.append(
+                    "is_occupied"
+                )
 
         if changed_fields:
             table.save(
                 update_fields=changed_fields,
             )
 
-    def _close_table_session(self, session):
-        if session is None:
+    def _close_table_session(
+        self,
+        table_session,
+    ):
+        if table_session is None:
             return
 
         changed_fields = []
 
-        if hasattr(session, "is_active"):
-            if session.is_active is not False:
-                session.is_active = False
-                changed_fields.append("is_active")
+        if hasattr(
+            table_session,
+            "is_active",
+        ):
+            if table_session.is_active is not False:
+                table_session.is_active = False
+                changed_fields.append(
+                    "is_active"
+                )
 
-        if hasattr(session, "closed_at"):
-            if session.closed_at is None:
-                session.closed_at = timezone.now()
-                changed_fields.append("closed_at")
+        if hasattr(
+            table_session,
+            "closed_at",
+        ):
+            if table_session.closed_at is None:
+                table_session.closed_at = timezone.now()
+                changed_fields.append(
+                    "closed_at"
+                )
 
         if changed_fields:
-            session.save(
+            table_session.save(
                 update_fields=changed_fields,
             )
 
     def _has_other_open_orders(self, order):
+        if order is None:
+            return False
+
         if order.table_id is None:
             return False
 
@@ -2404,8 +2477,8 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def _release_order_table(self, order):
         """
-        Release the table only when no other unpaid
-        open orders remain on that table.
+        Release the physical table only when no
+        other unpaid open orders remain.
         """
 
         if order is None:
@@ -2430,25 +2503,30 @@ class OrderViewSet(viewsets.ModelViewSet):
         if table is not None:
             self._set_table_vacant(table)
 
-        if order.session_id is not None:
-            session = (
-                TableSession.objects
-                .select_for_update()
-                .filter(
-                    pk=order.session_id,
-                    table_id=order.table_id,
-                    restaurant_id=order.restaurant_id,
-                    is_active=True,
-                )
-                .first()
+        if order.session_id is None:
+            return
+
+        table_session = (
+            TableSession.objects
+            .select_for_update()
+            .filter(
+                pk=order.session_id,
+                table_id=order.table_id,
+                restaurant_id=order.restaurant_id,
+                is_active=True,
+            )
+            .first()
+        )
+
+        if table_session is not None:
+            self._close_table_session(
+                table_session
             )
 
-            if session is not None:
-                self._close_table_session(
-                    session
-                )
-
-    def _order_type_is_takeout(self, order_type):
+    def _order_type_is_takeout(
+        self,
+        order_type,
+    ):
         normalized = str(
             order_type or ""
         ).strip().upper()
@@ -2503,14 +2581,16 @@ class OrderViewSet(viewsets.ModelViewSet):
         table_status = str(
             getattr(
                 table,
-                "current_status",
-                getattr(
-                    table,
-                    "status",
-                    "AVAILABLE",
-                ),
+                "status",
+                "AVAILABLE",
             )
-        ).upper()
+        ).strip().upper()
+
+        if table_status == "VACANT":
+            table_status = "AVAILABLE"
+
+        if table_status == "IN_USE":
+            table_status = "OCCUPIED"
 
         blocked_statuses = {
             "NEEDS_CLEANING",
@@ -2538,33 +2618,32 @@ class OrderViewSet(viewsets.ModelViewSet):
             serializer.validated_data
         )
 
-        fields_managed_by_view = [
+        view_managed_fields = [
             "restaurant",
             "created_by",
             "session",
             "table",
+            "status",
+            "payment_status",
+            "payment_method",
+            "total",
         ]
 
-        for field_name in fields_managed_by_view:
+        for field_name in view_managed_fields:
             validated_data.pop(
                 field_name,
                 None,
             )
 
-        validated_data.setdefault(
-            "status",
-            Order.Status.DRAFT,
-        )
-
-        validated_data.setdefault(
-            "payment_status",
-            Order.PaymentStatus.UNPAID,
-        )
-
         return validated_data
 
     @transaction.atomic
-    def create(self, request, *args, **kwargs):
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
         restaurant = self._get_restaurant()
 
         if restaurant is None:
@@ -2631,6 +2710,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             created_by=request.user,
             session=table_session,
             table=table,
+            order_type=order_type,
+            status=Order.Status.DRAFT,
+            payment_status=(
+                Order.PaymentStatus.UNPAID
+            ),
             **validated_data,
         )
 
@@ -2665,21 +2749,11 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(
         detail=False,
         methods=["post"],
-        url_path="open_or_create",
-        url_name="open-or-create",
+        url_path="create_takeout",
+        url_name="create-takeout",
     )
-    
-    @action(
-    detail=False,
-    methods=["post"],
-    url_path="create_takeout",
-    url_name="create-takeout",
-)
     @transaction.atomic
-    def create_takeout(
-            self,
-            request,
-        ):
+    def create_takeout(self, request):
         restaurant = self._get_restaurant()
 
         if restaurant is None:
@@ -2689,65 +2763,64 @@ class OrderViewSet(viewsets.ModelViewSet):
                         "User is not associated "
                         "with a restaurant."
                     )
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
 
-            
         register_session = (
-                self._get_register_session(
+            self._get_register_session(
                 restaurant
-                )
             )
+        )
 
         if register_session is None:
             return Response(
-                    {
+                {
                     "detail": (
                         "Open the register before "
-                            "creating an order."
-                        )
-                    },
-                    status=status.HTTP_409_CONFLICT,
+                        "creating an order."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
             )
 
         items = request.data.get(
-                "items",
-                [],
-            )
+            "items",
+            [],
+        )
 
         if not isinstance(items, list):
             return Response(
-                    {
-                        "items": (
-                            "Items must be a list."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "items": (
+                        "Items must be a list."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not items:
             return Response(
-                    {
-                        "items": (
-                            "At least one item is required."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "items": (
+                        "At least one item is required."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         takeout_table = (
-                self._get_takeout_table(
-                    restaurant
-                )
+            self._get_takeout_table(
+                restaurant
             )
+        )
 
         table_session = (
-                self._get_active_table_session(
+            self._get_active_table_session(
                 table=takeout_table,
                 restaurant=restaurant,
-                )
             )
+        )
 
         notes = str(
             request.data.get(
@@ -2757,19 +2830,32 @@ class OrderViewSet(viewsets.ModelViewSet):
         ).strip()
 
         order = Order.objects.create(
-        restaurant=restaurant,
-        created_by=request.user,
-        session=table_session,
-        table=takeout_table,
-        order_type=Order.OrderType.TAKEOUT,
-        status=Order.Status.DRAFT,
-        payment_status=(
+            restaurant=restaurant,
+            created_by=request.user,
+            session=table_session,
+            table=takeout_table,
+            order_type=Order.OrderType.TAKEOUT,
+            status=Order.Status.DRAFT,
+            payment_status=(
                 Order.PaymentStatus.UNPAID
-        ),
-        notes=notes,
-            )
+            ),
+            notes=notes,
+        )
 
         for item_data in items:
+            if not isinstance(
+                item_data,
+                dict,
+            ):
+                raise ValidationError(
+                    {
+                        "items": (
+                            "Each item must be "
+                            "an object."
+                        )
+                    }
+                )
+
             product_id = item_data.get(
                 "product"
             )
@@ -2777,6 +2863,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             quantity = item_data.get(
                 "quantity"
             )
+
+            if not product_id:
+                raise ValidationError(
+                    {
+                        "product": (
+                            "Product is required."
+                        )
+                    }
+                )
 
             try:
                 quantity = int(quantity)
@@ -2787,7 +2882,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 raise ValidationError(
                     {
                         "quantity": (
-                            "Quantity must be an integer."
+                            "Quantity must be "
+                            "an integer."
                         )
                     }
                 )
@@ -2795,28 +2891,28 @@ class OrderViewSet(viewsets.ModelViewSet):
             if quantity < 1 or quantity > 50:
                 raise ValidationError(
                     {
-                    "quantity": (
-                        "Quantity must be between "
-                            "1 and 50."
+                        "quantity": (
+                            "Quantity must be "
+                            "between 1 and 50."
                         )
                     }
                 )
 
             product = get_object_or_404(
-            Product,
-            pk=product_id,
-            is_available=True,
-            category__menu__restaurant_id=(
+                Product,
+                pk=product_id,
+                is_available=True,
+                category__menu__restaurant_id=(
                     restaurant.id
                 ),
             )
 
             order_item = OrderItem.objects.create(
-            order=order,
-            product=product,
-            quantity=quantity,
-            final_price=product.base_price,
-            notes="",
+                order=order,
+                product=product,
+                quantity=quantity,
+                final_price=product.base_price,
+                notes="",
             )
 
             modifier_ids = item_data.get(
@@ -2836,20 +2932,26 @@ class OrderViewSet(viewsets.ModelViewSet):
                     modifier_objects
                 )
 
-            if hasattr(
-                order,
-                "calculate_totals",
-            ):
-                order.calculate_totals()
-                order.refresh_from_db()
+        if hasattr(
+            order,
+            "calculate_totals",
+        ):
+            order.calculate_totals()
+            order.refresh_from_db()
 
-            return Response(
-                self.get_serializer(
-                    order
-                ).data,
-                status=status.HTTP_201_CREATED,
-            )
-    
+        return Response(
+            self.get_serializer(
+                order
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="open_or_create",
+        url_name="open-or-create",
+    )
     @transaction.atomic
     def open_or_create(self, request):
         restaurant = self._get_restaurant()
@@ -2889,14 +2991,16 @@ class OrderViewSet(viewsets.ModelViewSet):
         table_status = str(
             getattr(
                 table,
-                "current_status",
-                getattr(
-                    table,
-                    "status",
-                    "AVAILABLE",
-                ),
+                "status",
+                "AVAILABLE",
             )
-        ).upper()
+        ).strip().upper()
+
+        if table_status == "VACANT":
+            table_status = "AVAILABLE"
+
+        if table_status == "IN_USE":
+            table_status = "OCCUPIED"
 
         blocked_statuses = {
             "NEEDS_CLEANING",
@@ -2913,49 +3017,6 @@ class OrderViewSet(viewsets.ModelViewSet):
                     )
                 },
                 status=status.HTTP_409_CONFLICT,
-            )
-
-        open_order_statuses = [
-            Order.Status.DRAFT,
-            Order.Status.PLACED,
-            Order.Status.IN_PROGRESS,
-            Order.Status.READY,
-            Order.Status.SERVED,
-        ]
-
-        unpaid_statuses = [
-            Order.PaymentStatus.UNPAID,
-            Order.PaymentStatus.PARTIALLY_PAID,
-        ]
-
-        existing_order = (
-            Order.objects
-            .select_for_update()
-            .filter(
-                table_id=table.id,
-                restaurant_id=restaurant.id,
-                status__in=open_order_statuses,
-                payment_status__in=unpaid_statuses,
-            )
-            .prefetch_related(
-                "items",
-                "items__product",
-                "items__modifiers",
-            )
-            .order_by("-created_at")
-            .first()
-        )
-
-        if existing_order is not None:
-            self._set_table_occupied(
-                table
-            )
-
-            return Response(
-                self.get_serializer(
-                    existing_order
-                ).data,
-                status=status.HTTP_200_OK,
             )
 
         register_session = (
@@ -2982,13 +3043,62 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         )
 
+        open_order_statuses = [
+            Order.Status.DRAFT,
+            Order.Status.PLACED,
+            Order.Status.IN_PROGRESS,
+            Order.Status.READY,
+            Order.Status.SERVED,
+        ]
+
+        unpaid_statuses = [
+            Order.PaymentStatus.UNPAID,
+            Order.PaymentStatus.PARTIALLY_PAID,
+        ]
+
+        existing_order = (
+            Order.objects
+            .select_for_update()
+            .filter(
+                table_id=table.id,
+                restaurant_id=restaurant.id,
+                session_id=table_session.id,
+                status__in=open_order_statuses,
+                payment_status__in=unpaid_statuses,
+            )
+            .prefetch_related(
+                "items",
+                "items__product",
+                "items__modifiers",
+            )
+            .order_by(
+                "-created_at",
+                "-id",
+            )
+            .first()
+        )
+
+        if existing_order is not None:
+            self._set_table_occupied(
+                table
+            )
+
+            return Response(
+                self.get_serializer(
+                    existing_order
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
         order = Order.objects.create(
             restaurant=restaurant,
             table=table,
             session=table_session,
             order_type=Order.OrderType.DINE_IN,
             status=Order.Status.DRAFT,
-            payment_status=Order.PaymentStatus.UNPAID,
+            payment_status=(
+                Order.PaymentStatus.UNPAID
+            ),
             created_by=request.user,
         )
 
@@ -3015,7 +3125,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         request,
         pk=None,
     ):
-        order = self.get_object()
+        order = (
+            self.get_queryset()
+            .select_for_update()
+            .filter(
+                pk=pk,
+            )
+            .first()
+        )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         if order.payment_status == (
             Order.PaymentStatus.PAID
@@ -3043,9 +3168,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        has_items = order.items.exists()
-
-        if not has_items:
+        if not order.items.exists():
             return Response(
                 {
                     "detail": (
@@ -3065,8 +3188,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "detail": (
-                        f"Order cannot be sent to the "
-                        f"kitchen from status "
+                        "Order cannot be sent to "
+                        "the kitchen from status "
                         f"{order.status}."
                     )
                 },
@@ -3100,7 +3223,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         request,
         pk=None,
     ):
-        order = self.get_object()
+        order = (
+            self.get_queryset()
+            .select_for_update()
+            .filter(
+                pk=pk,
+            )
+            .first()
+        )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         if order.status != (
             Order.Status.PLACED
@@ -3118,6 +3256,120 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = (
             Order.Status.IN_PROGRESS
         )
+
+        order.save(
+            update_fields=[
+                "status",
+            ]
+        )
+
+        return Response(
+            self.get_serializer(
+                order
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="mark_ready",
+        url_name="mark-ready",
+    )
+    @transaction.atomic
+    def mark_ready(
+        self,
+        request,
+        pk=None,
+    ):
+        order = (
+            self.get_queryset()
+            .select_for_update()
+            .filter(
+                pk=pk,
+            )
+            .first()
+        )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if order.status != (
+            Order.Status.IN_PROGRESS
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Only cooking orders can "
+                        "be marked ready."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order.status = Order.Status.READY
+
+        order.save(
+            update_fields=[
+                "status",
+            ]
+        )
+
+        return Response(
+            self.get_serializer(
+                order
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="mark_served",
+        url_name="mark-served",
+    )
+    @transaction.atomic
+    def mark_served(
+        self,
+        request,
+        pk=None,
+    ):
+        order = (
+            self.get_queryset()
+            .select_for_update()
+            .filter(
+                pk=pk,
+            )
+            .first()
+        )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if order.status != (
+            Order.Status.READY
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Only ready orders can "
+                        "be marked served."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order.status = Order.Status.SERVED
 
         order.save(
             update_fields=[
@@ -3180,14 +3432,27 @@ class OrderViewSet(viewsets.ModelViewSet):
         restaurant,
         requested_method,
     ):
-        method = (
-            PaymentMethod.objects
-            .filter(
-                id=requested_method,
-                restaurant_id=restaurant.id,
+        payment_method_fields = {
+            field.name
+            for field in PaymentMethod._meta.get_fields()
+        }
+
+        method = None
+
+        try:
+            method = (
+                PaymentMethod.objects
+                .filter(
+                    pk=requested_method,
+                    restaurant_id=restaurant.id,
+                )
+                .first()
             )
-            .first()
-        )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            method = None
 
         if method is not None:
             is_active = getattr(
@@ -3218,41 +3483,34 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         )
 
-        active_filter = Q(
-            active=True
-        )
-
-        payment_method_fields = {
-            field.name
-            for field in PaymentMethod._meta.get_fields()
-        }
-
-        if (
-            "is_active" in payment_method_fields
-            and "active" not in payment_method_fields
-        ):
-            active_filter = Q(
-                is_active=True
-            )
-
         method_query = (
             PaymentMethod.objects
             .filter(
                 restaurant_id=restaurant.id,
             )
-            .filter(active_filter)
         )
 
-        if (
-            "slug" in payment_method_fields
-        ):
+        if "active" in payment_method_fields:
             method_query = method_query.filter(
-                Q(name__iexact=method_name)
-                | Q(slug__iexact=method_name)
+                active=True,
+            )
+        elif "is_active" in payment_method_fields:
+            method_query = method_query.filter(
+                is_active=True,
+            )
+
+        if "slug" in payment_method_fields:
+            method_query = method_query.filter(
+                Q(
+                    name__iexact=method_name
+                )
+                | Q(
+                    slug__iexact=method_name
+                )
             )
         else:
             method_query = method_query.filter(
-                name__iexact=method_name
+                name__iexact=method_name,
             )
 
         method = (
@@ -3396,6 +3654,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         url_path="mark_paid",
         url_name="mark-paid",
     )
+    @transaction.atomic
     def mark_paid(
         self,
         request,
@@ -3414,7 +3673,22 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        order = self.get_object()
+        order = (
+            self.get_queryset()
+            .select_for_update()
+            .filter(
+                pk=pk,
+            )
+            .first()
+        )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         requested_method = (
             request.data.get(
@@ -3456,12 +3730,6 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        payment_method_name = getattr(
-            payment.method,
-            "name",
-            None,
-        )
-
         return Response(
             {
                 "message": (
@@ -3474,7 +3742,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                         payment.amount
                     ),
                     "status": payment.status,
-                    "method": payment_method_name,
+                    "method": getattr(
+                        payment.method,
+                        "name",
+                        None,
+                    ),
                     "created": created,
                 },
                 "order": self.get_serializer(
@@ -3510,17 +3782,21 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
 
         order = (
-            Order.objects
+            self.get_queryset()
             .select_for_update()
-            .select_related(
-                "table",
-                "session",
+            .filter(
+                pk=pk,
             )
-            .get(
-                pk=self.get_object().pk,
-                restaurant_id=restaurant.id,
-            )
+            .first()
         )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         if order.payment_status != (
             Order.PaymentStatus.PAID
@@ -3540,45 +3816,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         ):
             self._release_order_table(
                 order
-                )
-
-            return Response(
-                    {
-                        "detail": (
-                            "Order is already completed."
-                        ),
-                        "order": self.get_serializer(
-                            order
-                        ).data,
-                    },
-                    status=status.HTTP_200_OK,
-                )
-
-            if hasattr(
-                order,
-                "deduct_inventory",
-            ):
-                order.deduct_inventory()
-
-            order.status = (
-                Order.Status.COMPLETED
-            )
-
-            order.save(
-                update_fields=[
-                    "status",
-                ]
-            )
-
-            self._release_order_table(
-                order
             )
 
             return Response(
                 {
-                    "message": (
-                        "Order completed and "
-                        "table released."
+                    "detail": (
+                        "Order is already completed."
                     ),
                     "order": self.get_serializer(
                         order
@@ -3587,165 +3830,231 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        @action(
-            detail=True,
-            methods=["post"],
-            url_path="refund",
-            url_name="refund",
-        )
-        @transaction.atomic
-        def refund(
-            self,
-            request,
-            pk=None,
+        if hasattr(
+            order,
+            "deduct_inventory",
         ):
-            restaurant = self._get_restaurant()
+            order.deduct_inventory()
 
-            if restaurant is None:
-                return Response(
-                    {
-                        "detail": (
-                            "User is not associated "
-                            "with a restaurant."
-                        )
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        order.status = (
+            Order.Status.COMPLETED
+        )
 
-            order = (
-                Order.objects
-                .select_for_update()
-                .select_related(
-                    "table",
-                    "session",
-                )
-                .get(
-                    pk=self.get_object().pk,
-                    restaurant_id=restaurant.id,
-                )
-            )
+        order.save(
+            update_fields=[
+                "status",
+            ]
+        )
 
-            if order.payment_status != (
-                Order.PaymentStatus.PAID
-            ):
-                return Response(
-                    {
-                        "detail": (
-                            "Only paid orders can "
-                            "be refunded."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        self._release_order_table(
+            order
+        )
 
-            order.payment_status = (
-                Order.PaymentStatus.REFUNDED
-            )
+        return Response(
+            {
+                "message": (
+                    "Order completed and "
+                    "table released."
+                ),
+                "order": self.get_serializer(
+                    order
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
-            order.status = (
-                Order.Status.CANCELED
-            )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="refund",
+        url_name="refund",
+    )
+    @transaction.atomic
+    def refund(
+        self,
+        request,
+        pk=None,
+    ):
+        restaurant = self._get_restaurant()
 
-            order.save(
-                update_fields=[
-                    "payment_status",
-                    "status",
-                ]
-            )
-
-            self._release_order_table(
-                order
-            )
-
-            Payment.objects.filter(
-                order=order,
-            ).update(
-                status="REFUNDED",
-            )
-
+        if restaurant is None:
             return Response(
                 {
-                    "message": (
-                        "Order refunded and "
-                        "table released."
-                    ),
-                    "order": self.get_serializer(
-                        order
-                    ).data,
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_403_FORBIDDEN,
             )
 
-        @action(
-            detail=True,
-            methods=["get"],
-            url_path="print-receipt",
-            url_name="print-receipt",
-            renderer_classes=[
-                StaticHTMLRenderer,
-            ],
+        order = (
+            self.get_queryset()
+            .select_for_update()
+            .filter(
+                pk=pk,
+            )
+            .first()
         )
-        def print_receipt(
-            self,
-            request,
-            pk=None,
-        ):
-            order = self.get_object()
 
-            items = order.items.all()
-
-            total_payment = (
-                order.payments.aggregate(
-                    total=Sum("amount"),
-                )["total"]
-                or Decimal("0.00")
-            )
-
-            html_content = render_to_string(
-                "receipts/order_receipt.html",
-                {
-                    "order": order,
-                    "items": items,
-                    "restaurant": order.restaurant,
-                    "total_payment": total_payment,
-                },
-            )
-
+        if order is None:
             return Response(
-                html_content,
-                content_type="text/html",
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        @action(
-            detail=True,
-            methods=["get"],
-            url_path="print-kitchen",
-            url_name="print-kitchen",
-            renderer_classes=[
-                StaticHTMLRenderer,
-            ],
+        if order.payment_status != (
+            Order.PaymentStatus.PAID
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Only paid orders can "
+                        "be refunded."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order.payment_status = (
+            Order.PaymentStatus.REFUNDED
         )
-        def print_kitchen(
-            self,
-            request,
-            pk=None,
-        ):
-            order = self.get_object()
 
-            items = order.items.all()
+        order.status = (
+            Order.Status.CANCELED
+        )
 
-            html_content = render_to_string(
-                "receipts/kitchen_ticket.html",
-                {
-                    "order": order,
-                    "items": items,
-                },
+        order.save(
+            update_fields=[
+                "payment_status",
+                "status",
+            ]
+        )
+
+        self._release_order_table(
+            order
+        )
+
+        Payment.objects.filter(
+            order=order,
+        ).update(
+            status="REFUNDED",
+        )
+
+        return Response(
+            {
+                "message": (
+                    "Order refunded and "
+                    "table released."
+                ),
+                "order": self.get_serializer(
+                    order
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="print-receipt",
+        url_name="print-receipt",
+        renderer_classes=[
+            StaticHTMLRenderer,
+        ],
+    )
+    def print_receipt(
+        self,
+        request,
+        pk=None,
+    ):
+        order = (
+            self.get_queryset()
+            .filter(
+                pk=pk,
             )
+            .first()
+        )
 
+        if order is None:
             return Response(
-                html_content,
-                content_type="text/html",
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
+
+        items = order.items.all()
+
+        total_payment = (
+            order.payments.aggregate(
+                total=Sum("amount"),
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        html_content = render_to_string(
+            "receipts/order_receipt.html",
+            {
+                "order": order,
+                "items": items,
+                "restaurant": order.restaurant,
+                "total_payment": total_payment,
+            },
+        )
+
+        return Response(
+            html_content,
+            content_type="text/html",
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="print-kitchen",
+        url_name="print-kitchen",
+        renderer_classes=[
+            StaticHTMLRenderer,
+        ],
+    )
+    def print_kitchen(
+        self,
+        request,
+        pk=None,
+    ):
+        order = (
+            self.get_queryset()
+            .filter(
+                pk=pk,
+            )
+            .first()
+        )
+
+        if order is None:
+            return Response(
+                {
+                    "detail": "Order not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        items = order.items.all()
+
+        html_content = render_to_string(
+            "receipts/kitchen_ticket.html",
+            {
+                "order": order,
+                "items": items,
+            },
+        )
+
+        return Response(
+            html_content,
+            content_type="text/html",
+        )
+        
             
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
@@ -3865,7 +4174,7 @@ class OrderItemViewSet(viewsets.ModelViewSet):
         return item
 
     def perform_update(self, serializer):
-        item = serializer.save()
+        item = OrderItemSerializer.create()
 
         item.order.calculate_totals()
 
@@ -7381,19 +7690,19 @@ class SessionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Ensure user is authenticated before filtering
         if not self.request.user.is_authenticated:
-            return Session.objects.none()
-        return Session.objects.filter(restaurant=self.request.user.restaurant)
+            return RegisterSession.objects.none()
+        return RegisterSession.objects.filter(restaurant=self.request.user.restaurant)
 
     def perform_create(self, serializer):
         # PREVENT DUPLICATE SESSIONS: 
         # Check if there is already an active session for this restaurant
-        active_session = Session.objects.filter(
+        active_session = RegisterSession.objects.filter(
             restaurant=self.request.user.restaurant, 
             status='OPEN'
         ).exists()
         
         if active_session:
-            raise serializers.ValidationError({"detail": "A session is already open for this restaurant."})
+            raise serializer.ValidationError({"detail": "A session is already open for this restaurant."})
         
         serializer.save(
             restaurant=self.request.user.restaurant,

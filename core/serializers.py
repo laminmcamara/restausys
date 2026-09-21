@@ -343,85 +343,71 @@ class MenuSerializer(serializers.ModelSerializer):
 # ORDER ITEMS
 # ==============================================================================
 
-class OrderItemSerializer(serializers.ModelSerializer):
+class OrderItemSerializer(
+    serializers.ModelSerializer
+):
     product_name = serializers.CharField(
         source="product.name",
         read_only=True,
     )
-    total_price = serializers.SerializerMethodField()
+
+    product_image = serializers.ImageField(
+        source="product.image",
+        read_only=True,
+    )
+
+    modifiers = serializers.PrimaryKeyRelatedField(
+        queryset=ModifierOption.objects.all(),
+        many=True,
+        required=False,
+    )
 
     class Meta:
         model = OrderItem
+
         fields = [
-            'id',
-            'order',
-            'product',
-            'product_name',
-            'variant',
-            'quantity',
-            'final_price',
-            'total_price',
-            'notes',
-            'modifiers',
-            'status',
+            "id",
+            "order",
+            "product",
+            "product_name",
+            "product_image",
+            "variant",
+            "quantity",
+            "notes",
+            "status",
+            "final_price",
+            "modifiers",
         ]
+
         read_only_fields = [
-            'id',
+            "id",
+            "product_name",
+            "product_image",
+            "final_price",
         ]
-        extra_kwargs = {
-            'order': {'required': True},
-        }
+        
+    def create(self, validated_data):
+        product = validated_data["product"]
 
-    def get_total_price(self, obj):
-        return obj.final_price * obj.quantity
-
-    def get_restaurant(self):
-        request = self.context.get("request")
-
-        if not request or not request.user.is_authenticated:
-            return None
-
-        return getattr(
-            request.user,
-            "restaurant",
-            None,
+        modifiers = validated_data.pop(
+            "modifiers",
+            [],
         )
 
-    def validate_quantity(self, value):
-        if value <= 0:
-            raise serializers.ValidationError(
-                "Quantity must be greater than zero."
+        validated_data["final_price"] = (
+            product.base_price
+        )
+
+        order_item = OrderItem.objects.create(
+            **validated_data
+        )
+
+        if modifiers:
+            order_item.modifiers.set(
+                modifiers
             )
 
-        return value
-
-    def validate_product(self, product):
-        restaurant = self.get_restaurant()
-
-        if not restaurant:
-            raise serializers.ValidationError(
-                "Your account is not connected to a restaurant."
-            )
-
-        if not product.is_available:
-            raise serializers.ValidationError(
-                "This product is not currently available."
-            )
-
-        # Do not access product.category.restaurant_id.
-        #
-        # Your Category model does not contain a restaurant field.
-        # Product ownership must instead be checked through another
-        # relationship, such as product.restaurant, menu.restaurant,
-        # or category.menu.restaurant, if those fields exist.
-
-        return product
-
-    def get_total_price(self, obj):
-        price = obj.final_price or 0
-        quantity = obj.quantity or 0
-
-        return f"{price * quantity:.2f}"
+        return order_item
     
 # ==============================================================================
 # PAYMENT METHODS
@@ -486,7 +472,16 @@ class OrderSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    table_name = serializers.SerializerMethodField()
+    table_name = serializers.CharField(
+        source="table.table_number",
+        read_only=True,
+    )
+    table_number = serializers.IntegerField(
+        source="table.table_number",
+        read_only=True,
+    )
+
+    table_status = serializers.SerializerMethodField()
 
     restaurant_name = serializers.CharField(
         source="restaurant.name",
@@ -528,6 +523,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "customer",
             "table",
             "table_name",
+            "table_number",
+            "table_status",
             "section",
             "session",
             "created_by",
@@ -618,7 +615,23 @@ class OrderSerializer(serializers.ModelSerializer):
                 "min_value": Decimal("0.00"),
             },
         }
+    
+    def get_table_status(self, obj):
+        if not obj.table_id:
+            return "UNKNOWN"
 
+        table = obj.table
+
+        if table.status:
+            return table.status
+
+        return (
+            "OCCUPIED"
+            if table.is_occupied
+            else "AVAILABLE"
+        )
+    
+    
     def get_table_name(self, obj):
         if not obj.table:
             return "Takeout"
