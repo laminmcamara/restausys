@@ -330,7 +330,7 @@ class Customer(TimeStampedModel):
         null=True, 
         blank=True
     )
-    full_name = models.CharField(max_length=120)
+    name = models.CharField(max_length=120)
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=20, blank=True)
     preferred_language = models.CharField(max_length=30, default="en")
