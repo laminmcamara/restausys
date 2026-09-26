@@ -472,11 +472,8 @@ class OrderSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    table_name = serializers.CharField(
-        source="table.table_number",
-        read_only=True,
-    )
-    table_number = serializers.IntegerField(
+    
+    table_number = serializers.CharField(
         source="table.table_number",
         read_only=True,
     )
@@ -522,7 +519,6 @@ class OrderSerializer(serializers.ModelSerializer):
             "restaurant_name",
             "customer",
             "table",
-            "table_name",
             "table_number",
             "table_status",
             "section",
@@ -559,7 +555,6 @@ class OrderSerializer(serializers.ModelSerializer):
             "restaurant_name",
             "created_by",
             "staff_name",
-            "table_name",
             "order_type_display",
             "status_display",
             "payment_status_display",
