@@ -5,6 +5,8 @@ const BASE_URL = "http://127.0.0.1:8000/api/v1";
 
 const api = axios.create({
   baseURL: BASE_URL,
+  withCredentials: true,
+
 });
 
 const refreshClient = axios.create({
@@ -42,12 +44,13 @@ function logout() {
 
 api.interceptors.request.use(
   (config) => {
-    const token = getAccessToken();
-
-    config.headers = config.headers || {};
+    const token = localStorage.getItem(
+      "access_token"
+    );
 
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      config.headers.Authorization =
+        `Bearer ${token}`;
     }
 
     return config;

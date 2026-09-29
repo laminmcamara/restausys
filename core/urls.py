@@ -1,3 +1,5 @@
+# core/urls.py
+
 from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
@@ -7,8 +9,9 @@ from rest_framework_simplejwt.views import (
 )
 
 from .views import (
-    ChangePasswordView,
+    AnalyticsAPIView,
     CategoryViewSet,
+    ChangePasswordView,
     CustomerViewSet,
     DiscountViewSet,
     InventoryViewSet,
@@ -25,8 +28,12 @@ from .views import (
     PaymentSummaryAPIView,
     PaymentViewSet,
     PlaceOrderAPIView,
+    PosDashboardAPIView,
     ProductViewSet,
     PublicMenuViewSet,
+    PublicTableMenuAPIView,
+    PublicTableOrderAPIView,
+    RestaurantDashboardView,
     SessionViewSet,
     TableViewSet,
     WebhookConfigAPIView,
@@ -41,13 +48,18 @@ from .views import (
     staff_detail_api,
     staff_list_create_api,
     subscription_detail,
-    PublicTableMenuAPIView,
-    PublicTableOrderAPIView,
 )
+
+
 app_name = "core"
 
 
 router = DefaultRouter()
+
+
+# ---------------------------------------------------------------------------
+# Main resources
+# ---------------------------------------------------------------------------
 
 router.register(
     r"tables",
@@ -76,7 +88,7 @@ router.register(
 router.register(
     r"order-items",
     OrderItemViewSet,
-    basename="orderitem",
+    basename="order-item",
 )
 
 router.register(
@@ -88,7 +100,7 @@ router.register(
 router.register(
     r"payment-methods",
     PaymentMethodViewSet,
-    basename="paymentmethod",
+    basename="payment-method",
 )
 
 router.register(
@@ -97,125 +109,164 @@ router.register(
     basename="payment",
 )
 
+
+# ---------------------------------------------------------------------------
+# Manager resources
+# ---------------------------------------------------------------------------
+
 router.register(
     r"manager/categories",
     ManagerCategoryViewSet,
-    basename="manager-categories",
+    basename="manager-category",
+)
+
+router.register(
+    r"manager/menu",
+    ManagerMenuViewSet,
+    basename="manager-menu",
 )
 
 router.register(
     r"manager/products",
     ManagerProductViewSet,
-    basename="manager-products",
+    basename="manager-product",
 )
 
 router.register(
     r"manager/modifiers",
     ManagerModifierGroupViewSet,
-    basename="manager-modifiers",
+    basename="manager-modifier",
 )
 
 router.register(
     r"manager/modifier-groups",
     ManagerModifierGroupViewSet,
-    basename="manager-modifier-groups",
+    basename="manager-modifier-group",
 )
 
 router.register(
     r"manager/modifier-options",
     ManagerModifierOptionViewSet,
-    basename="manager-modifier-options",
+    basename="manager-modifier-option",
 )
 
 router.register(
     r"manager/customers",
     CustomerViewSet,
-    basename="customers",
+    basename="manager-customer",
 )
 
 router.register(
     r"manager/inventory",
     InventoryViewSet,
-    basename="inventory",
+    basename="manager-inventory",
 )
 
 router.register(
     r"manager/discounts",
     DiscountViewSet,
-    basename="manager-discounts",
+    basename="manager-discount",
 )
 
 
+# ---------------------------------------------------------------------------
+# URL patterns
+# ---------------------------------------------------------------------------
+
 urlpatterns = [
-    # Put explicit endpoints before the router.
+    # Dashboard and reports
     path(
-        "api/v1/payments/summary/",
+        "dashboard/",
+        RestaurantDashboardView.as_view(),
+        name="restaurant-dashboard",
+    ),
+    path(
+        "reports/",
+        AnalyticsAPIView.as_view(),
+        name="reports",
+    ),
+
+    # Payments and orders
+    path(
+        "payments/summary/",
         PaymentSummaryAPIView.as_view(),
         name="payment-summary",
     ),
-
     path(
-        "api/v1/orders/place/",
+        "orders/place/",
         PlaceOrderAPIView.as_view(),
         name="place-order",
     ),
 
+    # Restaurant registration
     path(
-        "api/v1/restaurants/register/",
+        "restaurants/register/",
         register_restaurant_api,
         name="register-restaurant-api",
     ),
 
+    # Restaurant settings and profile
     path(
-        "api/v1/reports/",
-        reports_summary,
-        name="reports-summary",
-    ),
-
-    path(
-        "api/v1/settings/",
+        "settings/",
         settings_api,
         name="settings-api",
     ),
-
     path(
-        "api/v1/manager/staff/",
+        "me/",
+        MeView.as_view(),
+        name="me",
+    ),
+    path(
+        "change-password/",
+        ChangePasswordView.as_view(),
+        name="change-password",
+    ),
+    
+    path(
+    "pos/dashboard/",
+    PosDashboardAPIView.as_view(),
+    name="pos-dashboard",
+    ),
+
+    # Staff management
+    path(
+        "manager/staff/",
         staff_list_create_api,
         name="staff-list-create-api",
     ),
-
     path(
-        "api/v1/manager/staff/<int:pk>/",
+        "manager/staff/<int:pk>/",
         staff_detail_api,
         name="staff-detail-api",
     ),
 
+    # Developer configuration
     path(
-        "api/v1/developer/webhook-config/",
+        "developer/webhook-config/",
         WebhookConfigAPIView.as_view(),
         name="api-webhook-config",
     ),
-
     path(
-        "api/v1/developer/regenerate-key/",
+        "developer/regenerate-key/",
         regenerate_api_key,
         name="api-regenerate-key",
     ),
 
+    # Subscription and billing
     path(
-        "api/v1/subscription/",
+        "subscription/",
         subscription_detail,
         name="subscription-detail",
     ),
-
     path(
-        "api/v1/subscription/create-checkout/",
+        "subscription/create-checkout/",
         create_checkout_session,
         name="create-checkout-session",
     ),
 
+    # Public menus
     path(
-        "api/v1/public/<uuid:restaurant_id>/menus/",
+        "public/<uuid:restaurant_id>/menus/",
         PublicMenuViewSet.as_view(
             {
                 "get": "list",
@@ -223,9 +274,8 @@ urlpatterns = [
         ),
         name="public-menus",
     ),
-
     path(
-        "api/v1/public/<uuid:restaurant_id>/menus/<uuid:pk>/",
+        "public/<uuid:restaurant_id>/menus/<uuid:pk>/",
         PublicMenuViewSet.as_view(
             {
                 "get": "retrieve",
@@ -233,62 +283,48 @@ urlpatterns = [
         ),
         name="public-menu-detail",
     ),
-    
+
+    # Public table ordering
     path(
-        "api/v1/public/tables/<uuid:token>/menu/",
+        "public/tables/<uuid:token>/menu/",
         PublicTableMenuAPIView.as_view(),
         name="public-table-menu-api",
     ),
-
     path(
-        "api/v1/public/tables/<uuid:token>/orders/",
+        "public/tables/<uuid:token>/orders/",
         PublicTableOrderAPIView.as_view(),
         name="public-table-order-api",
     ),
 
-    # Router routes come after explicit routes.
+    # JWT authentication
     path(
-        "api/v1/",
-        include(router.urls),
-    ),
-
-    # Authentication.
-    path(
-        "api/token/",
+        "token/",
         TokenObtainPairView.as_view(),
         name="token-obtain-pair",
     ),
-
     path(
-        "api/token/refresh/",
+        "token/refresh/",
         TokenRefreshView.as_view(),
         name="token-refresh",
     ),
 
+    # Router-generated API routes
     path(
-        "api/me/",
-        MeView.as_view(),
-        name="me",
+        "",
+        include(router.urls),
     ),
 
-    path(
-        "api/change-password/",
-        ChangePasswordView.as_view(),
-        name="change-password",
-    ),
-
+    # Legacy or general endpoints
     path(
         "orders/<str:token>/<int:order_id>/status/",
         order_status_api,
         name="order-status-api",
     ),
-
     path(
-        "",
+        "home/",
         api_home,
-        name="home",
+        name="api-home",
     ),
-
     path(
         "register/",
         register_restaurant,

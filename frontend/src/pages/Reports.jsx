@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+
 import {
   BarChart,
   Bar,
@@ -14,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+
 import {
   CalendarDays,
   ClipboardList,
@@ -21,9 +23,9 @@ import {
   RefreshCw,
   ShoppingBag,
   TrendingUp,
-  Users,
   Utensils,
 } from "lucide-react";
+
 import api from "../services/api";
 
 const currency = new Intl.NumberFormat("en-US", {
@@ -40,105 +42,121 @@ const COLORS = [
   "#0891b2",
 ];
 
-const today = new Date();
-const sevenDaysAgo = new Date();
-sevenDaysAgo.setDate(today.getDate() - 6);
-
-function formatInputDate(date) {
-  return date.toISOString().slice(0, 10);
+function createEmptyReport() {
+  return {
+    summary: {
+      weekly_sales: 0,
+      monthly_sales: 0,
+      weekly_orders: 0,
+      monthly_orders: 0,
+      average_order_value: 0,
+      active_tables: 0,
+    },
+    sales_by_day: [],
+    orders_by_status: [],
+    top_items: [],
+    staff_performance: [],
+    recent_orders: [],
+  };
 }
 
-const demoReport = {
-  summary: {
-    weekly_sales: 1840.25,
-    monthly_sales: 6840.75,
-    weekly_orders: 92,
-    monthly_orders: 310,
-    average_order_value: 20.75,
-    active_tables: 8,
-  },
-  sales_by_day: [
-    { date: "Mon", sales: 320 },
-    { date: "Tue", sales: 410 },
-    { date: "Wed", sales: 380 },
-    { date: "Thu", sales: 520 },
-    { date: "Fri", sales: 760 },
-    { date: "Sat", sales: 890 },
-    { date: "Sun", sales: 640 },
-  ],
-  orders_by_status: [
-    { name: "Completed", value: 86 },
-    { name: "Pending", value: 14 },
-    { name: "Preparing", value: 18 },
-    { name: "Cancelled", value: 8 },
-  ],
-  top_items: [
-    { name: "Chicken Burger", quantity: 42, revenue: 504 },
-    { name: "Jollof Rice", quantity: 38, revenue: 456 },
-    { name: "Grilled Fish", quantity: 25, revenue: 375 },
-    { name: "Beef Shawarma", quantity: 22, revenue: 242 },
-    { name: "Fresh Juice", quantity: 31, revenue: 155 },
-  ],
-  staff_performance: [
-    {
-      id: 1,
-      name: "Mary Johnson",
-      orders: 28,
-      sales: 620.5,
-      average_order_value: 22.16,
-      pending_orders: 3,
-      cancelled_orders: 1,
+function formatInputDate(date) {
+  const year = date.getFullYear();
+
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getInitialDateRange() {
+  const today = new Date();
+
+  const sevenDaysAgo = new Date(today);
+
+  sevenDaysAgo.setDate(today.getDate() - 6);
+
+  return {
+    startDate: formatInputDate(sevenDaysAgo),
+    endDate: formatInputDate(today),
+  };
+}
+
+function toNumber(value) {
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function normalizeReport(data) {
+  const emptyReport = createEmptyReport();
+
+  const summary = data?.summary || {};
+
+  return {
+    summary: {
+      weekly_sales: toNumber(summary.weekly_sales),
+      monthly_sales: toNumber(summary.monthly_sales),
+      weekly_orders: toNumber(summary.weekly_orders),
+      monthly_orders: toNumber(summary.monthly_orders),
+      average_order_value: toNumber(summary.average_order_value),
+      active_tables: toNumber(summary.active_tables),
     },
-    {
-      id: 2,
-      name: "James Brown",
-      orders: 22,
-      sales: 480,
-      average_order_value: 21.82,
-      pending_orders: 2,
-      cancelled_orders: 0,
-    },
-    {
-      id: 3,
-      name: "Admin User",
-      orders: 14,
-      sales: 310.25,
-      average_order_value: 22.16,
-      pending_orders: 1,
-      cancelled_orders: 2,
-    },
-  ],
-  recent_orders: [
-    {
-      id: 1001,
-      table: "Table 1",
-      status: "completed",
-      total: 38.5,
-      created_at: "2026-08-11 12:30",
-    },
-    {
-      id: 1002,
-      table: "Table 4",
-      status: "preparing",
-      total: 24,
-      created_at: "2026-08-11 12:45",
-    },
-    {
-      id: 1003,
-      table: "Table 7",
-      status: "pending",
-      total: 18.75,
-      created_at: "2026-08-11 13:05",
-    },
-    {
-      id: 1004,
-      table: "Table 3",
-      status: "completed",
-      total: 52.5,
-      created_at: "2026-08-11 13:20",
-    },
-  ],
-};
+
+    sales_by_day: Array.isArray(data?.sales_by_day)
+      ? data.sales_by_day.map((item) => ({
+          date: item.date || "",
+          sales: toNumber(item.sales),
+        }))
+      : emptyReport.sales_by_day,
+
+    orders_by_status: Array.isArray(data?.orders_by_status)
+      ? data.orders_by_status.map((item) => ({
+          name: item.name || item.status || "Unknown",
+          value: toNumber(item.value ?? item.count),
+        }))
+      : emptyReport.orders_by_status,
+
+    top_items: Array.isArray(data?.top_items)
+      ? data.top_items.map((item) => ({
+          product_id: item.product_id || null,
+          product_name: item.product_name || item.name || "Unnamed product",
+          quantity: toNumber(item.quantity),
+          revenue: toNumber(item.revenue),
+        }))
+      : emptyReport.top_items,
+
+    staff_performance: Array.isArray(data?.staff_performance)
+      ? data.staff_performance.map((staff) => ({
+          id: staff.id || null,
+          name: staff.name || staff.staff_name || "Unknown Staff",
+          orders: toNumber(staff.orders ?? staff.order_count),
+          sales: toNumber(staff.sales ?? staff.total_sales),
+          average_order_value: toNumber(
+            staff.average_order_value ?? staff.average_order
+          ),
+          pending_orders: toNumber(staff.pending_orders),
+          cancelled_orders: toNumber(staff.cancelled_orders),
+        }))
+      : emptyReport.staff_performance,
+
+    recent_orders: Array.isArray(data?.recent_orders)
+      ? data.recent_orders.map((order) => ({
+          id: order.id || null,
+          order_number: order.order_number || null,
+          short_id: order.short_id || null,
+          table: order.table || null,
+          table_number: order.table_number || order.table_name || null,
+          status: order.status || "UNKNOWN",
+          total: toNumber(
+            order.total ?? order.total_price ?? order.total_amount
+          ),
+          created_at: order.created_at || null,
+        }))
+      : emptyReport.recent_orders,
+  };
+}
 
 function Card({ title, value, subtitle, icon: Icon, accent = "blue" }) {
   const accentClasses = {
@@ -155,7 +173,9 @@ function Card({ title, value, subtitle, icon: Icon, accent = "blue" }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-gray-500">{title}</p>
+
           <p className="mt-2 text-2xl font-bold text-gray-900">{value}</p>
+
           {subtitle ? (
             <p className="mt-1 text-xs text-gray-500">{subtitle}</p>
           ) : null}
@@ -175,15 +195,36 @@ function Card({ title, value, subtitle, icon: Icon, accent = "blue" }) {
 }
 
 function StatusBadge({ status }) {
-  const normalized = String(status || "").toLowerCase();
+  const normalized = String(status || "")
+    .trim()
+    .toUpperCase();
+
+  const labels = {
+    DRAFT: "Draft",
+    PLACED: "Placed",
+    IN_PROGRESS: "In Progress",
+    PREPARING: "Preparing",
+    READY: "Ready",
+    SERVED: "Served",
+    COMPLETED: "Completed",
+    PAID: "Paid",
+    PENDING: "Pending",
+    CANCELED: "Canceled",
+    CANCELLED: "Canceled",
+  };
 
   const classes = {
-    completed: "bg-green-100 text-green-700",
-    paid: "bg-green-100 text-green-700",
-    pending: "bg-yellow-100 text-yellow-700",
-    preparing: "bg-orange-100 text-orange-700",
-    cancelled: "bg-red-100 text-red-700",
-    canceled: "bg-red-100 text-red-700",
+    DRAFT: "bg-gray-100 text-gray-700",
+    PLACED: "bg-blue-100 text-blue-700",
+    IN_PROGRESS: "bg-orange-100 text-orange-700",
+    PREPARING: "bg-orange-100 text-orange-700",
+    READY: "bg-cyan-100 text-cyan-700",
+    SERVED: "bg-purple-100 text-purple-700",
+    COMPLETED: "bg-green-100 text-green-700",
+    PAID: "bg-green-100 text-green-700",
+    PENDING: "bg-yellow-100 text-yellow-700",
+    CANCELED: "bg-red-100 text-red-700",
+    CANCELLED: "bg-red-100 text-red-700",
   };
 
   return (
@@ -191,7 +232,7 @@ function StatusBadge({ status }) {
       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
         classes[normalized] || "bg-gray-100 text-gray-700"
       }`}>
-      {status || "Unknown"}
+      {labels[normalized] || status || "Unknown"}
     </span>
   );
 }
@@ -204,26 +245,44 @@ function EmptyState({ message }) {
   );
 }
 
+function getTableLabel(order) {
+  if (order.table_number) {
+    return `Table ${order.table_number}`;
+  }
+
+  if (typeof order.table === "string") {
+    return order.table;
+  }
+
+  if (order.table && typeof order.table === "object") {
+    return order.table.table_number || order.table.name || "N/A";
+  }
+
+  return "N/A";
+}
+
+function getOrderLabel(order) {
+  return order.order_number || order.short_id || order.id || "Unknown";
+}
+
 function Reports() {
-  const [startDate, setStartDate] = useState(formatInputDate(sevenDaysAgo));
-  const [endDate, setEndDate] = useState(formatInputDate(today));
-  const [report, setReport] = useState(demoReport);
+  const initialDates = useMemo(() => getInitialDateRange(), []);
+
+  const [startDate, setStartDate] = useState(initialDates.startDate);
+
+  const [endDate, setEndDate] = useState(initialDates.endDate);
+
+  const [report, setReport] = useState(createEmptyReport());
+
   const [loading, setLoading] = useState(false);
-  const [usingDemoData, setUsingDemoData] = useState(false);
+
   const [error, setError] = useState("");
 
-  const summary = report.summary || demoReport.summary;
+  const summary = report.summary;
 
-  const hasSalesData = useMemo(() => {
-    return Array.isArray(report.sales_by_day) && report.sales_by_day.length > 0;
-  }, [report.sales_by_day]);
+  const hasSalesData = report.sales_by_day.length > 0;
 
-  const hasStatusData = useMemo(() => {
-    return (
-      Array.isArray(report.orders_by_status) &&
-      report.orders_by_status.length > 0
-    );
-  }, [report.orders_by_status]);
+  const hasStatusData = report.orders_by_status.length > 0;
 
   async function fetchReports() {
     setLoading(true);
@@ -235,28 +294,20 @@ function Reports() {
           start_date: startDate,
           end_date: endDate,
         },
+        withCredentials: true,
       });
 
       const data = response.data || {};
 
-      setReport({
-        summary: {
-          ...demoReport.summary,
-          ...(data.summary || {}),
-        },
-        sales_by_day: data.sales_by_day || [],
-        orders_by_status: data.orders_by_status || [],
-        top_items: data.top_items || [],
-        staff_performance: data.staff_performance || [],
-        recent_orders: data.recent_orders || [],
-      });
+      console.log("REPORTS API RESPONSE:", data);
 
-      setUsingDemoData(false);
+      setReport(normalizeReport(data));
     } catch (err) {
       console.error("Failed to load reports:", err);
-      setReport(demoReport);
-      setUsingDemoData(true);
-      setError("Could not load live report data. Showing demo data instead.");
+
+      setReport(createEmptyReport());
+
+      setError("Could not load live report data.");
     } finally {
       setLoading(false);
     }
@@ -264,6 +315,9 @@ function Reports() {
 
   useEffect(() => {
     fetchReports();
+
+    // The initial report should load once.
+    // Clicking Apply loads the selected range.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -277,6 +331,7 @@ function Reports() {
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
+
           <p className="mt-1 text-sm text-gray-500">
             Track sales, orders, top items, and staff performance.
           </p>
@@ -289,6 +344,7 @@ function Reports() {
             <label className="mb-1 block text-xs font-semibold text-gray-500">
               Start Date
             </label>
+
             <input
               type="date"
               value={startDate}
@@ -301,6 +357,7 @@ function Reports() {
             <label className="mb-1 block text-xs font-semibold text-gray-500">
               End Date
             </label>
+
             <input
               type="date"
               value={endDate}
@@ -317,49 +374,46 @@ function Reports() {
               size={16}
               className={loading ? "animate-spin" : ""}
             />
+
             {loading ? "Loading..." : "Apply"}
           </button>
         </form>
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
-        </div>
-      ) : null}
-
-      {usingDemoData ? (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          Demo report data is currently displayed. Connect the backend reports
-          endpoint to show live data.
         </div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card
           title="Weekly Sales"
-          value={currency.format(Number(summary.weekly_sales || 0))}
+          value={currency.format(summary.weekly_sales)}
           subtitle="Current week"
           icon={TrendingUp}
           accent="green"
         />
+
         <Card
           title="Monthly Sales"
-          value={currency.format(Number(summary.monthly_sales || 0))}
+          value={currency.format(summary.monthly_sales)}
           subtitle="Current month"
           icon={DollarSign}
           accent="blue"
         />
+
         <Card
           title="Weekly Orders"
-          value={Number(summary.weekly_orders || 0).toLocaleString()}
+          value={summary.weekly_orders.toLocaleString()}
           subtitle="Orders this week"
           icon={ShoppingBag}
           accent="orange"
         />
+
         <Card
           title="Monthly Orders"
-          value={Number(summary.monthly_orders || 0).toLocaleString()}
+          value={summary.monthly_orders.toLocaleString()}
           subtitle="Orders this month"
           icon={ClipboardList}
           accent="purple"
@@ -369,14 +423,15 @@ function Reports() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card
           title="Average Order Value"
-          value={currency.format(Number(summary.average_order_value || 0))}
+          value={currency.format(summary.average_order_value)}
           subtitle={`${startDate} to ${endDate}`}
           icon={CalendarDays}
           accent="cyan"
         />
+
         <Card
           title="Active Tables"
-          value={Number(summary.active_tables || 0).toLocaleString()}
+          value={summary.active_tables.toLocaleString()}
           subtitle="Currently in use"
           icon={Utensils}
           accent="red"
@@ -387,8 +442,9 @@ function Reports() {
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="mb-5">
             <h2 className="text-lg font-bold text-gray-900">Sales Trend</h2>
+
             <p className="text-sm text-gray-500">
-              Daily completed/paid order sales for the selected period.
+              Daily sales from paid orders for the selected period.
             </p>
           </div>
 
@@ -402,15 +458,20 @@ function Reports() {
                     strokeDasharray="3 3"
                     stroke="#e5e7eb"
                   />
+
                   <XAxis
                     dataKey="date"
                     tick={{ fontSize: 12 }}
                   />
+
                   <YAxis tick={{ fontSize: 12 }} />
+
                   <Tooltip
-                    formatter={(value) => currency.format(Number(value || 0))}
+                    formatter={(value) => currency.format(toNumber(value))}
                   />
+
                   <Legend />
+
                   <Line
                     type="monotone"
                     dataKey="sales"
@@ -433,6 +494,7 @@ function Reports() {
             <h2 className="text-lg font-bold text-gray-900">
               Orders by Status
             </h2>
+
             <p className="text-sm text-gray-500">
               Order count grouped by current status.
             </p>
@@ -459,6 +521,7 @@ function Reports() {
                       />
                     ))}
                   </Pie>
+
                   <Tooltip />
                   <Legend />
                 </PieChart>
@@ -473,12 +536,13 @@ function Reports() {
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-5">
           <h2 className="text-lg font-bold text-gray-900">Top Selling Items</h2>
+
           <p className="text-sm text-gray-500">
-            Best-selling menu items from completed/paid orders.
+            Best-selling items from paid orders.
           </p>
         </div>
 
-        {report.top_items && report.top_items.length > 0 ? (
+        {report.top_items.length > 0 ? (
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <div className="h-80">
               <ResponsiveContainer
@@ -489,13 +553,18 @@ function Reports() {
                     strokeDasharray="3 3"
                     stroke="#e5e7eb"
                   />
+
                   <XAxis
-                    dataKey="name"
+                    dataKey="product_name"
                     tick={{ fontSize: 12 }}
                   />
+
                   <YAxis tick={{ fontSize: 12 }} />
+
                   <Tooltip />
+
                   <Legend />
+
                   <Bar
                     dataKey="quantity"
                     name="Quantity Sold"
@@ -510,23 +579,30 @@ function Reports() {
                 <thead>
                   <tr className="border-b text-gray-500">
                     <th className="py-3 font-semibold">Item</th>
+
                     <th className="py-3 font-semibold">Qty</th>
+
                     <th className="py-3 font-semibold">Revenue</th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {report.top_items.map((item) => (
+                  {report.top_items.map((item, index) => (
                     <tr
-                      key={item.product_name}
+                      key={`${item.product_id || "product"}-${
+                        item.product_name
+                      }-${index}`}
                       className="border-b last:border-0">
                       <td className="py-3 font-medium text-gray-900">
                         {item.product_name}
                       </td>
+
                       <td className="py-3 text-gray-600">
-                        {Number(item.quantity || 0).toLocaleString()}
+                        {item.quantity.toLocaleString()}
                       </td>
+
                       <td className="py-3 text-gray-600">
-                        {currency.format(Number(item.revenue || 0))}
+                        {currency.format(item.revenue)}
                       </td>
                     </tr>
                   ))}
@@ -542,24 +618,31 @@ function Reports() {
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-5">
           <h2 className="text-lg font-bold text-gray-900">Staff Performance</h2>
+
           <p className="text-sm text-gray-500">
             Staff order volume, sales, and order status breakdown.
           </p>
         </div>
 
-        {report.staff_performance && report.staff_performance.length > 0 ? (
+        {report.staff_performance.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b text-gray-500">
                   <th className="py-3 font-semibold">Staff</th>
+
                   <th className="py-3 font-semibold">Orders</th>
+
                   <th className="py-3 font-semibold">Sales</th>
+
                   <th className="py-3 font-semibold">Avg Order</th>
+
                   <th className="py-3 font-semibold">Pending</th>
+
                   <th className="py-3 font-semibold">Cancelled</th>
                 </tr>
               </thead>
+
               <tbody>
                 {report.staff_performance.map((staff) => (
                   <tr
@@ -572,23 +655,29 @@ function Reports() {
                             .slice(0, 1)
                             .toUpperCase()}
                         </span>
+
                         {staff.name || "Unknown Staff"}
                       </div>
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {Number(staff.orders || 0).toLocaleString()}
+                      {staff.orders.toLocaleString()}
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {currency.format(Number(staff.sales || 0))}
+                      {currency.format(staff.sales)}
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {currency.format(Number(staff.average_order_value || 0))}
+                      {currency.format(staff.average_order_value)}
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {Number(staff.pending_orders || 0).toLocaleString()}
+                      {staff.pending_orders.toLocaleString()}
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {Number(staff.cancelled_orders || 0).toLocaleString()}
+                      {staff.cancelled_orders.toLocaleString()}
                     </td>
                   </tr>
                 ))}
@@ -603,40 +692,50 @@ function Reports() {
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-5">
           <h2 className="text-lg font-bold text-gray-900">Recent Orders</h2>
+
           <p className="text-sm text-gray-500">
             Latest orders created in the selected period.
           </p>
         </div>
 
-        {report.recent_orders && report.recent_orders.length > 0 ? (
+        {report.recent_orders.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b text-gray-500">
                   <th className="py-3 font-semibold">Order</th>
+
                   <th className="py-3 font-semibold">Table</th>
+
                   <th className="py-3 font-semibold">Status</th>
+
                   <th className="py-3 font-semibold">Total</th>
+
                   <th className="py-3 font-semibold">Created</th>
                 </tr>
               </thead>
+
               <tbody>
                 {report.recent_orders.map((order) => (
                   <tr
-                    key={order.id}
+                    key={order.id || order.order_number}
                     className="border-b last:border-0">
                     <td className="py-3 font-medium text-gray-900">
-                      #{order.id}
+                      #{getOrderLabel(order)}
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {order.table || "N/A"}
+                      {getTableLabel(order)}
                     </td>
+
                     <td className="py-3">
                       <StatusBadge status={order.status} />
                     </td>
+
                     <td className="py-3 text-gray-600">
-                      {currency.format(Number(order.total || 0))}
+                      {currency.format(order.total)}
                     </td>
+
                     <td className="py-3 text-gray-600">
                       {order.created_at || "N/A"}
                     </td>

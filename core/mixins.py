@@ -1,112 +1,158 @@
 # core/mixins.py
 
-from django.core.exceptions import PermissionDenied
-from django.shortcuts import redirect
-
-
-# =============================================================================
-# Subscription Enforcement
-# =============================================================================
-
-# =============================================================================
-# Subscription Enforcement
-# =============================================================================
+from rest_framework.exceptions import (
+    NotAuthenticated,
+    PermissionDenied,
+)
 
 from core.utils import has_active_subscription
 
 
-class SubscriptionRequiredMixin:
+class GlobalAuthorityMixin:
     """
-    Ensures the user's restaurant has an active subscription.
-    Superusers and platform owners bypass this check.
+    Shared helpers for superusers and platform owners.
     """
 
-    def dispatch(self, request, *args, **kwargs):
+    def is_global_authority(self):
+        user = self.request.user
+
+        return (
+            user.is_authenticated
+            and (
+                user.is_superuser
+                or getattr(
+                    user,
+                    "is_platform_owner",
+                    False,
+                )
+            )
+        )
+
+
+class SubscriptionRequiredMixin(
+    GlobalAuthorityMixin
+):
+    """
+    Requires an authenticated user with an
+    active restaurant subscription.
+
+    Superusers and platform owners bypass
+    subscription enforcement.
+    """
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(
+            request,
+            *args,
+            **kwargs,
+        )
 
         user = request.user
 
-        # ✅ Global authority bypass
-        if user.is_superuser or getattr(user, "is_platform_owner", False):
-            return super().dispatch(request, *args, **kwargs)
-
         if not user.is_authenticated:
-            return redirect("core:login")
+            raise NotAuthenticated(
+                "Authentication credentials were not provided."
+            )
 
-        restaurant = getattr(user, "restaurant", None)
+        if self.is_global_authority():
+            return
 
-        if not restaurant:
-            return redirect("core:subscription_expired")
+        restaurant = getattr(
+            user,
+            "restaurant",
+            None,
+        )
 
-        # ✅ USE CENTRALIZED SUBSCRIPTION LOGIC
-        if not has_active_subscription(restaurant):
-            return redirect("core:subscription_expired")
+        if restaurant is None:
+            raise PermissionDenied(
+                "User is not assigned to a restaurant."
+            )
 
-        return super().dispatch(request, *args, **kwargs)
+        if not has_active_subscription(
+            restaurant
+        ):
+            raise PermissionDenied(
+                "An active subscription is required."
+            )
 
-# =============================================================================
-# Multi-Tenant Isolation
-# =============================================================================
 
-class RestaurantScopedMixin:
+class RestaurantScopedMixin(
+    GlobalAuthorityMixin
+):
     """
-    Multi-tenant safety mixin for SaaS architecture.
+    Restricts queryset results and object access
+    to the authenticated user's restaurant.
     """
 
     restaurant_field_name = "restaurant"
 
     def get_restaurant(self):
-        user = getattr(self.request, "user", None)
+        user = self.request.user
 
-        if not user or not user.is_authenticated:
-            raise PermissionDenied("Authentication required.")
+        if not user.is_authenticated:
+            raise NotAuthenticated(
+                "Authentication credentials were not provided."
+            )
 
-        # ✅ Global authority bypass
-        if user.is_superuser or getattr(user, "is_platform_owner", False):
+        if self.is_global_authority():
             return None
 
-        restaurant = getattr(user, "restaurant", None)
+        restaurant = getattr(
+            user,
+            "restaurant",
+            None,
+        )
 
-        if not restaurant:
-            raise PermissionDenied("User is not assigned to a restaurant.")
+        if restaurant is None:
+            raise PermissionDenied(
+                "User is not assigned to a restaurant."
+            )
 
         return restaurant
 
     def get_queryset(self):
-        base_qs = super().get_queryset()
-        user = self.request.user
+        queryset = super().get_queryset()
 
-        # ✅ Global authority bypass
-        if user.is_superuser or getattr(user, "is_platform_owner", False):
-            return base_qs
+        if self.is_global_authority():
+            return queryset
 
         restaurant = self.get_restaurant()
 
-        return base_qs.filter(**{
-            self.restaurant_field_name: restaurant
-        })
+        return queryset.filter(
+            **{
+                self.restaurant_field_name:
+                restaurant
+            }
+        )
 
-    def get_object(self, queryset=None):
-        obj = super().get_object(queryset)
-        user = self.request.user
+    def get_object(self):
+        obj = super().get_object()
 
-        # ✅ Global authority bypass
-        if user.is_superuser or getattr(user, "is_platform_owner", False):
+        if self.is_global_authority():
             return obj
 
-        obj_restaurant = getattr(obj, self.restaurant_field_name, None)
+        user_restaurant = self.get_restaurant()
+        object_restaurant = getattr(
+            obj,
+            self.restaurant_field_name,
+            None,
+        )
 
-        if obj_restaurant != user.restaurant:
-            raise PermissionDenied("Cross-restaurant access denied.")
+        if object_restaurant != user_restaurant:
+            raise PermissionDenied(
+                "Cross-restaurant access denied."
+            )
 
         return obj
 
     def perform_create(self, serializer):
-        user = self.request.user
-
-        # ✅ Global authority bypass
-        if user.is_superuser or getattr(user, "is_platform_owner", False):
+        if self.is_global_authority():
             serializer.save()
-        else:
-            serializer.save(**{
-                self.restaurant_field_name: self.get_restaurant()
-            })
+            return
+
+        serializer.save(
+            **{
+                self.restaurant_field_name:
+                self.get_restaurant()
+            }
+        )

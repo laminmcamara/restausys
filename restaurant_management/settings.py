@@ -404,12 +404,14 @@ if not STRIPE_SECRET_KEY:
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = False
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
-    "https://yourfrontenddomain.com",
+    "http://127.0.0.1:5173",
 ]
+
+CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_HEADERS = [
     *default_headers,

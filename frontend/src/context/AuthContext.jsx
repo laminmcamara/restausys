@@ -22,7 +22,7 @@ export function AuthProvider({ children }) {
 
   const fetchUser = async (token) => {
     try {
-      const response = await fetch(`${API_BASE}/api/me/`, {
+      const response = await fetch(`${API_BASE}/api/v1/me/`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -64,7 +64,7 @@ export function AuthProvider({ children }) {
     setAuthLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE}/api/token/`, {
+      const response = await fetch(`${API_BASE}/api/v1/token/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -75,15 +75,18 @@ export function AuthProvider({ children }) {
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
+        console.error("Login failed:", data);
+
         setAuthLoading(false);
         return false;
       }
 
-      const data = await response.json();
+      localStorage.setItem("access_token", data.access);
 
-      localStorage.setItem("accessToken", data.access);
-      localStorage.setItem("refreshToken", data.refresh);
+      localStorage.setItem("refresh_token", data.refresh);
 
       setAccessToken(data.access);
 
@@ -94,11 +97,12 @@ export function AuthProvider({ children }) {
       return true;
     } catch (err) {
       console.error("Login error:", err);
+
       setAuthLoading(false);
+
       return false;
     }
   };
-
   // New function to fetch with authorization
   const authFetch = async (url, options = {}) => {
     const headers = {

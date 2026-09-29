@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import api from "../services/api";
@@ -14,9 +14,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Best-effort: determine the restaurant name from the logged-in user/tenant first
   const restaurantName = useMemo(() => {
-    // Common patterns depending on your backend/serializer
     return (
       user?.restaurant?.name ||
       user?.restaurant_name ||
@@ -29,95 +27,225 @@ export default function Dashboard() {
   }, [user, dashboardData]);
 
   useEffect(() => {
-    const loadDashboard = async () => {
+    let cancelled = false;
+
+    async function loadDashboard() {
       try {
         setLoading(true);
-        const response = await api.get("/settings/");
-        setDashboardData(response.data);
+        setError("");
+
+        const response = await api.get("/dashboard/");
+
+        if (!cancelled) {
+          setDashboardData(response.data);
+        }
       } catch (err) {
         console.error("DASHBOARD ERROR:", err);
-        setError(
-          err?.response?.data?.message ||
+
+        if (!cancelled) {
+          setError(
             err?.response?.data?.detail ||
-            "Could not load dashboard data."
-        );
+              err?.response?.data?.message ||
+              "Could not load dashboard data."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    };
+    }
 
     loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Auto-hide success messages after 5 seconds
   useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => setMessage(""), 5000);
+    if (!message) {
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      setMessage("");
+    }, 5000);
+
     return () => clearTimeout(timer);
   }, [message]);
 
-  // 1. Handle Loading State
   if (loading || !user) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center p-8">
         <div className="animate-pulse text-gray-500">Loading dashboard...</div>
       </div>
     );
   }
 
-  // 2. Handle Error State
   if (error) {
     return (
       <div className="p-8">
         <div
-          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative"
+          className="rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700"
           role="alert">
           <strong className="font-bold">Error: </strong>
-          <span className="block sm:inline">{error}</span>
+          <span>{error}</span>
         </div>
       </div>
     );
   }
 
+  const summary = dashboardData?.summary || {};
+  const trends = dashboardData?.trends || {};
+
   return (
-    <main className="p-8 max-w-7xl mx-auto">
-      {/* Success Notification */}
+    <main className="mx-auto max-w-7xl p-8">
       {message && (
         <div
-          className="mb-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative"
+          className="relative mb-4 rounded border border-green-400 bg-green-100 px-4 py-3 text-green-700"
           role="alert">
           {message}
         </div>
       )}
 
-      {/* Header Section */}
       <header className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">{restaurantName}</h1>
 
         <p className="text-gray-600">
-          Welcome back, <span className="font-semibold">{user.username}</span>.{" "}
-          Here is your {dashboardData?.company?.name || "BEEPOS"} overview.
+          Welcome back, <span className="font-semibold">{user.username}</span>.
+          Here is your restaurant overview.
         </p>
       </header>
 
-      {/* Onboarding Alert */}
       {dashboardData?.restaurant?.onboarding_completed === false && (
-        <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800">
+        <div className="mb-6 border-l-4 border-yellow-400 bg-yellow-50 p-4 text-yellow-800">
           <p className="font-medium">Action Required</p>
           <p>Please complete your restaurant profile before the trial ends.</p>
         </div>
       )}
 
-      {/* Dashboard Content Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="p-6 bg-white rounded-lg shadow-sm border border-gray-200">
-          <h3 className="font-semibold text-gray-500 uppercase text-xs">
-            Status
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-gray-500">
+            Today’s Orders
           </h3>
-          <p className="text-2xl font-bold text-green-600">Active</p>
+
+          <p className="text-2xl font-bold text-gray-900">
+            {summary.today_orders ?? 0}
+          </p>
         </div>
-        {/* Add more dashboard widgets here */}
+
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-gray-500">
+            Today’s Revenue
+          </h3>
+
+          <p className="text-2xl font-bold text-green-600">
+            {summary.today_revenue ?? 0}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-gray-500">
+            Active Orders
+          </h3>
+
+          <p className="text-2xl font-bold text-blue-600">
+            {summary.active_orders_count ?? 0}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-gray-500">
+            Tables In Use
+          </h3>
+
+          <p className="text-2xl font-bold text-orange-600">
+            {summary.tables_in_use ?? 0}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-gray-500">
+            This Week’s Orders
+          </h3>
+
+          <p className="text-2xl font-bold text-purple-600">
+            {summary.this_week_orders ?? 0}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase text-gray-500">
+            Monthly Revenue
+          </h3>
+
+          <p className="text-2xl font-bold text-cyan-600">
+            {summary.monthly_revenue ?? 0}
+          </p>
+        </div>
       </div>
+
+      <section className="mt-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-lg font-bold text-gray-900">Trends</h2>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <TrendCard
+            label="Orders"
+            trend={trends.orders}
+          />
+
+          <TrendCard
+            label="Revenue"
+            trend={trends.revenue}
+          />
+
+          <TrendCard
+            label="Weekly Orders"
+            trend={trends.weekly_orders}
+          />
+
+          <TrendCard
+            label="Weekly Revenue"
+            trend={trends.weekly_revenue}
+          />
+        </div>
+      </section>
     </main>
+  );
+}
+
+function TrendCard({ label, trend }) {
+  const percentage = trend?.percentage;
+
+  const direction = trend?.direction;
+
+  if (percentage === null || percentage === undefined) {
+    return (
+      <div className="rounded border border-gray-100 bg-gray-50 p-4">
+        <p className="text-sm text-gray-500">{label}</p>
+
+        <p className="mt-1 text-sm text-gray-500">No comparison data</p>
+      </div>
+    );
+  }
+
+  const color =
+    direction === "up"
+      ? "text-green-600"
+      : direction === "down"
+      ? "text-red-600"
+      : "text-gray-600";
+
+  return (
+    <div className="rounded border border-gray-100 bg-gray-50 p-4">
+      <p className="text-sm text-gray-500">{label}</p>
+
+      <p className={`mt-1 text-xl font-bold ${color}`}>
+        {direction === "up" ? "+" : direction === "down" ? "-" : ""}
+        {percentage}%
+      </p>
+    </div>
   );
 }

@@ -44,6 +44,9 @@ from core.mixins import (
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.template.loader import render_to_string
 from django.db.models import (
+    DecimalField,
+    ExpressionWrapper,
+    F,
     Sum,
     Count,
     Avg,
@@ -340,137 +343,226 @@ def api_home(request):
 # ======================================================================
 
 
-class PosDashboardView(LoginRequiredMixin, TemplateView):
-    template_name = "core/pos/dashboard.html"
+class PosDashboardAPIView(
+    SubscriptionRequiredMixin,
+    APIView,
+):
+    permission_classes = [
+        IsAuthenticated,
+    ]
 
-    # ✅ SHIFT PROTECTION
-    def dispatch(self, request, *args, **kwargs):
-
+    def get_restaurant(self, request):
         user = request.user
 
-        # Only cashiers require active shift
-        if user.is_cashier:
-            active_shift = CashierShift.objects.filter(
-                user=user, restaurant=user.restaurant, is_active=True
-            ).exists()
+        if not user.is_authenticated:
+            return None
 
-            if not active_shift:
-                messages.error(
-                    request, "You must open a cashier shift before accessing POS."
-                )
-                return redirect("core:start_shift")
-
-        return super().dispatch(request, *args, **kwargs)
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-
-        user = self.request.user
-        restaurant = user.restaurant
-
-        # ✅ ACTIVE SHIFT IN CONTEXT
-        active_shift = CashierShift.objects.filter(
-            user=user, restaurant=restaurant, is_active=True
-        ).first()
-
-        context["active_shift"] = active_shift
-
-        # ✅ BASIC INFO
-        context["profile_incomplete"] = not restaurant.profile_complete
-        context["currency"] = restaurant.currency
-        context["current_year"] = timezone.now().year
-
-        # ✅ ACTIVE CATEGORIES
-        context["categories"] = Category.objects.filter(
-            menu__restaurant=restaurant, is_active=True
-        ).order_by("name")
-
-        # ✅ SALES DATA
-        payments = Payment.objects.filter(
-            order__restaurant=restaurant, status=Payment.Status.PAID
+        return getattr(
+            user,
+            "restaurant",
+            None,
         )
 
-        total_sales = payments.aggregate(total=Sum("amount"))["total"] or 0
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        restaurant = self.get_restaurant(request)
 
-        context.update(
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "User is not assigned "
+                        "to a restaurant."
+                    )
+                },
+                status=403,
+            )
+
+        # Cashiers must have an active shift.
+        active_shift = (
+            CashierShift.objects.filter(
+                user=user,
+                restaurant=restaurant,
+                is_active=True,
+            )
+            .order_by("-id")
+            .first()
+        )
+
+        if (
+            getattr(user, "is_cashier", False)
+            and active_shift is None
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "You must open a cashier "
+                        "shift before accessing POS."
+                    ),
+                    "code": "active_shift_required",
+                    "requires_shift": True,
+                },
+                status=403,
+            )
+
+        categories = (
+            Category.objects.filter(
+                menu__restaurant=restaurant,
+                is_active=True,
+            )
+            .distinct()
+            .order_by("name")
+        )
+
+        category_data = [
             {
-                "total_sales": total_sales,
-                "payment_count": payments.count(),
-                "recent_payments": payments.order_by("-created_at")[:5],
+                "id": category.id,
+                "name": category.name,
+            }
+            for category in categories
+        ]
+
+        payments = (
+            Payment.objects.filter(
+                order__restaurant=restaurant,
+                status=Payment.Status.PAID,
+            )
+            .select_related("order")
+            .order_by("-created_at")
+        )
+
+        total_sales = (
+            payments.aggregate(
+                total=Sum("amount")
+            )["total"]
+            or 0
+        )
+
+        recent_payments = [
+            {
+                "id": payment.id,
+                "amount": float(
+                    payment.amount or 0
+                ),
+                "status": payment.status,
+                "created_at": (
+                    payment.created_at.isoformat()
+                    if payment.created_at
+                    else None
+                ),
+                "order_id": payment.order_id,
+            }
+            for payment in payments[:5]
+        ]
+
+        is_cashier = getattr(
+            user,
+            "is_cashier",
+            False,
+        )
+
+        is_manager = getattr(
+            user,
+            "is_manager",
+            False,
+        )
+
+        is_superuser = user.is_superuser
+
+        return Response(
+            {
+                "restaurant": {
+                    "id": restaurant.id,
+                    "name": getattr(
+                        restaurant,
+                        "name",
+                        str(restaurant),
+                    ),
+                    "currency": getattr(
+                        restaurant,
+                        "currency",
+                        None,
+                    ),
+                    "profile_complete": (
+                        getattr(
+                            restaurant,
+                            "profile_complete",
+                            True,
+                        )
+                    ),
+                },
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "is_cashier": is_cashier,
+                    "is_manager": is_manager,
+                    "is_superuser": is_superuser,
+                },
+                "pos": {
+                    "current_year": (
+                        timezone.now().year
+                    ),
+                    "profile_incomplete": not getattr(
+                        restaurant,
+                        "profile_complete",
+                        True,
+                    ),
+                    "active_shift": (
+                        self.serialize_shift(
+                            active_shift
+                        )
+                        if active_shift
+                        else None
+                    ),
+                    "requires_shift": (
+                        is_cashier
+                        and active_shift is None
+                    ),
+                },
+                "categories": category_data,
+                "sales": {
+                    "total_sales": float(
+                        total_sales or 0
+                    ),
+                    "payment_count": payments.count(),
+                    "recent_payments": (
+                        recent_payments
+                    ),
+                },
+                "permissions": {
+                    "can_access_management": (
+                        is_manager
+                        or is_superuser
+                    ),
+                    "can_access_settings": (
+                        is_manager
+                        or is_superuser
+                    ),
+                    "can_view_reports": (
+                        is_manager
+                        or is_superuser
+                    ),
+                },
             }
         )
 
-        # ✅ ROLE-DRIVEN SECTIONS (SMART SHIFT BUTTON)
-        sections = []
-
-        if user.is_cashier:
-
-            if active_shift:
-                shift_item = {
-                    "name": "Close Shift",
-                    "url": "core:close_shift",
-                    "icon": "bi-stop-circle",
-                    "color": "bg-red-600 hover:bg-red-500",
-                }
-            else:
-                shift_item = {
-                    "name": "Open Shift",
-                    "url": "core:start_shift",
-                    "icon": "bi-play-circle",
-                    "color": "bg-green-600 hover:bg-green-500",
-                }
-
-            sections.append(
-                {
-                    "title": "Cashier",
-                    "items": [shift_item],
-                }
-            )
-
-        if user.is_manager or user.is_superuser:
-            sections.append(
-                {
-                    "title": "Management",
-                    "items": [
-                        {
-                            "name": "Manager Dashboard",
-                            "url": "core:manager_dashboard",
-                            "icon": "bi-briefcase",
-                            "color": "bg-blue-900/40 hover:bg-orange-500",
-                        },
-                        {
-                            "name": "Restaurant Dashboard",
-                            "url": "core:restaurant_dashboard",
-                            "icon": "bi-building",
-                            "color": "bg-blue-900/40 hover:bg-orange-500",
-                        },
-                        {
-                            "name": "Settings",
-                            "url": "core:settings",
-                            "icon": "bi-gear",
-                            "color": "bg-blue-900/40 hover:bg-orange-500",
-                        },
-                        {
-                            "name": "Daily Reports",
-                            "url": "core:daily_reports",
-                            "icon": "bi-calendar",
-                            "color": "bg-indigo-600 hover:bg-indigo-700",
-                        },
-                        {
-                            "name": "Analytics",
-                            "url": "core:analytics",
-                            "icon": "bi-graph-up",
-                            "color": "bg-emerald-600 hover:bg-emerald-700",
-                        },
-                    ],
-                }
-            )
-
-        context["dashboard_sections"] = sections
-
-        return context
-
-
+    @staticmethod
+    def serialize_shift(shift):
+        return {
+            "id": shift.id,
+            "is_active": shift.is_active,
+            "opened_at": (
+                shift.opened_at.isoformat()
+                if shift.opened_at
+                else None
+            ),
+            "closed_at": (
+                shift.closed_at.isoformat()
+                if shift.closed_at
+                else None
+            ),
+        }
+        
 # ======================================================================
 # CUSTOMER DISPLAY (SECURED)
 # ======================================================================
@@ -704,125 +796,363 @@ class PeriodSummaryView(LoginRequiredMixin, View):
 # ==========================================================
 # ANALYTICS API VIEW
 # ==========================================================
-class AnalyticsAPIView(LoginRequiredMixin, View):
 
-    def dispatch(self, request, *args, **kwargs):
-        if (
-            request.user.role or ""
-        ).lower() != "manager" and not request.user.is_superuser:
-            raise PermissionDenied("Manager only.")
-        return super().dispatch(request, *args, **kwargs)
-
+class AnalyticsAPIView(
+    SubscriptionRequiredMixin,
+    APIView,
+):
+    permission_classes = [
+        IsAuthenticated,
+    ]
     def get(self, request):
-        restaurant = request.user.restaurant
-
-        now = timezone.now()
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timezone.timedelta(days=1)
-
-        # ✅ Only PAID orders for revenue metrics
-        paid_orders = Order.objects.filter(
-            restaurant=restaurant,
-            created_at__gte=start,
-            created_at__lt=end,
-            payment_status=Order.PaymentStatus.PAID,
+        restaurant = (
+            request.user.restaurant
         )
 
-        total_orders = paid_orders.count()
+        if restaurant is None:
+            return JsonResponse(
+                {
+                    "detail": (
+                        "User is not associated "
+                        "with a restaurant."
+                    )
+                },
+                status=403,
+            )
 
-        # ✅ Use stored total_amount (enterprise-safe)
-        total_revenue = paid_orders.aggregate(total=Sum("total_amount"))["total"] or 0
+        today = timezone.localdate()
 
-        avg_order = total_revenue / total_orders if total_orders else 0
+        start_date_text = (
+            request.GET.get("start_date")
+        )
 
-        # ✅ Operational status counts (all orders today)
-        status_counts = {
-            "draft": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.DRAFT,
-            ).count(),
-            "placed": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.PLACED,
-            ).count(),
-            "in_progress": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.IN_PROGRESS,
-            ).count(),
-            "ready": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.READY,
-            ).count(),
-            "served": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.SERVED,
-            ).count(),
-            "completed": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.COMPLETED,
-            ).count(),
-            "canceled": Order.objects.filter(
-                restaurant=restaurant,
-                created_at__gte=start,
-                created_at__lt=end,
-                status=Order.Status.CANCELED,
-            ).count(),
+        end_date_text = (
+            request.GET.get("end_date")
+        )
+
+        try:
+            if start_date_text:
+                start_date = datetime.strptime(
+                    start_date_text,
+                    "%Y-%m-%d",
+                ).date()
+            else:
+                start_date = (
+                    today - timedelta(days=6)
+                )
+
+            if end_date_text:
+                end_date = datetime.strptime(
+                    end_date_text,
+                    "%Y-%m-%d",
+                ).date()
+            else:
+                end_date = today
+
+        except ValueError:
+            return JsonResponse(
+                {
+                    "detail": (
+                        "Dates must use "
+                        "YYYY-MM-DD."
+                    )
+                },
+                status=400,
+            )
+
+        if start_date > end_date:
+            return JsonResponse(
+                {
+                    "detail": (
+                        "start_date cannot be "
+                        "after end_date."
+                    )
+                },
+                status=400,
+            )
+
+        orders = Order.objects.filter(
+            restaurant=restaurant,
+            created_at__date__range=[
+                start_date,
+                end_date,
+            ],
+        )
+
+        paid_orders = orders.filter(
+            payment_status=(
+                Order.PaymentStatus.PAID
+            ),
+        )
+
+        paid_summary = paid_orders.aggregate(
+            sales=Sum("total"),
+            average=Avg("total"),
+        )
+
+        sales_total = (
+            paid_summary["sales"] or 0
+        )
+
+        average_order_value = (
+            paid_summary["average"] or 0
+        )
+
+        weekly_sales = sales_total
+        monthly_sales = sales_total
+
+        weekly_orders = orders.count()
+        monthly_orders = orders.count()
+
+        active_tables = Table.objects.filter(
+            restaurant=restaurant,
+            is_occupied=True,
+        ).count()
+
+        summary = {
+            "weekly_sales": float(
+                weekly_sales
+            ),
+            "monthly_sales": float(
+                monthly_sales
+            ),
+            "weekly_orders": weekly_orders,
+            "monthly_orders": monthly_orders,
+            "average_order_value": float(
+                average_order_value
+            ),
+            "active_tables": active_tables,
         }
 
-        # ✅ Revenue by hour (only paid orders)
-        hourly_qs = (
-            paid_orders.annotate(hour=ExtractHour("created_at"))
-            .values("hour")
-            .annotate(total=Sum("total_amount"))
-            .order_by("hour")
-        )
-
-        hourly_revenue = [
-            {"hour": entry["hour"], "total": float(entry["total"] or 0)}
-            for entry in hourly_qs
-        ]
-
-        # ✅ Best selling items (faster + scalable version)
-        best_items_qs = (
-            OrderItem.objects.filter(
-                order__restaurant=restaurant,
-                order__created_at__gte=start,
-                order__created_at__lt=end,
-                order__payment_status=Order.PaymentStatus.PAID,
+        status_rows = (
+            orders
+            .values("status")
+            .annotate(
+                value=Count("id")
             )
-            .values("menu_item__name")
-            .annotate(qty=Sum("quantity"))
-            .order_by("-qty")[:5]
+            .order_by("status")
         )
 
-        best_items = [
-            {"name": item["menu_item__name"], "qty": item["qty"] or 0}
-            for item in best_items_qs
+        orders_by_status = [
+            {
+                "name": (
+                    str(row["status"])
+                    .replace(
+                        "_",
+                        " ",
+                    )
+                    .title()
+                ),
+                "value": row["value"],
+            }
+            for row in status_rows
         ]
+
+        sales_rows = (
+            paid_orders
+            .annotate(
+                day=TruncDate(
+                    "created_at"
+                )
+            )
+            .values("day")
+            .annotate(
+                sales=Sum("total")
+            )
+            .order_by("day")
+        )
+
+        sales_by_day = [
+            {
+                "date": row["day"].isoformat(),
+                "sales": float(
+                    row["sales"] or 0
+                ),
+            }
+            for row in sales_rows
+        ]
+
+        top_item_rows = (
+            OrderItem.objects
+            .filter(
+                order__in=paid_orders,
+                product__isnull=False,
+            )
+            .annotate(
+                line_total=ExpressionWrapper(
+                    F("final_price") * F("quantity"),
+                    output_field=DecimalField(
+                        max_digits=12,
+                        decimal_places=2,
+                    ),
+                )
+            )
+            .values(
+                "product_id",
+                "product__name",
+            )
+            .annotate(
+                quantity=Sum("quantity"),
+                revenue=Sum("line_total"),
+            )
+            .order_by("-quantity")[:10]
+        )
+        top_items = [
+            {
+                "product_id": row["product_id"],
+                "product_name": (
+                    row["product__name"]
+                    or "Unnamed product"
+                ),
+                "quantity": row["quantity"] or 0,
+                "revenue": float(
+                    row["revenue"] or 0
+                ),
+            }
+            for row in top_item_rows
+        ]
+        staff_rows = (
+            paid_orders
+            .filter(
+                created_by__isnull=False,
+            )
+            .values(
+                "created_by_id",
+                "created_by__username",
+            )
+            .annotate(
+                orders=Count("id"),
+                sales=Sum("total"),
+                average_order_value=Avg(
+                    "total"
+                ),
+            )
+            .order_by("-sales")
+        )
+
+        staff_performance = []
+
+        for row in staff_rows:
+            staff_id = row[
+                "created_by_id"
+            ]
+
+            pending_orders = orders.filter(
+                created_by_id=staff_id,
+                status__in=[
+                    Order.Status.DRAFT,
+                    Order.Status.PLACED,
+                    Order.Status.IN_PROGRESS,
+                ],
+            ).count()
+
+            cancelled_orders = orders.filter(
+                created_by_id=staff_id,
+                status__in=[
+                    Order.Status.CANCELED,
+                ],
+            ).count()
+
+            staff_performance.append(
+                {
+                    "id": staff_id,
+                    "name": (
+                        row[
+                            "created_by__username"
+                        ]
+                        or "Unknown Staff"
+                    ),
+                    "orders": (
+                        row["orders"] or 0
+                    ),
+                    "sales": float(
+                        row["sales"] or 0
+                    ),
+                    "average_order_value": float(
+                        row[
+                            "average_order_value"
+                        ]
+                        or 0
+                    ),
+                    "pending_orders": (
+                        pending_orders
+                    ),
+                    "cancelled_orders": (
+                        cancelled_orders
+                    ),
+                }
+            )
+
+        recent_orders = []
+
+        for order in orders.select_related(
+            "restaurant",
+            "table",
+        ).order_by(
+            "-created_at"
+        )[:10]:
+            table_label = "N/A"
+
+            if order.table_id:
+                table_label = (
+                    f"{order.restaurant.name}"
+                    f" - Table "
+                    f"{order.table.table_number}"
+                )
+            elif (
+                order.order_type
+                == Order.OrderType.TAKEOUT
+            ):
+                table_label = "Take-out"
+
+            recent_orders.append(
+                {
+                    "id": str(order.id),
+                    "order_number": (
+                        order.order_number
+                    ),
+                    "short_id": (
+                        f"ORD-"
+                        f"{str(order.id)[:6].upper()}"
+                    ),
+                    "table": table_label,
+                    "table_number": (
+                        order.table.table_number
+                        if order.table_id
+                        else None
+                    ),
+                    "status": order.status,
+                    "total": float(
+                        order.total or 0
+                    ),
+                    "created_at": (
+                        timezone.localtime(
+                            order.created_at
+                        ).strftime(
+                            "%Y-%m-%d %H:%M"
+                        )
+                    ),
+                }
+            )
 
         return JsonResponse(
             {
-                "total_orders": total_orders,
-                "total_revenue": float(total_revenue),
-                "avg_order": float(avg_order),
-                "status_counts": status_counts,
-                "hourly_revenue": hourly_revenue,
-                "best_items": best_items,
+                "summary": summary,
+                "sales_by_day": (
+                    sales_by_day
+                ),
+                "orders_by_status": (
+                    orders_by_status
+                ),
+                "top_items": top_items,
+                "staff_performance": (
+                    staff_performance
+                ),
+                "recent_orders": (
+                    recent_orders
+                ),
             }
         )
-
 
 # ==========================================================
 # ANALYTICS DASHBOARD PAGE VIEW
@@ -908,8 +1238,13 @@ def create_order_api(request):
                 continue
 
             unit_price = variant.price
-            line_total = unit_price * qty
-
+            line_total = ExpressionWrapper(
+            F("final_price") * F("quantity"),
+            output_field=DecimalField(
+            max_digits=12,
+            decimal_places=2,
+                ),
+            )
             OrderItem.objects.create(
                 order=order,
                 product=variant.product,
@@ -4979,222 +5314,463 @@ class ManagerDashboardView(LoginRequiredMixin, TemplateView):
         return context
 
 
-class RestaurantDashboardView(LoginRequiredMixin, TemplateView):
-    template_name = "core/restaurant_dashboard.html"
+class RestaurantDashboardView(
+    SubscriptionRequiredMixin,
+    RestaurantScopedMixin,
+    APIView,
+):
+    permission_classes = [
+        IsAuthenticated,
+    ]
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
+    def get_restaurant_for_user(self, request):
+        user = request.user
 
-        # ✅ Resolve restaurant safely
-        restaurant = Restaurant.objects.filter(users=self.request.user).first()
+        if (
+            user.is_superuser
+            or getattr(
+                user,
+                "is_platform_owner",
+                False,
+            )
+        ):
+            restaurant_id = request.query_params.get(
+                "restaurant_id"
+            )
 
-        if not restaurant:
-            return context  # or raise PermissionDenied
+            if restaurant_id:
+                return Restaurant.objects.filter(
+                    pk=restaurant_id
+                ).first()
+
+            return Restaurant.objects.first()
+
+        return getattr(
+            user,
+            "restaurant",
+            None,
+        )
+
+    @staticmethod
+    def calculate_trend(current, previous):
+        current = float(current or 0)
+        previous = float(previous or 0)
+
+        if previous == 0:
+            return {
+                "percentage": None,
+                "direction": None,
+            }
+
+        raw = round(
+            ((current - previous) / previous)
+            * 100,
+            1,
+        )
+
+        if raw > 0:
+            direction = "up"
+        elif raw < 0:
+            direction = "down"
+        else:
+            direction = "neutral"
+
+        return {
+            "percentage": abs(raw),
+            "direction": direction,
+        }
+
+    @staticmethod
+    def money(value):
+        return float(value or 0)
+
+    def get(self, request, *args, **kwargs):
+        restaurant = self.get_restaurant_for_user(
+            request
+        )
+
+        if restaurant is None:
+            return Response(
+                {
+                    "detail": (
+                        "No restaurant is assigned "
+                        "to this user."
+                    )
+                },
+                status=403,
+            )
 
         today = timezone.localdate()
         yesterday = today - timedelta(days=1)
 
-        # ================= ACTIVE ORDERS =================
+        week_start = (
+            today
+            - timedelta(days=today.weekday())
+        )
+        last_week_start = (
+            week_start - timedelta(days=7)
+        )
+        last_week_end = (
+            week_start - timedelta(days=1)
+        )
+
+        month_start = today.replace(day=1)
+        seven_days_ago = (
+            today - timedelta(days=6)
+        )
+
+        order_filter = {
+            "restaurant": restaurant,
+        }
+
+        payment_filter = {
+            "order__restaurant": restaurant,
+        }
+
+        # Active orders
         active_orders_count = Order.objects.filter(
-            restaurant=restaurant, status=Order.Status.PLACED
+            **order_filter,
+            status=Order.Status.PLACED,
         ).count()
 
-        # ================= TABLES IN USE =================
+        # Tables in use
         tables_in_use = Table.objects.filter(
             restaurant=restaurant,
-            status__in=[Table.Status.OCCUPIED, Table.Status.RESERVED],
+            status__in=[
+                Table.Status.OCCUPIED,
+                Table.Status.RESERVED,
+            ],
         ).count()
 
-        # ================= TODAY =================
-        today_orders_qs = Order.objects.filter(
-            restaurant=restaurant, created_at__date=today
-        )
+        # Orders
+        today_orders = Order.objects.filter(
+            **order_filter,
+            created_at__date=today,
+        ).count()
 
-        today_orders = today_orders_qs.count()
+        yesterday_orders = Order.objects.filter(
+            **order_filter,
+            created_at__date=yesterday,
+        ).count()
 
+        this_week_orders = Order.objects.filter(
+            **order_filter,
+            created_at__date__range=(
+                week_start,
+                today,
+            ),
+        ).count()
+
+        last_week_orders = Order.objects.filter(
+            **order_filter,
+            created_at__date__range=(
+                last_week_start,
+                last_week_end,
+            ),
+        ).count()
+
+        # Payments and revenue
         today_revenue = (
             Payment.objects.filter(
-                order__restaurant=restaurant, created_at__date=today
-            ).aggregate(total=Sum("amount"))["total"]
+                **payment_filter,
+                created_at__date=today,
+            ).aggregate(
+                total=Sum("amount")
+            )["total"]
             or 0
         )
-
-        # ================= YESTERDAY =================
-        yesterday_orders = Order.objects.filter(
-            restaurant=restaurant, created_at__date=yesterday
-        ).count()
 
         yesterday_revenue = (
             Payment.objects.filter(
-                order__restaurant=restaurant, created_at__date=yesterday
-            ).aggregate(total=Sum("amount"))["total"]
+                **payment_filter,
+                created_at__date=yesterday,
+            ).aggregate(
+                total=Sum("amount")
+            )["total"]
             or 0
         )
-
-        # ================= WEEK =================
-        week_start = today - timedelta(days=today.weekday())
-        last_week_start = week_start - timedelta(days=7)
-        last_week_end = week_start - timedelta(days=1)
-
-        this_week_orders = Order.objects.filter(
-            restaurant=restaurant, created_at__date__gte=week_start
-        ).count()
 
         this_week_revenue = (
             Payment.objects.filter(
-                order__restaurant=restaurant, created_at__date__gte=week_start
-            ).aggregate(total=Sum("amount"))["total"]
+                **payment_filter,
+                created_at__date__range=(
+                    week_start,
+                    today,
+                ),
+            ).aggregate(
+                total=Sum("amount")
+            )["total"]
             or 0
         )
-
-        last_week_orders = Order.objects.filter(
-            restaurant=restaurant,
-            created_at__date__range=(last_week_start, last_week_end),
-        ).count()
 
         last_week_revenue = (
             Payment.objects.filter(
-                order__restaurant=restaurant,
-                created_at__date__range=(last_week_start, last_week_end),
-            ).aggregate(total=Sum("amount"))["total"]
+                **payment_filter,
+                created_at__date__range=(
+                    last_week_start,
+                    last_week_end,
+                ),
+            ).aggregate(
+                total=Sum("amount")
+            )["total"]
             or 0
         )
-
-        # ================= MONTH =================
-        month_start = today.replace(day=1)
 
         monthly_revenue = (
             Payment.objects.filter(
-                order__restaurant=restaurant, created_at__date__gte=month_start
-            ).aggregate(total=Sum("amount"))["total"]
+                **payment_filter,
+                created_at__date__gte=month_start,
+            ).aggregate(
+                total=Sum("amount")
+            )["total"]
             or 0
         )
 
-        # ================= TREND CALC =================
-        def calculate_trend(current, previous):
-            if previous == 0:
-                return None, None
-
-            raw = round(((current - previous) / previous) * 100, 1)
-
-            if raw > 0:
-                direction = "up"
-            elif raw < 0:
-                direction = "down"
-            else:
-                direction = "neutral"
-
-            return abs(raw), direction
-
-        orders_trend, orders_trend_direction = calculate_trend(
-            today_orders, yesterday_orders
-        )
-
-        revenue_trend, revenue_trend_direction = calculate_trend(
-            today_revenue, yesterday_revenue
-        )
-
-        weekly_trend, trend_direction = calculate_trend(
-            this_week_orders, last_week_orders
-        )
-
-        weekly_revenue_trend, weekly_revenue_trend_direction = calculate_trend(
-            this_week_revenue, last_week_revenue
-        )
-
-        # ================= DAILY REVENUE (7 DAYS) =================
-        seven_days_ago = today - timedelta(days=6)
-
-        daily_qs = (
+        # Seven-day daily revenue
+        daily_rows = (
             Payment.objects.filter(
-                order__restaurant=restaurant, created_at__date__gte=seven_days_ago
+                **payment_filter,
+                created_at__date__gte=seven_days_ago,
+                created_at__date__lte=today,
             )
-            .annotate(day=TruncDate("created_at"))
+            .annotate(
+                day=TruncDate("created_at")
+            )
             .values("day")
-            .annotate(total=Sum("amount"))
+            .annotate(
+                total=Sum("amount")
+            )
             .order_by("day")
         )
 
-        daily_map = {i["day"]: float(i["total"] or 0) for i in daily_qs}
+        daily_map = {
+            row["day"]: self.money(
+                row["total"]
+            )
+            for row in daily_rows
+        }
 
-        daily_labels = []
-        daily_revenue_data = []
+        daily_revenue = []
 
-        for i in range(7):
-            day = seven_days_ago + timedelta(days=i)
-            daily_labels.append(day.strftime("%b %d"))
-            daily_revenue_data.append(daily_map.get(day, 0))
+        for offset in range(7):
+            day = (
+                seven_days_ago
+                + timedelta(days=offset)
+            )
 
-        # ================= HOURLY REVENUE =================
-        hourly_qs = (
-            Payment.objects.filter(order__restaurant=restaurant, created_at__date=today)
-            .annotate(hour=TruncHour("created_at"))
+            daily_revenue.append(
+                {
+                    "date": day.isoformat(),
+                    "label": day.strftime(
+                        "%b %d"
+                    ),
+                    "total": daily_map.get(
+                        day,
+                        0,
+                    ),
+                }
+            )
+
+        # Hourly revenue for today
+        hourly_rows = (
+            Payment.objects.filter(
+                **payment_filter,
+                created_at__date=today,
+            )
+            .annotate(
+                hour=TruncHour("created_at")
+            )
             .values("hour")
-            .annotate(total=Sum("amount"))
+            .annotate(
+                total=Sum("amount")
+            )
             .order_by("hour")
         )
 
-        hourly_map = {i["hour"].hour: float(i["total"] or 0) for i in hourly_qs}
+        hourly_map = {
+            row["hour"].hour: self.money(
+                row["total"]
+            )
+            for row in hourly_rows
+        }
 
-        hourly_labels = []
-        hourly_revenue_data = []
-
-        for hour in range(24):
-            hourly_labels.append(f"{hour:02d}:00")
-            hourly_revenue_data.append(hourly_map.get(hour, 0))
-
-        # ================= ACTIVE SESSIONS =================
-        active_sessions = TableSession.objects.filter(
-            restaurant=restaurant, is_active=True
-        ).select_related("table", "section")
-
-        # ================= PAYMENTS =================
-        payment_qs = Payment.objects.filter(order__restaurant=restaurant)
-
-        payment_count = payment_qs.count()
-
-        recent_payments = payment_qs.select_related("order").order_by("-created_at")[
-            :10
+        hourly_revenue = [
+            {
+                "hour": hour,
+                "label": f"{hour:02d}:00",
+                "total": hourly_map.get(
+                    hour,
+                    0,
+                ),
+            }
+            for hour in range(24)
         ]
 
-        total_sales = payment_qs.aggregate(total=Sum("amount"))["total"] or 0
-
-        # ================= CONTEXT =================
-        context.update(
-            {
-                "active_orders_count": active_orders_count,
-                "tables_in_use": tables_in_use,
-                "today_orders": today_orders,
-                "today_revenue": today_revenue,
-                "today_label": today,
-                "yesterday_label": yesterday,
-                "orders_trend": orders_trend,
-                "orders_trend_direction": orders_trend_direction,
-                "revenue_trend": revenue_trend,
-                "revenue_trend_direction": revenue_trend_direction,
-                "this_week_orders": this_week_orders,
-                "weekly_trend": weekly_trend,
-                "trend_direction": trend_direction,
-                "week_start": week_start,
-                "this_week_revenue": this_week_revenue,
-                "weekly_revenue_trend": weekly_revenue_trend,
-                "weekly_revenue_trend_direction": weekly_revenue_trend_direction,
-                "monthly_revenue": monthly_revenue,
-                "month_start": month_start,
-                "currency": restaurant.currency,
-                "daily_labels": json.dumps(daily_labels),
-                "daily_revenue_data": json.dumps(daily_revenue_data),
-                "hourly_labels": json.dumps(hourly_labels),
-                "hourly_revenue_data": json.dumps(hourly_revenue_data),
-                "active_sessions": active_sessions,
-                "recent_payments": recent_payments,
-                "payment_count": payment_count,
-                "total_sales": total_sales,
-            }
+        # Active table sessions
+        active_sessions = (
+            TableSession.objects.filter(
+                restaurant=restaurant,
+                is_active=True,
+            )
+            .select_related(
+                "table",
+                "section",
+            )
+            .values(
+                "id",
+                "table_id",
+                "section_id",
+                "opened_at",
+            )
         )
 
-        return context
+        active_sessions_data = [
+            {
+                "id": session["id"],
+                "table_id": session["table_id"],
+                "section_id": session[
+                    "section_id"
+                ],
+                "opened_at": (
+                    session["opened_at"].isoformat()
+                    if session["opened_at"]
+                    else None
+                ),
+            }
+            for session in active_sessions
+        ]
 
+        # Payments
+        payment_queryset = Payment.objects.filter(
+            **payment_filter
+        )
+
+        payment_count = payment_queryset.count()
+
+        total_sales = (
+            payment_queryset.aggregate(
+                total=Sum("amount")
+            )["total"]
+            or 0
+        )
+
+        recent_payment_rows = (
+            payment_queryset
+            .select_related("order")
+            .order_by("-created_at")[:10]
+        )
+
+        recent_payments = [
+            {
+                "id": payment.id,
+                "amount": self.money(
+                    payment.amount
+                ),
+                "created_at": (
+                    payment.created_at.isoformat()
+                    if payment.created_at
+                    else None
+                ),
+                "order_id": (
+                    payment.order_id
+                ),
+                "status": getattr(
+                    payment,
+                    "status",
+                    None,
+                ),
+            }
+            for payment in recent_payment_rows
+        ]
+
+        return Response(
+            {
+                "restaurant": {
+                    "id": restaurant.id,
+                    "name": getattr(
+                        restaurant,
+                        "name",
+                        str(restaurant),
+                    ),
+                    "currency": getattr(
+                        restaurant,
+                        "currency",
+                        None,
+                    ),
+                },
+                "periods": {
+                    "today": today.isoformat(),
+                    "yesterday": (
+                        yesterday.isoformat()
+                    ),
+                    "week_start": (
+                        week_start.isoformat()
+                    ),
+                    "month_start": (
+                        month_start.isoformat()
+                    ),
+                },
+                "summary": {
+                    "active_orders_count": (
+                        active_orders_count
+                    ),
+                    "tables_in_use": (
+                        tables_in_use
+                    ),
+                    "today_orders": today_orders,
+                    "today_revenue": self.money(
+                        today_revenue
+                    ),
+                    "this_week_orders": (
+                        this_week_orders
+                    ),
+                    "this_week_revenue": (
+                        self.money(
+                            this_week_revenue
+                        )
+                    ),
+                    "monthly_revenue": (
+                        self.money(
+                            monthly_revenue
+                        )
+                    ),
+                    "payment_count": payment_count,
+                    "total_sales": self.money(
+                        total_sales
+                    ),
+                },
+                "trends": {
+                    "orders": self.calculate_trend(
+                        today_orders,
+                        yesterday_orders,
+                    ),
+                    "revenue": self.calculate_trend(
+                        today_revenue,
+                        yesterday_revenue,
+                    ),
+                    "weekly_orders": (
+                        self.calculate_trend(
+                            this_week_orders,
+                            last_week_orders,
+                        )
+                    ),
+                    "weekly_revenue": (
+                        self.calculate_trend(
+                            this_week_revenue,
+                            last_week_revenue,
+                        )
+                    ),
+                },
+                "daily_revenue": daily_revenue,
+                "hourly_revenue": hourly_revenue,
+                "active_sessions": (
+                    active_sessions_data
+                ),
+                "recent_payments": (
+                    recent_payments
+                ),
+            }
+        )
 
 class TableOverviewView(LoginRequiredMixin, TemplateView):
     template_name = "core/tables.html"

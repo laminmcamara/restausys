@@ -253,6 +253,62 @@ export default function POS() {
 
   const [printType, setPrintType] = useState("receipt");
 
+  const [posData, setPosData] = useState(null);
+  const [error, setError] = useState("");
+
+  
+function POS() {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPosDashboard() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await api.get("/pos/dashboard/");
+
+        if (!cancelled) {
+          setPosData(response.data);
+        }
+      } catch (err) {
+        console.error("POS dashboard error:", err);
+
+        if (!cancelled) {
+          const errorData = err.response?.data;
+
+          if (errorData?.code === "active_shift_required") {
+            setError("Open a cashier shift before using POS.");
+          } else {
+            setError(errorData?.detail || "Could not load POS dashboard.");
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadPosDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return <div>Loading POS...</div>;
+  }
+
+  if (error) {
+    return <div className="rounded bg-red-50 p-4 text-red-700">{error}</div>;
+  }
+
+  return <div>{/* Existing POS interface */}</div>;
+}
+
+
   // ============================================================
   // INITIAL DATA
   // ============================================================
