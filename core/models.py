@@ -2989,7 +2989,15 @@ class Subscription(models.Model):
         null=True,
         blank=True,
     )
-
+    
+    pending_plan = models.ForeignKey(
+        "core.Plan",
+        on_delete=models.SET_NULL,
+        related_name="pending_subscriptions",
+        null=True,
+        blank=True,
+    )
+    
     status = models.CharField(
         max_length=30,
         choices=SubscriptionStatus.choices,
@@ -3057,6 +3065,8 @@ class Subscription(models.Model):
     )
 
     TRIAL_DAYS = 14
+    
+    
 
     class Meta:
         ordering = ["-created_at"]

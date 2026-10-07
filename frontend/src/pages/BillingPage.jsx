@@ -8,44 +8,128 @@ import {
   History,
   Info,
 } from "lucide-react";
+import api from "../services/api"; // adjust path if needed
 
-const SubscriptionPage = () => {
-  const [subData, setSubData] = useState({
-    plan_name: "Professional",
-    status: "active",
-    days_remaining: 12,
-    expiry_date: "2026-09-10",
-  });
+const API_SUBSCRIPTION_URL = "/subscription/"; // matches core/urls.py
+
+const offlineMethods = [
+  {
+    id: "mobile_money",
+    label: "Mobile Money",
+    icon: <Smartphone size={18} />,
+  },
+  {
+    id: "bank_transfer",
+    label: "Bank Transfer",
+    icon: <Landmark size={18} />,
+  },
+  { id: "cash", label: "Cash / Physical", icon: <Banknote size={18} /> },
+  { id: "cheque", label: "Cheque", icon: <History size={18} /> },
+];
+
+function SubscriptionPage() {
+  const [subscription, setSubscription] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState("");
   const [reference, setReference] = useState("");
+  const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitSuccess, setSubmitSuccess] = useState("");
 
-  const offlineMethods = [
-    {
-      id: "mobile_money",
-      label: "Mobile Money",
-      icon: <Smartphone size={18} />,
-    },
-    {
-      id: "bank_transfer",
-      label: "Bank Transfer",
-      icon: <Landmark size={18} />,
-    },
-    { id: "cash", label: "Cash / Physical", icon: <Banknote size={18} /> },
-    { id: "cheque", label: "Cheque", icon: <History size={18} /> },
-  ];
+  useEffect(() => {
+    let cancelled = false;
 
-  const handleSubmit = () => {
+    async function fetchSubscription() {
+      try {
+        setError("");
+        const res = await api.get(API_SUBSCRIPTION_URL);
+        if (!cancelled) {
+          setSubscription(res.data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch subscription:", err);
+        if (!cancelled) {
+          setError(
+            err?.response?.data?.message || "Failed to load subscription data."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchSubscription();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSubmit = async () => {
     setIsSubmitting(true);
-    // API Call: axios.post('/api/v1/manager/subscription/', { offline_payment_method: paymentMethod, offline_payment_reference: reference })
-    setTimeout(() => {
-      alert(
+    setSubmitError("");
+    setSubmitSuccess("");
+
+    try {
+      await api.post(API_SUBSCRIPTION_URL, {
+        offline_payment_method: paymentMethod,
+        offline_payment_reference: reference,
+        offline_payment_notes: notes,
+      });
+
+      setSubmitSuccess(
         "Payment reference submitted! Your account will be updated once verified."
       );
+      setPaymentMethod("");
+      setReference("");
+      setNotes("");
+    } catch (err) {
+      console.error("Subscription renewal error:", err);
+      setSubmitError(
+        err?.response?.data?.message ||
+          "Failed to submit renewal request. Please try again."
+      );
+    } finally {
       setIsSubmitting(false);
-    }, 1500);
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="max-w-5xl mx-auto p-6">
+        <p className="text-slate-500">Loading subscription…</p>
+      </div>
+    );
+  }
+
+  if (error || !subscription) {
+    return (
+      <div className="max-w-5xl mx-auto p-6">
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-2xl p-4">
+          {error || "No subscription data available."}
+        </div>
+      </div>
+    );
+  }
+
+  const {
+    plan_name = "No Plan",
+    status = "unknown",
+    days_remaining = 0,
+    current_period_end,
+  } = subscription;
+
+  const expiryDate = current_period_end
+    ? new Date(current_period_end).toLocaleDateString()
+    : "—";
+
+  const isExpiringSoon = days_remaining <= 7 && days_remaining > 0;
+  const isExpired = days_remaining <= 0 || status === "expired";
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-8">
@@ -58,16 +142,20 @@ const SubscriptionPage = () => {
         </div>
         <div
           className={`px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 ${
-            subData.days_remaining > 5
-              ? "bg-green-100 text-green-700"
-              : "bg-red-100 text-red-700"
+            isExpired
+              ? "bg-red-100 text-red-700"
+              : isExpiringSoon
+              ? "bg-amber-100 text-amber-700"
+              : "bg-green-100 text-green-700"
           }`}>
-          {subData.days_remaining > 5 ? (
-            <ShieldCheck size={16} />
-          ) : (
+          {isExpired ? (
             <AlertTriangle size={16} />
+          ) : isExpiringSoon ? (
+            <AlertTriangle size={16} />
+          ) : (
+            <ShieldCheck size={16} />
           )}
-          {subData.days_remaining} Days Remaining
+          {isExpired ? "Expired" : `${days_remaining} Days Remaining`}
         </div>
       </div>
 
@@ -79,27 +167,32 @@ const SubscriptionPage = () => {
               Current Plan
             </h3>
             <div className="mt-2 text-3xl font-bold text-slate-900">
-              {subData.plan_name}
+              {plan_name}
             </div>
             <div className="mt-1 text-slate-500 text-sm">
-              Expires on {new Date(subData.expiry_date).toLocaleDateString()}
+              Expires on {expiryDate}
             </div>
 
             <div className="mt-6 pt-6 border-t border-slate-100">
               <div className="flex justify-between text-sm mb-2">
                 <span className="text-slate-500">Status</span>
                 <span className="font-bold capitalize text-slate-900">
-                  {subData.status}
+                  {status}
                 </span>
               </div>
               <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full ${
-                    subData.days_remaining > 7 ? "bg-amber-500" : "bg-red-500"
+                    isExpired
+                      ? "bg-red-500"
+                      : isExpiringSoon
+                      ? "bg-amber-500"
+                      : "bg-green-500"
                   }`}
                   style={{
-                    width: `${(subData.days_remaining / 30) * 100}%`,
-                  }}></div>
+                    width: `${Math.min(100, (days_remaining / 30) * 100)}%`,
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -127,6 +220,18 @@ const SubscriptionPage = () => {
           </div>
 
           <div className="p-6 space-y-6">
+            {submitSuccess && (
+              <div className="bg-green-50 border border-green-200 text-green-700 rounded-xl p-4 text-sm">
+                {submitSuccess}
+              </div>
+            )}
+
+            {submitError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm">
+                {submitError}
+              </div>
+            )}
+
             <div>
               <label className="text-sm font-semibold text-slate-700 block mb-3">
                 Select Payment Method
@@ -135,6 +240,7 @@ const SubscriptionPage = () => {
                 {offlineMethods.map((method) => (
                   <button
                     key={method.id}
+                    type="button"
                     onClick={() => setPaymentMethod(method.id)}
                     className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all gap-2 ${
                       paymentMethod === method.id
@@ -162,6 +268,19 @@ const SubscriptionPage = () => {
                 />
               </div>
 
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase block mb-1">
+                  Notes (optional)
+                </label>
+                <textarea
+                  placeholder="Any additional info for verification"
+                  className="w-full bg-white border border-slate-300 rounded-lg p-3 outline-none focus:ring-2 focus:ring-amber-500 transition-all"
+                  rows={3}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </div>
+
               <div className="text-xs text-slate-500 italic">
                 * Please ensure the reference matches your payment receipt
                 exactly.
@@ -169,6 +288,7 @@ const SubscriptionPage = () => {
             </div>
 
             <button
+              type="button"
               disabled={!paymentMethod || !reference || isSubmitting}
               onClick={handleSubmit}
               className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2">
@@ -179,6 +299,6 @@ const SubscriptionPage = () => {
       </div>
     </div>
   );
-};
+}
 
 export default SubscriptionPage;

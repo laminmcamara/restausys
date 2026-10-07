@@ -12,8 +12,8 @@ export function AuthProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(true);
 
   const logout = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
 
     setAccessToken(null);
     setUser(null);
@@ -45,7 +45,7 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const initAuth = async () => {
-      const storedAccessToken = localStorage.getItem("accessToken");
+      const storedAccessToken = localStorage.getItem("access_token");
 
       if (!storedAccessToken) {
         setAuthLoading(false);
@@ -75,10 +75,14 @@ export function AuthProvider({ children }) {
         }),
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : await response.text();
 
       if (!response.ok) {
-        console.error("Login failed:", data);
+        console.error("Login failed:", response.status, data);
 
         setAuthLoading(false);
         return false;
@@ -99,7 +103,6 @@ export function AuthProvider({ children }) {
       console.error("Login error:", err);
 
       setAuthLoading(false);
-
       return false;
     }
   };

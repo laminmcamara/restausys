@@ -41,25 +41,27 @@ from .views import (
     create_checkout_session,
     order_status_api,
     regenerate_api_key,
-    register_restaurant,
     register_restaurant_api,
     reports_summary,
     settings_api,
     staff_detail_api,
     staff_list_create_api,
     subscription_detail,
+    submit_subscription_request_api,
+    KitchenDisplayAPIView,
+    KitchenQueueCountAPIView,
+    available_plans_api,
+    RestaurantViewSet,
 )
-
 
 app_name = "core"
 
-
 router = DefaultRouter()
-
 
 # ---------------------------------------------------------------------------
 # Main resources
 # ---------------------------------------------------------------------------
+router.register(r"restaurants", RestaurantViewSet, basename="restaurant")
 
 router.register(
     r"tables",
@@ -108,7 +110,6 @@ router.register(
     PaymentViewSet,
     basename="payment",
 )
-
 
 # ---------------------------------------------------------------------------
 # Manager resources
@@ -168,13 +169,12 @@ router.register(
     basename="manager-discount",
 )
 
-
 # ---------------------------------------------------------------------------
 # URL patterns
 # ---------------------------------------------------------------------------
 
 urlpatterns = [
-    # Dashboard and reports
+    # Dashboard and reports (API-only)
     path(
         "dashboard/",
         RestaurantDashboardView.as_view(),
@@ -198,7 +198,7 @@ urlpatterns = [
         name="place-order",
     ),
 
-    # Restaurant registration
+    # Restaurant registration (single canonical endpoint)
     path(
         "restaurants/register/",
         register_restaurant_api,
@@ -221,11 +221,10 @@ urlpatterns = [
         ChangePasswordView.as_view(),
         name="change-password",
     ),
-    
     path(
-    "pos/dashboard/",
-    PosDashboardAPIView.as_view(),
-    name="pos-dashboard",
+        "pos/dashboard/",
+        PosDashboardAPIView.as_view(),
+        name="pos-dashboard",
     ),
 
     # Staff management
@@ -263,24 +262,26 @@ urlpatterns = [
         create_checkout_session,
         name="create-checkout-session",
     ),
-
+    
+    path(
+        "subscription/submit-request/",
+        submit_subscription_request_api,
+        name="subscription-submit-request-api",
+    ),
+    path(
+        "plans/",
+        available_plans_api,
+        name="available-plans-api",
+    ),
     # Public menus
     path(
         "public/<uuid:restaurant_id>/menus/",
-        PublicMenuViewSet.as_view(
-            {
-                "get": "list",
-            }
-        ),
+        PublicMenuViewSet.as_view({"get": "list"}),
         name="public-menus",
     ),
     path(
         "public/<uuid:restaurant_id>/menus/<uuid:pk>/",
-        PublicMenuViewSet.as_view(
-            {
-                "get": "retrieve",
-            }
-        ),
+        PublicMenuViewSet.as_view({"get": "retrieve"}),
         name="public-menu-detail",
     ),
 
@@ -300,19 +301,16 @@ urlpatterns = [
     path(
         "token/",
         TokenObtainPairView.as_view(),
-        name="token-obtain-pair",
+        name="token_obtain_pair",
     ),
     path(
         "token/refresh/",
         TokenRefreshView.as_view(),
-        name="token-refresh",
+        name="token_refresh",
     ),
 
     # Router-generated API routes
-    path(
-        "",
-        include(router.urls),
-    ),
+    path("", include(router.urls)),
 
     # Legacy or general endpoints
     path(
@@ -325,9 +323,16 @@ urlpatterns = [
         api_home,
         name="api-home",
     ),
+
+    # Kitchen endpoints
     path(
-        "register/",
-        register_restaurant,
-        name="register",
+        "kitchen/display/",
+        KitchenDisplayAPIView.as_view(),
+        name="kitchen-display",
+    ),
+    path(
+        "kitchen/queue-count/",
+        KitchenQueueCountAPIView.as_view(),
+        name="kitchen-queue-count",
     ),
 ]

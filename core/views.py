@@ -74,7 +74,10 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
-from .permissions import IsOwnerOrManager
+# from .permissions import IsOwnerOrManager
+from core.permissions import (
+    CanAccessKitchen,
+)
 from django.core.serializers.json import DjangoJSONEncoder
 from rest_framework.response import Response
 from rest_framework.status import HTTP_403_FORBIDDEN, HTTP_200_OK
@@ -100,7 +103,7 @@ from django.views.generic import UpdateView
 from core.tenant import TenantModelViewSet
 from .forms import ProductForm
 from functools import wraps
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, status, decorators
 from .models import Printer, PrintJob
 from .serializers import PrinterSerializer, PrintJobSerializer
 from core.services.printer_service import create_kitchen_print_job
@@ -134,6 +137,7 @@ from .models import (
     Table,
     TableSession,
     WebhookConfiguration,
+    
 )
 
 from .serializers import (
@@ -161,10 +165,13 @@ from .serializers import (
     SubscriptionSerializer,
     TableSerializer,
     WebhookConfigurationSerializer,
+    KitchenTicketSerializer,
+    RestaurantSerializer,
 )
 
 import secrets
-from .permissions import IsStaffOfRestaurant, HasActiveSubscription
+from .permissions import (CanAccessPOS,
+IsAuthenticatedUser, IsManagerOrGlobalAuthority, HasActiveSubscription)
 from django.contrib.auth import get_user_model
 from .models import Subscription
 from django.utils.timezone import now
@@ -237,7 +244,7 @@ def broadcast_order_update(order):
         if order.table_id:
             groups.append(f"table_{order.table_id}")
 
-        for group in groups:
+        for group in groups: 
             async_to_sync(channel_layer.group_send)(group, message)
 
     except ImproperlyConfigured:
@@ -316,6 +323,41 @@ class ChangePasswordView(APIView):
         return Response({"detail": "Password changed successfully"})
 
 
+class RestaurantViewSet(viewsets.ModelViewSet):
+    queryset = Restaurant.objects.all()
+    serializer_class = RestaurantSerializer
+
+    @decorators.action(detail=False, methods=['post'])
+    def register(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        user = serializer.save()
+        restaurant = user.restaurant
+        
+        # Create a 14-day trial subscription
+        plan = Plan.objects.filter(name="Main Restaurant").first()
+        
+        Subscription.objects.create(
+            restaurant=restaurant,
+            plan=plan,
+            status="active",  # Must be ACTIVE for the guard to allow access
+            current_period_start=timezone.now(),
+            current_period_end=timezone.now() + timedelta(days=14),
+            trial_end=timezone.now() + timedelta(days=14),
+        )
+        
+        refresh = RefreshToken.for_user(user)
+        
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': {
+                'id': user.id,
+                'email': user.email,
+            }
+        }, status=status.HTTP_201_CREATED)
+    
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def api_home(request):
@@ -348,7 +390,9 @@ class PosDashboardAPIView(
     APIView,
 ):
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser,
+        CanAccessPOS,
+        HasActiveSubscription,
     ]
 
     def get_restaurant(self, request):
@@ -802,7 +846,9 @@ class AnalyticsAPIView(
     APIView,
 ):
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser,
+        IsManagerOrGlobalAuthority,
+        HasActiveSubscription,
     ]
     def get(self, request):
         restaurant = (
@@ -1943,7 +1989,7 @@ class TableViewSet(viewsets.ModelViewSet):
     serializer_class = TableSerializer
 
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser, HasActiveSubscription,
     ]
 
     def _get_restaurant(self):
@@ -2341,7 +2387,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
 
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser, HasActiveSubscription,
     ]
 
     def _get_restaurant(self):
@@ -3880,7 +3926,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser,
     ]
 
     def _get_restaurant(self):
@@ -3988,7 +4034,7 @@ class OrderItemViewSet(viewsets.ModelViewSet):
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         user = self.request.user
@@ -4019,7 +4065,7 @@ class ProductViewSet(
     viewsets.ModelViewSet
 ):  # Changed from ReadOnlyModelViewSet to allow updates
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
 
@@ -4099,7 +4145,7 @@ class ProductViewSet(
 
 class ManagerCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         return Category.objects.filter(
@@ -4133,8 +4179,8 @@ class ManagerCategoryViewSet(viewsets.ModelViewSet):
 class ManagerProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [
-        IsAuthenticated,
-        IsOwnerOrManager,
+        IsAuthenticatedUser,
+        HasActiveSubscription,
     ]
 
     def get_queryset(self):
@@ -4155,8 +4201,7 @@ class ManagerProductViewSet(viewsets.ModelViewSet):
 class ManagerMenuViewSet(viewsets.ModelViewSet):
     serializer_class = MenuSerializer
     permission_classes = [
-        IsAuthenticated,
-        IsOwnerOrManager,
+        IsAuthenticatedUser, HasActiveSubscription
     ]
 
     def get_queryset(self):
@@ -4213,7 +4258,7 @@ class PublicMenuViewSet(viewsets.ReadOnlyModelViewSet):
 class PosMenuViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MenuSerializer
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser,
         HasActiveSubscription,
     ]
 
@@ -4238,7 +4283,7 @@ class PosMenuViewSet(viewsets.ReadOnlyModelViewSet):
 
 class ManagerModifierGroupViewSet(viewsets.ModelViewSet):
     serializer_class = ModifierGroupSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         return ModifierGroup.objects.filter(
@@ -4269,7 +4314,7 @@ class ManagerModifierGroupViewSet(viewsets.ModelViewSet):
 
 class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
     serializer_class = ModifierOptionSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]   
 
     def get_queryset(self):
         return ModifierOption.objects.filter(
@@ -4299,7 +4344,7 @@ class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
 
 class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PaymentMethodSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         # Only return methods belonging to the logged-in user's restaurant
@@ -4314,7 +4359,7 @@ class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
 @method_decorator(never_cache, name="dispatch")
 class PaymentSummaryAPIView(APIView):
     permission_classes = [
-        permissions.IsAuthenticated,
+        permissions.IsAuthenticated, HasActiveSubscription
     ]
 
     def get_restaurant(self, request):
@@ -4662,7 +4707,7 @@ class PaymentSummaryAPIView(APIView):
 
 
 class PosDataView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get(self, request):
         user = request.user
@@ -5026,48 +5071,6 @@ def refund_order(request, order_id):
     return redirect("core:order_detail", order_id=order.id)
 
 
-def mock_create_payment_intent(request, restaurant_slug, order_id):
-    restaurant = get_object_or_404(Restaurant, slug=restaurant_slug)
-
-    order = get_object_or_404(Order, id=order_id, restaurant=restaurant)
-
-    # ✅ Mock payment instead of Stripe
-    with transaction.atomic():
-        if order.payment_status != Order.PaymentStatus.PAID:
-            order.payment_status = Order.PaymentStatus.PAID
-            order.save(update_fields=["payment_status"])
-            order.mark_as_placed()
-
-    return JsonResponse({"success": True})
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def mock_activate_subscription(request):
-
-    restaurant = request.user.restaurant
-    plan_id = request.data.get("plan_id")
-
-    try:
-        plan = Plan.objects.get(id=plan_id)
-
-        Subscription.objects.update_or_create(
-            restaurant=restaurant,
-            defaults={
-                "plan": plan,
-                "status": "trialing",
-                "current_period_start": timezone.now(),
-                "current_period_end": timezone.now() + timezone.timedelta(days=30),
-                "cancel_at_period_end": False,
-            },
-        )
-
-        return Response({"success": True})
-
-    except Plan.DoesNotExist:
-        return Response({"error": "Invalid plan"}, status=400)
-
-
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated])
 def settings_api(request):
@@ -5320,7 +5323,7 @@ class RestaurantDashboardView(
     APIView,
 ):
     permission_classes = [
-        IsAuthenticated,
+        IsAuthenticatedUser, HasActiveSubscription
     ]
 
     def get_restaurant_for_user(self, request):
@@ -6072,52 +6075,98 @@ def orders_badge_count(request):
 # =============================================================================
 
 
-@login_required
-def kitchen_display(request):
-    restaurant = request.user.restaurant
+class KitchenDisplayAPIView(APIView):
+    permission_classes = [
+        IsAuthenticatedUser,
+        CanAccessKitchen, HasActiveSubscription
+    ]
 
-    if not restaurant:
-        return render(request, "core/kitchen/kds.html", {"tickets": []})
+    def get(self, request, *args, **kwargs):
+        restaurant = getattr(
+            request.user,
+            "restaurant",
+            None,
+        )
 
-    tickets = (
-        KitchenTicket.objects.filter(
-            order__restaurant=restaurant,
-            order__status__in=[
+        if restaurant is None:
+            return Response(
+                {
+                    "tickets": [],
+                    "count": 0,
+                }
+            )
+
+        tickets = (
+            KitchenTicket.objects.filter(
+                order__restaurant=restaurant,
+                order__status__in=[
+                    Order.Status.PLACED,
+                    Order.Status.IN_PROGRESS,
+                    Order.Status.READY,
+                ],
+            )
+            .select_related(
+                "order",
+                "order__table",
+                "order__created_by",
+            )
+            .prefetch_related(
+                "order__items__product",
+                "order__items__modifiers",
+            )
+            .order_by(
+                "order__created_at"
+            )
+        )
+
+
+        serializer = KitchenTicketSerializer(
+            tickets,
+            many=True,
+        )
+
+        return Response(
+            {
+                "tickets": serializer.data,
+                "count": tickets.count(),
+            }
+        )
+
+
+class KitchenQueueCountAPIView(APIView):
+    permission_classes = [
+        IsAuthenticatedUser,
+        CanAccessKitchen, HasActiveSubscription
+    ]
+
+    def get(self, request, *args, **kwargs):
+        restaurant = getattr(
+            request.user,
+            "restaurant",
+            None,
+        )
+
+        if restaurant is None:
+            return Response(
+                {
+                    "count": 0,
+                }
+            )
+
+        count = Order.objects.filter(
+            restaurant=restaurant,
+            status__in=[
                 Order.Status.PLACED,
                 Order.Status.IN_PROGRESS,
-                Order.Status.READY,
             ],
+        ).count()
+
+        return Response(
+            {
+                "count": count,
+            }
         )
-        .select_related("order", "order__table", "order__created_by")
-        .prefetch_related("order__items__product", "order__items__modifiers")
-        .order_by("order__created_at")
-    )
-
-    return render(request, "core/kitchen/kds.html", {"tickets": tickets})
-
-
-@login_required
-def kitchen_queue_count(request):
-    restaurant = request.user.restaurant
-
-    if not restaurant:
-        return HttpResponse("")
-
-    count = Order.objects.filter(
-        restaurant=restaurant,
-        status__in=[
-            Order.Status.PLACED,
-            Order.Status.IN_PROGRESS,
-        ],
-    ).count()
-
-    return HttpResponse(f"""
-        <span class="absolute top-2 right-2 bg-yellow-500 text-black text-xs px-2 py-0.5 rounded-full">
-            {count}
-        </span>
-        """)
-
-
+        
 @login_required
 def start_shift(request):
 
@@ -6264,7 +6313,7 @@ def staff_list_create_api(request):
             .order_by("first_name", "last_name", "email")
         )
 
-        serializer = StaffUserSerializer(
+        serializer = StaffCreateSerializer(
             staff,
             many=True,
             context={"request": request},
@@ -6281,7 +6330,7 @@ def staff_list_create_api(request):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        response_serializer = StaffUserSerializer(
+        response_serializer = StaffCreateSerializer(
             user,
             context={"request": request},
         )
@@ -6289,7 +6338,7 @@ def staff_list_create_api(request):
 
 
 @api_view(["GET", "PATCH", "DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, HasActiveSubscription])
 def staff_detail_api(request, pk):
     restaurant = get_request_restaurant(request)
 
@@ -6322,7 +6371,7 @@ def staff_detail_api(request, pk):
         serializer.is_valid(raise_exception=True)
         updated_user = serializer.save()
 
-        response_serializer = StaffUserSerializer(
+        response_serializer = StaffCreateSerializer(
             updated_user,
             context={"request": request},
         )
@@ -6512,7 +6561,7 @@ def remove_item(request, order_id, item_id):
 
 class ModifierOptionViewSet(ModelViewSet):
     serializer_class = ModifierOptionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         return ModifierOption.objects.filter(
@@ -6696,84 +6745,71 @@ class UpdateCategoryOrderView(LoginRequiredMixin, View):
         return JsonResponse({"status": "ok"})
 
 
-@transaction.atomic
-def register_restaurant(request):
-    if request.method == "POST":
-        form = RestaurantRegistrationForm(request.POST)
 
-        if form.is_valid():
-            email = form.cleaned_data["email"]
-            password = form.cleaned_data["password"]
-            restaurant_name = form.cleaned_data["restaurant_name"]
 
-            # ✅ 1. Create Company
-            company = Company.objects.create(name=restaurant_name)
+now = timezone.now
+CustomUser = get_user_model()
 
-            # ✅ 2. Create Restaurant
-            restaurant = Restaurant.objects.create(
-                company=company,
-                name=restaurant_name,
-                address_line_1="Not Provided",
-                city="Not Provided",
-                country="Not Provided",
-                timezone="UTC",
-                currency="USD",
-            )
 
-            # ✅ 3. Create User
-            user = CustomUser(
-                username=email,
-                email=email,
-                role=CustomUser.Roles.MANAGER,
-                restaurant=restaurant,
-            )
-            user.set_password(password)
-            user.save()
+def _get_default_timezone():
+    return getattr(settings, "BEEPOS_DEFAULT_TIMEZONE", "UTC")
 
-            # ✅ 4. Create Trial Subscription
-            Subscription.objects.create(
-                restaurant=restaurant,
-                plan_name="Trial",
-                end_date=now().date() + timedelta(days=14),
-            )
 
-            login(request, user)
+def _get_default_currency():
+    return getattr(settings, "BEEPOS_DEFAULT_CURRENCY", "USD")
 
-            return redirect("core:dashboard")
 
-    else:
-        form = RestaurantRegistrationForm()
+def _get_trial_days():
+    # Prefer settings; fallback to Subscription model default
+    return getattr(settings, "BEEPOS_DEFAULT_TRIAL_DAYS", Subscription.TRIAL_DAYS)
 
-    return render(request, "core/register.html", {"form": form})
+
+def _build_subscription_response(subscription):
+    if not subscription:
+        return None
+
+    return {
+        "id": subscription.id,
+        "status": subscription.status,
+        "plan_id": subscription.plan_id,
+        "plan_name": subscription.plan.name if subscription.plan else None,
+        "trial_start": subscription.trial_start,
+        "trial_end": subscription.trial_end,
+        "current_period_start": subscription.current_period_start,
+        "current_period_end": subscription.current_period_end,
+        "days_remaining": subscription.days_remaining,
+        "is_active": subscription.is_active(),
+    }
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def dashboard_api(request):
+    """
+    Returns dashboard data for the authenticated user's restaurant.
+    No HTML involved.
+    """
     user = request.user
-    restaurant = user.restaurant
+    restaurant = getattr(user, "restaurant", None)
 
     if not restaurant:
         return Response(
             {
                 "success": False,
-                "message": ("Your account is not assigned to a restaurant."),
+                "message": "Your account is not assigned to a restaurant.",
             },
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     company = restaurant.company
-    subscription = getattr(restaurant, "subscription", None)
 
+    # Use the OneToOne related_name: restaurant.subscription
+    subscription = getattr(restaurant, "subscription", None)
     if subscription:
         subscription.expire_if_needed()
 
-    trial_ended = False
-
-    if subscription and subscription.current_period_end:
-        trial_ended = subscription.current_period_end <= timezone.now()
-
     profile_incomplete = not restaurant.onboarding_completed
+    trial_ended = subscription is None or not subscription.is_active()
 
     return Response(
         {
@@ -6795,37 +6831,22 @@ def dashboard_api(request):
                 "country": restaurant.country,
                 "timezone": restaurant.timezone,
                 "currency": restaurant.currency,
-                "onboarding_completed": (restaurant.onboarding_completed),
+                "onboarding_completed": restaurant.onboarding_completed,
             },
             "onboarding": {
-                "completed": (restaurant.onboarding_completed),
+                "completed": restaurant.onboarding_completed,
                 "profile_incomplete": profile_incomplete,
                 "trial_ended": trial_ended,
-                "show_completion_prompt": (profile_incomplete and not trial_ended),
+                "show_completion_prompt": profile_incomplete and not trial_ended,
             },
-            "subscription": (
-                {
-                    "id": subscription.id,
-                    "status": subscription.status,
-                    "plan_name": (
-                        subscription.plan.name if subscription.plan else None
-                    ),
-                    "current_period_end": (subscription.current_period_end),
-                    "days_remaining": subscription.days_remaining,
-                    "is_active": subscription.is_active(),
-                }
-                if subscription
-                else None
-            ),
+            "subscription": _build_subscription_response(subscription),
+            "access": {
+                "has_active_subscription": has_active_subscription,
+                "requires_plan_selection": requires_plan_selection,
+                "blocked_reason": None if has_active_subscription else "trial_expired",
+            },
         },
         status=status.HTTP_200_OK,
-    )
-
-
-def subscription_expired(request):
-    return render(
-        request,
-        "core/subscription_expired.html",
     )
 
 
@@ -6833,6 +6854,10 @@ def subscription_expired(request):
 @permission_classes([AllowAny])
 @transaction.atomic
 def register_restaurant_api(request):
+    """
+    Fully API-based restaurant + user + subscription creation.
+    No HTML templates, no session login.
+    """
     form = RestaurantRegistrationForm(data=request.data)
 
     if not form.is_valid():
@@ -6859,95 +6884,223 @@ def register_restaurant_api(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    starter_plan = Plan.objects.filter(
-        code="starter",
-        is_active=True,
-    ).first()
+    # Get a default plan if available
+    starter_plan = Plan.objects.filter(code="starter", is_active=True).first()
+    if not starter_plan:
+        starter_plan = Plan.objects.filter(is_active=True).order_by("created_at").first()
 
-    company = Company.objects.create(
-        name=restaurant_name,
-    )
+    try:
+        company = Company.objects.create(name=restaurant_name)
 
-    restaurant = Restaurant.objects.create(
-        company=company,
-        name=restaurant_name,
-        address_line_1="",
-        city="",
-        country="",
-        timezone="UTC",
-        currency="USD",
-        onboarding_completed=False,
-    )
+        restaurant = Restaurant.objects.create(
+            company=company,
+            name=restaurant_name,
+            address_line_1="",
+            city="",
+            country="",
+            timezone=_get_default_timezone(),
+            currency=_get_default_currency(),
+            onboarding_completed=False,
+        )
 
-    user = CustomUser(
-        username=email,
-        email=email,
-        role=CustomUser.Roles.MANAGER,
-        restaurant=restaurant,
-    )
-    user.set_password(password)
-    user.save()
+        user = CustomUser(
+            username=email,
+            email=email,
+            role=CustomUser.Roles.MANAGER,
+            restaurant=restaurant,
+        )
+        user.set_password(password)
+        user.save()
 
-    subscription = Subscription.objects.create(
-        restaurant=restaurant,
-        plan=starter_plan,
-        status=Subscription.SubscriptionStatus.TRIALING,
-    )
+        # Subscription – let model save() set trial_start/end if not provided
+        subscription = Subscription.objects.create(
+            restaurant=restaurant,
+            plan=None,
+            status=Subscription.SubscriptionStatus.TRIALING,
+        )
 
-    refresh = RefreshToken.for_user(user)
+        refresh = RefreshToken.for_user(user)
+
+        return Response(
+            {
+                "success": True,
+                "message": f"Welcome to {restaurant.name}. Your account was created successfully.",
+                "onboarding": {
+                    "completed": restaurant.onboarding_completed,
+                    "required": True,
+                    "message": "Please complete your restaurant profile before the trial ends.",
+                },
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "company": {
+                    "id": company.id,
+                    "name": company.name,
+                },
+                "restaurant": {
+                    "id": restaurant.id,
+                    "name": restaurant.name,
+                    "company_id": company.id,
+                    "onboarding_completed": restaurant.onboarding_completed,
+                },
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "role": user.role,
+                    "restaurant_id": restaurant.id,
+                },
+                "subscription": _build_subscription_response(subscription),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    except Exception:
+        # In production, log this properly
+        return Response(
+            {
+                "success": False,
+                "message": "Unable to create your account. Please try again.",
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+        
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def available_plans_api(request):
+    plans = Plan.objects.filter(is_active=True).order_by("monthly_price")
 
     return Response(
         {
             "success": True,
-            "message": (
-                f"Welcome to {restaurant.name}. "
-                "Your account was created successfully."
-            ),
-            "onboarding": {
-                "completed": restaurant.onboarding_completed,
-                "required": True,
-                "message": (
-                    "Please complete your restaurant profile " "before the trial ends."
-                ),
+            "results": [
+                {
+                    "id": plan.id,
+                    "name": plan.name,
+                    "code": plan.code,
+                    "monthly_price": str(plan.monthly_price),
+                    "max_users": plan.max_users,
+                    "max_tables": plan.max_tables,
+                    "allow_inventory": plan.allow_inventory,
+                    "allow_analytics": plan.allow_analytics,
+                }
+                for plan in plans
+            ],
+        },
+        status=status.HTTP_200_OK,
+    )
+    
+    
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def submit_subscription_request_api(request):
+    restaurant = request.user.restaurant
+
+    try:
+        subscription = restaurant.subscription
+    except Exception:
+        return Response(
+            {
+                "success": False,
+                "message": "No subscription was found for this restaurant.",
             },
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "company": {
-                "id": company.id,
-                "name": company.name,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    plan_id = request.data.get("plan_id")
+    payment_method = request.data.get("offline_payment_method")
+    reference = str(request.data.get("offline_payment_reference", "")).strip()
+    notes = str(request.data.get("offline_payment_notes", "")).strip()
+
+    if not plan_id:
+        return Response(
+            {
+                "success": False,
+                "errors": {"plan_id": ["Please select a subscription plan."]},
             },
-            "restaurant": {
-                "id": restaurant.id,
-                "name": restaurant.name,
-                "company_id": company.id,
-                "onboarding_completed": (restaurant.onboarding_completed),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not payment_method:
+        return Response(
+            {
+                "success": False,
+                "errors": {
+                    "offline_payment_method": ["Please select a payment method."]
+                },
             },
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role,
-                "restaurant_id": restaurant.id,
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not reference:
+        return Response(
+            {
+                "success": False,
+                "errors": {
+                    "offline_payment_reference": ["A payment reference is required."]
+                },
             },
-            "subscription": {
-                "id": subscription.id,
-                "status": subscription.status,
-                "plan_id": subscription.plan_id,
-                "plan_name": (subscription.plan.name if subscription.plan else None),
-                "trial_start": subscription.trial_start,
-                "trial_end": subscription.trial_end,
-                "current_period_start": (subscription.current_period_start),
-                "current_period_end": (subscription.current_period_end),
-                "days_remaining": subscription.days_remaining,
-                "is_active": subscription.is_active(),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    valid_methods = {
+        choice[0] for choice in Subscription.OfflinePaymentMethod.choices
+    }
+
+    if payment_method not in valid_methods:
+        return Response(
+            {
+                "success": False,
+                "errors": {
+                    "offline_payment_method": ["Invalid payment method."]
+                },
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    plan = Plan.objects.filter(id=plan_id, is_active=True).first()
+    if not plan:
+        return Response(
+            {
+                "success": False,
+                "errors": {
+                    "plan_id": ["The selected plan is unavailable."]
+                },
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    subscription.pending_plan = plan
+    subscription.offline_payment_method = payment_method
+    subscription.offline_payment_reference = reference
+    subscription.offline_payment_notes = notes
+    subscription.save(
+        update_fields=[
+            "pending_plan",
+            "offline_payment_method",
+            "offline_payment_reference",
+            "offline_payment_notes",
+            "updated_at",
+        ]
+    )
+
+    return Response(
+        {
+            "success": True,
+            "message": "Your subscription request was submitted for verification.",
+            "subscription": _build_subscription_response(subscription),
+            "pending_plan": {
+                "id": plan.id,
+                "name": plan.name,
+                "code": plan.code,
             },
         },
-        status=status.HTTP_201_CREATED,
+        status=status.HTTP_202_ACCEPTED,
     )
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, HasActiveSubscription])
 def reports_summary(request):
     from .models import Order, OrderItem, Table
 
@@ -7081,7 +7234,7 @@ def reports_summary(request):
 class PrinterViewSet(viewsets.ModelViewSet):
     queryset = Printer.objects.all()
     serializer_class = PrinterSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         queryset = Printer.objects.all()
@@ -7104,7 +7257,7 @@ class PrinterViewSet(viewsets.ModelViewSet):
 class PrintJobViewSet(viewsets.ModelViewSet):
     queryset = PrintJob.objects.select_related("order", "printer").all()
     serializer_class = PrintJobSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         queryset = PrintJob.objects.select_related("order", "printer").all()
@@ -7172,7 +7325,7 @@ class InventoryViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = InventoryItemSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         restaurant = getattr(self.request.user, "restaurant", None)
@@ -7221,7 +7374,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = DiscountSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         restaurant = getattr(self.request.user, "restaurant", None)
@@ -7255,7 +7408,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
 
 
 class WebhookConfigAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
 
     def get(self, request):
         # Ensure restaurant exists for the user
@@ -7290,7 +7443,7 @@ class WebhookConfigAPIView(APIView):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, HasActiveSubscription])
 def regenerate_api_key(request):
     """
     Endpoint: /api/v1/developer/regenerate-key/

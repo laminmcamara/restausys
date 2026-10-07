@@ -227,6 +227,7 @@ class SubscriptionAdmin(AuditAdminMixin, SuperuserOnlyAdmin):
         "id",
         "restaurant",
         "plan",
+        "pending_plan",
         "status",
         "current_period_start",
         "current_period_end",
@@ -234,6 +235,7 @@ class SubscriptionAdmin(AuditAdminMixin, SuperuserOnlyAdmin):
         "trial_end",
         "days_remaining",
         "offline_payment_method",
+        "offline_payment_reference",
         "reactivated_by",
         "last_reactivated_at",
         "created_at",
@@ -366,7 +368,6 @@ class SubscriptionAdmin(AuditAdminMixin, SuperuserOnlyAdmin):
 class PlanAdmin(AuditAdminMixin, SuperuserOnlyAdmin):
     list_display = (
         "id",
-        "name",
         "code",
         "monthly_price",
         "max_users",
@@ -731,5 +732,21 @@ class WebhookEventAdmin(admin.ModelAdmin):
     list_display = ('event_type', 'restaurant', 'status', 'created_at')
     list_filter = ('status', 'environment', 'event_type')
 
+
+@admin.action(description="Approve selected subscription and extend 30 days")
+def approve_subscription_payment(modeladmin, request, queryset):
+    for subscription in queryset.select_related("pending_plan"):
+        if not subscription.pending_plan:
+            continue
+
+        subscription.plan = subscription.pending_plan
+        subscription.pending_plan = None
+        subscription.reactivate_offline(
+            user=request.user,
+            days=30,
+            payment_method=subscription.offline_payment_method,
+            reference=subscription.offline_payment_reference,
+            notes=subscription.offline_payment_notes,
+        )
 
 

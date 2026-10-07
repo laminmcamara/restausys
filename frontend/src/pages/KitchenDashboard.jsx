@@ -115,7 +115,19 @@ const getTableOrCustomer = (order) => {
     return `Table ${order.table.table_number}`;
   }
 
-  return order?.customer_name || order?.customer?.name || "Takeaway";
+  return order?.customer_name || order?.customer?.name || "-";
+};
+
+const getOrderTypeDisplay = (orderType) => {
+  switch (orderType) {
+    case "takeout":
+      return "Takeaway";
+    case "delivery":
+      return "Delivery";
+    case "dine_in":
+    default:
+      return "Dine-in";
+  }
 };
 
 const normalizeItems = (order) => {
@@ -321,62 +333,78 @@ export default function KitchenDashboard() {
       );
     }
   };
-const handleUpdateStatus = async (order, nextStatus) => {
-  const orderId = order?.id;
 
-  if (!orderId) {
-    setError("The order does not have a valid ID.");
-    return;
-  }
+  const handleUpdateStatus = async (order, nextStatus) => {
+    const orderId = order?.id;
 
-  const currentStatus = normalizeStatus(order?.status);
+    if (!orderId) {
+      setError("The order does not have a valid ID.");
+      return;
+    }
 
-  const action = STATUS_ACTIONS[nextStatus];
+    const currentStatus = normalizeStatus(order?.status);
+    const action = STATUS_ACTIONS[nextStatus];
 
-  if (!action) {
-    setError(`Unsupported kitchen status: ${nextStatus}`);
-    return;
-  }
+    if (!action) {
+      setError(`Unsupported kitchen status: ${nextStatus}`);
+      return;
+    }
 
-  if (currentStatus === ORDER_STATUSES.COMPLETED) {
-    setError("Completed orders cannot be changed.");
-    return;
-  }
+    // Optional: guard transitions
+    if (
+      nextStatus === ORDER_STATUSES.IN_PROGRESS &&
+      currentStatus !== ORDER_STATUSES.PLACED
+    ) {
+      setError("Only new orders can be started.");
+      return;
+    }
+    if (
+      nextStatus === ORDER_STATUSES.READY &&
+      currentStatus !== ORDER_STATUSES.IN_PROGRESS
+    ) {
+      setError("Only cooking orders can be marked ready.");
+      return;
+    }
+    if (
+      nextStatus === ORDER_STATUSES.SERVED &&
+      currentStatus !== ORDER_STATUSES.READY
+    ) {
+      setError("Only ready orders can be marked served.");
+      return;
+    }
 
-  setUpdatingOrderId(orderId);
-  setError("");
+    setUpdatingOrderId(orderId);
+    setError("");
 
-  try {
-    const response = await api.post(`/orders/${orderId}/${action.endpoint}/`);
+    console.log("[Kitchen] Updating status", {
+      orderId,
+      order_number: order.order_number,
+      from: currentStatus,
+      to: nextStatus,
+      endpoint: action.endpoint,
+    });
 
-    const updatedOrder = response.data?.order || response.data;
+    try {
+      
+      const response = await api.post(`/orders/${orderId}/${action.endpoint}/`);
+      console.log("[Kitchen] Status update response", response.data);
+      
+      // Small delay to let DB commit
+    await new Promise((res) => setTimeout(res, 300));
 
-    setOrders((currentOrders) =>
-      currentOrders.map((currentOrder) => {
-        if (String(currentOrder.id) !== String(orderId)) {
-          return currentOrder;
-        }
-
-        return normalizeOrder({
-          ...currentOrder,
-          ...updatedOrder,
-          status: updatedOrder?.status || nextStatus,
-        });
-      })
-    );
-
-    await fetchOrders();
-  } catch (requestError) {
-    console.error(
-      "Kitchen status update failed:",
-      requestError?.response?.data || requestError
-    );
-
-    setError(getErrorMessage(requestError, "Failed to update order status."));
-  } finally {
-    setUpdatingOrderId(null);
-  }
-};
+      // Always refetch to ensure UI matches backend
+      await fetchOrders(true);
+      console.log("[Kitchen] Refetched orders after status update");
+    } catch (requestError) {
+      console.error(
+        "[Kitchen] Status update failed:",
+        requestError?.response?.data || requestError
+      );
+      setError(getErrorMessage(requestError, "Failed to update order status."));
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
 
   const visibleOrders = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -726,7 +754,13 @@ function KitchenOrderCard({
             #{formatId(order)}
           </h3>
 
+          {/* Order type badge (Dine-in / Takeaway / Delivery) */}
           <p className="text-[10px] font-black text-orange-600 uppercase mt-1">
+            {getOrderTypeDisplay(order.order_type)}
+          </p>
+
+          {/* Optional: table/customer info below */}
+          <p className="text-[9px] font-bold text-slate-500 mt-0.5">
             {getTableOrCustomer(order)}
           </p>
         </div>

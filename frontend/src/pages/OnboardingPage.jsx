@@ -9,6 +9,7 @@ import {
   UserRound,
 } from "lucide-react";
 import restaurantBackground from "../assets/beepos-restaurant-bg.jpg";
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -26,6 +27,17 @@ function OnboardingPage() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [nonFieldErrors, setNonFieldErrors] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState(0);
+
+  function calculatePasswordStrength(password) {
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (password.length >= 12) strength++;
+    if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
+    if (/\d/.test(password)) strength++;
+    if (/[^a-zA-Z0-9]/.test(password)) strength++;
+    return strength;
+  }
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -37,10 +49,14 @@ function OnboardingPage() {
 
     setFieldErrors((previous) => ({
       ...previous,
-      [name]: null,
+      [name]: undefined,
     }));
 
     setNonFieldErrors([]);
+
+    if (name === "password") {
+      setPasswordStrength(calculatePasswordStrength(value));
+    }
   }
 
   function normalizeErrors(errorData) {
@@ -68,10 +84,30 @@ function OnboardingPage() {
   async function handleSubmit(event) {
     event.preventDefault();
 
+    const newFieldErrors = {};
+
+    if (!formData.restaurant_name.trim()) {
+      newFieldErrors.restaurant_name = ["Restaurant name is required."];
+    }
+    if (!formData.full_name.trim()) {
+      newFieldErrors.full_name = ["Your full name is required."];
+    }
+    if (!formData.email.trim()) {
+      newFieldErrors.email = ["Email address is required."];
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      newFieldErrors.email = ["Enter a valid email address."];
+    }
+    if (!formData.password) {
+      newFieldErrors.password = ["Password is required."];
+    } else if (formData.password.length < 8) {
+      newFieldErrors.password = ["Password must be at least 8 characters."];
+    }
     if (formData.password !== formData.confirm_password) {
-      setFieldErrors({
-        confirm_password: ["Passwords do not match."],
-      });
+      newFieldErrors.confirm_password = ["Passwords do not match."];
+    }
+
+    if (Object.keys(newFieldErrors).length > 0) {
+      setFieldErrors(newFieldErrors);
       return;
     }
 
@@ -80,16 +116,13 @@ function OnboardingPage() {
     setNonFieldErrors([]);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/restaurants/register/`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(formData),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/restaurants/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formData),
+      });
 
       const data = await response.json().catch(() => null);
 
@@ -109,7 +142,6 @@ function OnboardingPage() {
       if (data?.access) {
         localStorage.setItem("accessToken", data.access);
       }
-
       if (data?.refresh) {
         localStorage.setItem("refreshToken", data.refresh);
       }
@@ -117,9 +149,8 @@ function OnboardingPage() {
       navigate("/dashboard");
     } catch (error) {
       console.error("Registration error:", error);
-
       setNonFieldErrors([
-        "Unable to connect to the server. Please make sure the backend is running.",
+        "Unable to connect to the server. Please check your connection and try again.",
       ]);
     } finally {
       setLoading(false);
@@ -259,6 +290,31 @@ function OnboardingPage() {
                   inputClass={inputClass}
                   minLength={8}
                 />
+
+                {formData.password && (
+                  <div className="mt-1">
+                    <div className="h-1.5 w-full rounded-full bg-slate-200">
+                      <div
+                        className={`h-1.5 rounded-full transition-all ${
+                          passwordStrength <= 2
+                            ? "bg-red-500"
+                            : passwordStrength <= 3
+                            ? "bg-amber-500"
+                            : "bg-emerald-500"
+                        }`}
+                        style={{ width: `${(passwordStrength / 5) * 100}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      Password strength:{" "}
+                      {passwordStrength <= 2
+                        ? "Weak"
+                        : passwordStrength <= 3
+                        ? "Fair"
+                        : "Strong"}
+                    </p>
+                  </div>
+                )}
 
                 <FormField
                   id="confirm_password"

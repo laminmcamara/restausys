@@ -878,6 +878,53 @@ class OrderSerializer(serializers.ModelSerializer):
 # KITCHEN & PRINTING
 # ==============================================================================
 
+class KitchenOrderItemSerializer(
+    serializers.ModelSerializer
+):
+    product_name = serializers.SerializerMethodField()
+    modifiers = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order.items.rel.model
+        fields = [
+            "id",
+            "quantity",
+            "product_name",
+            "modifiers",
+        ]
+
+    def get_product_name(self, obj):
+        product = getattr(
+            obj,
+            "product",
+            None,
+        )
+
+        return (
+            getattr(
+                product,
+                "name",
+                None,
+            )
+            or "Unnamed item"
+        )
+
+    def get_modifiers(self, obj):
+        modifiers = obj.modifiers.all()
+
+        return [
+            {
+                "id": modifier.id,
+                "name": getattr(
+                    modifier,
+                    "name",
+                    str(modifier),
+                ),
+            }
+            for modifier in modifiers
+        ]
+
+
 class KitchenTicketSerializer(serializers.ModelSerializer):
     table_number = serializers.ReadOnlyField(
         source="order.table.table_number"
