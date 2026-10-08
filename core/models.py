@@ -3064,7 +3064,7 @@ class Subscription(models.Model):
         auto_now=True,
     )
 
-    TRIAL_DAYS = 14
+    TRIAL_DAYS = 30
     
     
 

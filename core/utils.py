@@ -1,3 +1,5 @@
+# utils.py
+
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
@@ -6,11 +8,9 @@ from datetime import timedelta
 import logging
 from babel.numbers import format_currency as babel_format
 from decimal import Decimal, InvalidOperation
-from .models import Order, DailyReport
-from django.utils import timezone
+from.models import Order, DailyReport
+from django.contrib.auth.models import User
 from core.models import Subscription, Restaurant, Menu
-
- 
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,46 @@ try:
 except ImportError:
     send_to_printer = None
 
+CURRENCY_SYMBOLS = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "CAD": "$",
+    "AUD": "$",
+    "HKD": "HK$",
+    "TRY": "₺",
+    "NGN": "₦",
+    "GMD": "D",
+    "INR": "₹",
+    "JPY": "¥",
+    "CNY": "¥",
+    "ZAR": "R",
+    "AED": "د.إ",
+    "SAR": "﷼",
+    "SEK": "kr",
+    "NOK": "kr",
+    "DKK": "kr",
+    "CHF": "CHF",
+    "SGD": "S$",
+    "BRL": "R$",
+    "MXN": "$",
+    "KES": "KSh",
+    "RWF": "FRw",
+}
 
-# ==============================================================
-# ================== KITCHEN BROADCAST =========================
-# ==============================================================
+def get_user_restaurant(user):
+    """
+    Get the restaurant associated with the given user.
+    """
+    try:
+        return user.restaurant
+    except Exception:
+        return None
 
 def broadcast_kitchen_ticket(ticket, action="create"):
+    """
+    Broadcast kitchen ticket to the kitchen display.
+    """
     if not ticket:
         return
 
@@ -91,11 +125,10 @@ def broadcast_kitchen_ticket(ticket, action="create"):
         logger.error("Kitchen broadcast failed", exc_info=True)
 
 
-# ==============================================================
-# ================== DAILY REPORT ==============================
-# ==============================================================
-
 def generate_daily_report(restaurant):
+    """
+    Generate daily report for the given restaurant.
+    """
     if not restaurant:
         return {
             "total_orders": 0,
@@ -104,7 +137,6 @@ def generate_daily_report(restaurant):
 
     today = timezone.now().date()
 
-    # ✅ Better to use stored unit_price instead of menu price
     total_expr = F("items__quantity") * F("items__unit_price")
 
     orders = Order.objects.filter(
@@ -131,11 +163,10 @@ def generate_daily_report(restaurant):
     }
 
 
-# ==============================================================
-# ================== PERIOD SUMMARY ============================
-# ==============================================================
-
 def calculate_period_summary(restaurant, days):
+    """
+    Calculate period summary for the given restaurant and days.
+    """
     date_from = timezone.now().date() - timedelta(days=days)
 
     total_expr = F("items__quantity") * F("items__unit_price")
@@ -153,46 +184,18 @@ def calculate_period_summary(restaurant, days):
         "total_orders": total_orders,
         "total_revenue": float(total_revenue),
     }
-    
-CURRENCY_SYMBOLS = {
-    "USD": "$",
-    "EUR": "€",
-    "GBP": "£",
-    "CAD": "$",
-    "AUD": "$",
-    "HKD": "HK$",
-    "TRY": "₺",
-    "NGN": "₦",
-    "GMD": "D",
-    "INR": "₹",
-    "JPY": "¥",
-    "CNY": "¥",
-    "ZAR": "R",
-    "AED": "د.إ",
-    "SAR": "﷼",
-    "SEK": "kr",
-    "NOK": "kr",
-    "DKK": "kr",
-    "CHF": "CHF",
-    "SGD": "S$",
-    "BRL": "R$",
-    "MXN": "$",
-    "KES": "KSh",
-    "RWF": "FRw",
-}
+
 
 def format_currency(amount, restaurant=None):
     """
     Locale-aware currency formatter.
     Defaults to HKD + en_HK if restaurant or fields are missing.
     """
-
     try:
         amount = Decimal(amount)
     except (InvalidOperation, TypeError):
         return amount
 
-    # ✅ Default fallback values
     currency_code = "HKD"
     locale = "en_HK"
 
@@ -205,9 +208,12 @@ def format_currency(amount, restaurant=None):
         currency_code,
         locale=locale
     )
-    
+
 
 def has_active_subscription(restaurant):
+    """
+    Check if the given restaurant has an active subscription.
+    """
     subscription = Subscription.objects.filter(
         restaurant=restaurant
     ).first()
@@ -228,11 +234,7 @@ def has_active_subscription(restaurant):
 def get_accessible_restaurants(user):
     """
     Return restaurants the user can access.
-
-    Superusers can access all restaurants.
-    Normal users can access restaurants owned by their company.
     """
-
     if user.is_superuser:
         return Restaurant.objects.all()
 
@@ -245,11 +247,7 @@ def get_accessible_restaurants(user):
 def get_active_menu_for_user(user):
     """
     Return active menu for the user.
-
-    Superusers fall back to any active menu.
-    Normal users only get active menu from owned company restaurants.
     """
-
     if user.is_superuser:
         return Menu.objects.filter(
             is_active=True,
@@ -261,3 +259,16 @@ def get_active_menu_for_user(user):
         restaurant__company__active=True,
         is_active=True,
     ).first()
+
+
+def is_global_authority(user):
+    """
+    Check if the given user is a global authority.
+    """
+    return user.is_superuser
+
+def is_authenticated(user):
+    """
+    Check if the given user is authenticated.
+    """
+    return user.is_authenticated

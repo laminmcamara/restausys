@@ -68,13 +68,17 @@ class SubscriptionRequiredMixin(
                 "User is not assigned to a restaurant."
             )
 
-        if not has_active_subscription(
-            restaurant
-        ):
+        subscription = restaurant.subscription
+
+        if subscription is None:
             raise PermissionDenied(
-                "An active subscription is required."
+                "No subscription found for this restaurant."
             )
 
+        if subscription.status not in ["active", "trialing"] or (subscription.current_period_end is not None and subscription.current_period_end < timezone.now()):
+            raise PermissionDenied(
+                "An active subscription or trial is required."
+            )
 
 class RestaurantScopedMixin(
     GlobalAuthorityMixin

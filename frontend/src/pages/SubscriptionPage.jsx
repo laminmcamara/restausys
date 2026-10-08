@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import api from "../services/api";
 
+// Define constants
 const PAYMENT_METHODS = [
   {
     id: "mobile_money",
@@ -36,6 +37,7 @@ const PAYMENT_METHODS = [
   },
 ];
 
+// Define helper functions
 const normalizeStatus = (value) => {
   return String(value || "")
     .trim()
@@ -76,7 +78,9 @@ const getErrorMessage = (error, fallback) => {
   return error?.message || fallback;
 };
 
-export default function SubscriptionPage() {
+// Define the SubscriptionPage component
+const SubscriptionPage = () => {
+  // Define state variables
   const [subscription, setSubscription] = useState(null);
   const [plans, setPlans] = useState([]);
   const [selectedPlanId, setSelectedPlanId] = useState("");
@@ -91,23 +95,7 @@ export default function SubscriptionPage() {
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchSubscription = async () => {
-    const response = await api.get("/subscription/");
-    const data = response.data?.subscription || response.data;
-
-    setSubscription(data);
-    return data;
-  };
-
-  const fetchPlans = async () => {
-    const response = await api.get("/plans/");
-    const data = response.data?.results || response.data || [];
-    const nextPlans = Array.isArray(data) ? data : [];
-
-    setPlans(nextPlans);
-    return nextPlans;
-  };
-
+  // Use useEffect to fetch data
   useEffect(() => {
     let isMounted = true;
 
@@ -118,22 +106,25 @@ export default function SubscriptionPage() {
 
       try {
         const [subscriptionResult, plansResult] = await Promise.all([
-          fetchSubscription(),
-          fetchPlans(),
+          api.get("/subscription/"),
+          api.get("/plans/"),
         ]);
 
         if (!isMounted) return;
 
         const pendingPlanId =
-          subscriptionResult?.pending_plan?.id ||
-          subscriptionResult?.pending_plan_id ||
+          subscriptionResult?.data?.subscription?.pending_plan?.id ||
+          subscriptionResult?.data?.subscription?.pending_plan_id ||
           "";
 
         if (pendingPlanId) {
           setSelectedPlanId(String(pendingPlanId));
-        } else if (plansResult.length === 1) {
-          setSelectedPlanId(String(plansResult[0].id));
+        } else if (plansResult?.data?.results?.length === 1) {
+          setSelectedPlanId(String(plansResult?.data?.results[0].id));
         }
+
+        setSubscription(subscriptionResult?.data?.subscription);
+        setPlans(plansResult?.data?.results || []);
       } catch (requestError) {
         if (!isMounted) return;
 
@@ -158,6 +149,7 @@ export default function SubscriptionPage() {
     };
   }, []);
 
+  // Handle form submission
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -188,7 +180,7 @@ export default function SubscriptionPage() {
         offline_payment_notes: notes.trim(),
       });
 
-      const pendingPlan = response.data?.pending_plan;
+      const pendingPlan = response?.data?.pending_plan;
 
       setSubmitSuccess(
         pendingPlan?.name
@@ -199,7 +191,7 @@ export default function SubscriptionPage() {
       setReference("");
       setNotes("");
 
-      await fetchSubscription();
+      await api.get("/subscription/");
     } catch (requestError) {
       setSubmitError(
         getErrorMessage(
@@ -212,6 +204,7 @@ export default function SubscriptionPage() {
     }
   };
 
+  // Render the component
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -534,4 +527,6 @@ export default function SubscriptionPage() {
       </div>
     </div>
   );
-}
+};
+
+export default SubscriptionPage;

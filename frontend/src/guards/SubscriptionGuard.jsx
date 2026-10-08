@@ -1,50 +1,83 @@
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+// frontend/src/guards/SubscriptionGuard.jsx
+
 import { useEffect, useState } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import api from "../services/api";
 
-export default function SubscriptionGuard() {
+const VALID_STATUSES = new Set(["active", "trialing"]);
+
+function subscriptionAllowsAccess(subscription) {
+  if (!subscription) {
+    return false;
+  }
+
+  const status = String(subscription.status || "")
+    .trim()
+    .toLowerCase();
+
+  if (!VALID_STATUSES.has(status)) {
+    return false;
+  }
+
+  if (!subscription.current_period_end) {
+    return true;
+  }
+
+  const periodEnd = new Date(subscription.current_period_end);
+
+  if (Number.isNaN(periodEnd.getTime())) {
+    return false;
+  }
+
+  return periodEnd.getTime() > Date.now();
+}
+
+export default function SubscriptionGuard({ children }) {
   const location = useLocation();
+
   const [loading, setLoading] = useState(true);
   const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
-    let active = true;
+    let cancelled = false;
 
-    async function checkAccess() {
+    async function verifySubscription() {
       try {
-        const response = await api.get("/dashboard/");
-        const data = response.data;
+        const response = await api.get("/subscription/");
+        const subscription = response.data?.subscription || response.data;
 
-        if (!active) return;
+        console.log("SubscriptionGuard subscription:", subscription);
 
-        // Superusers bypass subscription check
-        const isSuperuser = Boolean(data?.user?.is_superuser);
-        const hasActiveSubscription = Boolean(
-          data?.access?.has_active_subscription
+        if (!cancelled) {
+          setAllowed(subscriptionAllowsAccess(subscription));
+        }
+      } catch (error) {
+        console.error(
+          "SubscriptionGuard request failed:",
+          error?.response?.status,
+          error?.response?.data || error?.message
         );
 
-        setAllowed(isSuperuser || hasActiveSubscription || hasActiveTrial);
-      } catch {
-        if (active) {
+        if (!cancelled) {
           setAllowed(false);
         }
       } finally {
-        if (active) {
+        if (!cancelled) {
           setLoading(false);
         }
       }
     }
 
-    checkAccess();
+    verifySubscription();
 
     return () => {
-      active = false;
+      cancelled = true;
     };
   }, []);
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="h-9 w-9 animate-spin rounded-full border-4 border-amber-200 border-t-amber-600" />
       </div>
     );
@@ -55,10 +88,12 @@ export default function SubscriptionGuard() {
       <Navigate
         to="/subscription"
         replace
-        state={{ from: location.pathname }}
+        state={{
+          from: location.pathname,
+        }}
       />
     );
   }
 
-  return <Outlet />;
+  return children;
 }

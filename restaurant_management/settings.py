@@ -390,12 +390,9 @@ PRINTERS = {
     },
 }
 
+# Stripe configuration
+STRIPE_SECRET_KEY = ''  
 
-STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
-STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
-
-if not STRIPE_SECRET_KEY:
-    print("⚠️ WARNING: Stripe secret key not set")
 
 # ==============================================================================
 # DEFAULT AUTO FIELD
@@ -404,7 +401,7 @@ if not STRIPE_SECRET_KEY:
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-CORS_ALLOW_ALL_ORIGINS = False
+# CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",

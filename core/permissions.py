@@ -2,10 +2,7 @@
 
 from django.contrib import admin
 from django.utils import timezone
-
-from rest_framework.permissions import (
-    BasePermission,
-)
+from rest_framework.permissions import BasePermission
 
 from core.models import Subscription
 
@@ -16,56 +13,44 @@ from core.models import Subscription
 
 
 def is_authenticated(user):
-    return bool(
-        user
-        and user.is_authenticated
-    )
+    return bool(user and user.is_authenticated)
 
 
 def is_global_authority(user):
     """
-    Global authority is limited to platform owners
-    and Django superusers.
+    Platform-level authorities can access all restaurants and bypass
+    restaurant subscription checks.
 
-    Restaurant managers are intentionally excluded.
+    Restaurant managers are not global authorities.
     """
     return bool(
         user
         and (
             user.is_superuser
-            or getattr(
-                user,
-                "is_platform_owner",
-                False,
-            )
+            or getattr(user, "is_platform_owner", False)
         )
     )
 
 
 def get_user_restaurant(user):
-    return getattr(
-        user,
-        "restaurant",
-        None,
-    )
+    """
+    Return the restaurant assigned to the user, or None.
+
+    This expects your User model to have a `restaurant` relation.
+    """
+    return getattr(user, "restaurant", None)
 
 
 def get_user_role(user):
+    """
+    Normalize the user role stored on your custom User model.
+    """
     return str(
-        getattr(
-            user,
-            "role",
-            "",
-        )
-        or ""
+        getattr(user, "role", "") or ""
     ).strip().upper()
 
 
 def is_manager(user):
-    """
-    A manager is a restaurant-scoped manager.
-    Global authority is checked separately.
-    """
     if not is_authenticated(user):
         return False
 
@@ -100,100 +85,113 @@ def is_cook(user):
 
 
 def has_restaurant(user):
-    return (
+    return bool(
         is_authenticated(user)
-        and get_user_restaurant(user)
-        is not None
+        and get_user_restaurant(user) is not None
     )
+
+
+def get_restaurant_subscription(restaurant):
+    """
+    Safely return the newest subscription for a restaurant.
+
+    Do NOT use `restaurant.subscription` here. If Subscription.restaurant is a
+    OneToOneField and no related object exists, Django can raise
+    RelatedObjectDoesNotExist instead of returning None.
+    """
+    if restaurant is None:
+        return None
+
+    return (
+        Subscription.objects
+        .filter(restaurant=restaurant)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+
+
+def subscription_is_valid(subscription, now=None):
+    """
+    A subscription is valid only when:
+
+    - It exists
+    - Its status is active or trialing
+    - Its current_period_end is either unset or later than now
+
+    Calling expire_if_needed() ensures a completed trial/period becomes expired
+    before this function decides access.
+    """
+    if subscription is None:
+        return False
+
+    if now is None:
+        now = timezone.now()
+
+    subscription.expire_if_needed()
+
+    subscription.refresh_from_db(
+        fields=[
+            "status",
+            "current_period_end",
+        ]
+    )
+
+    valid_statuses = {
+        Subscription.SubscriptionStatus.ACTIVE,
+        Subscription.SubscriptionStatus.TRIALING,
+    }
+
+    if subscription.status not in valid_statuses:
+        return False
+
+    period_end = subscription.current_period_end
+
+    if period_end is not None and period_end <= now:
+        return False
+
+    return True
 
 
 def object_restaurant(obj):
     """
-    Resolve the restaurant from common object
-    relationships.
+    Resolve the restaurant from common direct and indirect relationships.
     """
-    restaurant = getattr(
-        obj,
-        "restaurant",
-        None,
-    )
+    restaurant = getattr(obj, "restaurant", None)
 
     if restaurant is not None:
         return restaurant
 
-    order = getattr(
-        obj,
+    for relation_name in (
         "order",
-        None,
-    )
-
-    if order is not None:
-        restaurant = getattr(
-            order,
-            "restaurant",
-            None,
-        )
-
-        if restaurant is not None:
-            return restaurant
-
-    menu = getattr(
-        obj,
         "menu",
-        None,
-    )
-
-    if menu is not None:
-        restaurant = getattr(
-            menu,
-            "restaurant",
-            None,
-        )
-
-        if restaurant is not None:
-            return restaurant
-
-    table = getattr(
-        obj,
         "table",
-        None,
-    )
-
-    if table is not None:
-        restaurant = getattr(
-            table,
-            "restaurant",
-            None,
-        )
-
-        if restaurant is not None:
-            return restaurant
-
-    product = getattr(
-        obj,
         "product",
-        None,
-    )
-
-    if product is not None:
-        restaurant = getattr(
-            product,
-            "restaurant",
+    ):
+        related_object = getattr(
+            obj,
+            relation_name,
             None,
         )
 
-        if restaurant is not None:
-            return restaurant
+        if related_object is not None:
+            restaurant = getattr(
+                related_object,
+                "restaurant",
+                None,
+            )
+
+            if restaurant is not None:
+                return restaurant
 
     return None
 
 
 def user_can_access_object(user, obj):
     """
-    Global authorities can access all objects.
+    Platform authorities can access all records.
 
-    Other users can access only objects belonging
-    to their assigned restaurant.
+    Other users can access only objects belonging to their assigned
+    restaurant.
     """
     if not is_authenticated(user):
         return False
@@ -201,34 +199,25 @@ def user_can_access_object(user, obj):
     if is_global_authority(user):
         return True
 
-    user_restaurant = get_user_restaurant(
-        user
-    )
+    user_restaurant = get_user_restaurant(user)
 
     if user_restaurant is None:
         return False
 
-    obj_restaurant = object_restaurant(obj)
-
-    return (
-        obj_restaurant is not None
-        and obj_restaurant == user_restaurant
-    )
+    return object_restaurant(obj) == user_restaurant
 
 
 # ============================================================================
-# Django admin permission base
+# Django admin base class
 # ============================================================================
 
 
 class RoleRestrictedAdmin(admin.ModelAdmin):
     """
-    Base ModelAdmin for restaurant-scoped admin
-    access.
+    Global authorities can manage all records.
 
-    Global authorities can access all records.
-    Restaurant managers can access records for
-    their own restaurant only.
+    Restaurant managers can only view/manage records belonging to their
+    assigned restaurant, if the model has a `restaurant` field.
     """
 
     def user_is_manager(self, request):
@@ -262,16 +251,12 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
         return queryset.none()
 
     def has_module_permission(self, request):
-        return (
+        return bool(
             is_global_authority(request.user)
             or is_manager(request.user)
         )
 
-    def has_view_permission(
-        self,
-        request,
-        obj=None,
-    ):
+    def has_view_permission(self, request, obj=None):
         user = request.user
 
         if not (
@@ -283,22 +268,15 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
         if obj is None:
             return True
 
-        return user_can_access_object(
-            user,
-            obj,
-        )
+        return user_can_access_object(user, obj)
 
     def has_add_permission(self, request):
-        return (
+        return bool(
             is_global_authority(request.user)
             or is_manager(request.user)
         )
 
-    def has_change_permission(
-        self,
-        request,
-        obj=None,
-    ):
+    def has_change_permission(self, request, obj=None):
         user = request.user
 
         if is_global_authority(user):
@@ -310,16 +288,9 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
         if obj is None:
             return True
 
-        return user_can_access_object(
-            user,
-            obj,
-        )
+        return user_can_access_object(user, obj)
 
-    def has_delete_permission(
-        self,
-        request,
-        obj=None,
-    ):
+    def has_delete_permission(self, request, obj=None):
         user = request.user
 
         if is_global_authority(user):
@@ -331,10 +302,7 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
         if obj is None:
             return True
 
-        return user_can_access_object(
-            user,
-            obj,
-        )
+        return user_can_access_object(user, obj)
 
     def save_model(
         self,
@@ -345,20 +313,13 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
     ):
         user = request.user
 
-        if (
-            not change
-            and not is_global_authority(user)
-        ):
-            restaurant = get_user_restaurant(
-                user
-            )
+        if not change and not is_global_authority(user):
+            restaurant = get_user_restaurant(user)
 
             if restaurant is not None:
                 model_fields = {
                     field.name
-                    for field in (
-                        obj._meta.get_fields()
-                    )
+                    for field in obj._meta.get_fields()
                 }
 
                 if "restaurant" in model_fields:
@@ -373,84 +334,185 @@ class RoleRestrictedAdmin(admin.ModelAdmin):
 
 
 # ============================================================================
-# Base DRF permissions
+# Basic DRF permissions
 # ============================================================================
 
 
 class IsAuthenticatedUser(BasePermission):
-    message = (
-        "Authentication credentials "
-        "were not provided."
-    )
+    message = "Authentication credentials were not provided."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_authenticated(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_authenticated(request.user)
 
 
 class IsGlobalAuthority(BasePermission):
-    message = (
-        "Global platform authority "
-        "is required."
-    )
+    message = "Global platform authority is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_global_authority(
-            request.user
+    def has_permission(self, request, view):
+        return is_global_authority(request.user)
+
+
+class IsStaffOrGlobalAuthority(BasePermission):
+    """
+    For internal platform administration endpoints.
+
+    This allows a Django staff account or global platform authority. Do not use
+    this permission for ordinary restaurant business endpoints unless that is
+    explicitly intended.
+    """
+
+    message = "Platform staff access is required."
+
+    def has_permission(self, request, view):
+        user = request.user
+
+        return bool(
+            is_authenticated(user)
+            and (
+                user.is_staff
+                or is_global_authority(user)
+            )
         )
 
 
 class HasRestaurant(BasePermission):
-    message = (
-        "You are not assigned to a restaurant."
-    )
+    message = "You are not assigned to a restaurant."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return has_restaurant(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return has_restaurant(request.user)
 
 
 # ============================================================================
-# Restaurant-scoped role permissions
+# Subscription permission
 # ============================================================================
 
 
-class IsManagerOrGlobalAuthority(
-    BasePermission
-):
+class HasActiveSubscription(BasePermission):
+    """
+    Allow access only when the restaurant subscription is active or trialing
+    and its current period has not ended.
+
+    Superusers and platform owners bypass the check.
+    """
+
     message = (
-        "Manager access is required."
+        "Your free trial or subscription has ended. "
+        "Select a plan and complete payment to continue using BEEPOS."
     )
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        user = request.user
 
-    def has_object_permission(
-        self,
-        request,
-        view,
-        obj,
-    ):
+        if not is_authenticated(user):
+            self.message = (
+                "Authentication credentials were not provided."
+            )
+            return False
+
+        # Platform-level accounts always retain access.
+        if is_global_authority(user):
+            return True
+
+        restaurant = get_user_restaurant(user)
+
+        if restaurant is None:
+            self.message = (
+                "Your account is not assigned to a restaurant."
+            )
+            return False
+
+        subscription = get_restaurant_subscription(restaurant)
+
+        if subscription is None:
+            self.message = (
+                "No subscription was found for this restaurant."
+            )
+            return False
+
+        if not subscription_is_valid(subscription):
+            self.message = (
+                "Your trial or subscription has expired. "
+                "Choose a plan to restore access."
+            )
+            return False
+
+        return True
+
+
+# Keep this alias while views are migrated to HasActiveSubscription.
+HasActiveSubscriptionOrTrial = HasActiveSubscription
+
+
+class IsAuthorizedToAccessRestaurant(BasePermission):
+    """
+    Compatibility permission for existing views.
+
+    Allows:
+    - Superusers and platform owners
+    - Restaurant managers whose restaurant has a valid active/trialing
+      subscription
+
+    This intentionally uses the same subscription rules as
+    HasActiveSubscription.
+    """
+
+    message = "You are not authorized to access this restaurant."
+
+    def has_permission(self, request, view):
+        user = request.user
+
+        if not is_authenticated(user):
+            self.message = (
+                "Authentication credentials were not provided."
+            )
+            return False
+
+        # Platform-level authority bypass.
+        if is_global_authority(user):
+            return True
+
+        # This permission is for manager-level restaurant access.
+        if not is_manager(user):
+            self.message = "Manager access is required."
+            return False
+
+        restaurant = get_user_restaurant(user)
+
+        if restaurant is None:
+            self.message = (
+                "Your account is not assigned to a restaurant."
+            )
+            return False
+
+        subscription = get_restaurant_subscription(restaurant)
+
+        if subscription is None:
+            self.message = (
+                "No subscription was found for this restaurant."
+            )
+            return False
+
+        if not subscription_is_valid(subscription):
+            self.message = (
+                "Your trial or subscription has expired. "
+                "Choose a plan to restore access."
+            )
+            return False
+
+        return True
+
+# ============================================================================
+# Restaurant manager permissions
+# ============================================================================
+
+
+class IsManagerOrGlobalAuthority(BasePermission):
+    message = "Manager access is required."
+
+    def has_permission(self, request, view):
+        return is_manager(request.user)
+
+    def has_object_permission(self, request, view, obj):
         return user_can_access_object(
             request.user,
             obj,
@@ -458,25 +520,12 @@ class IsManagerOrGlobalAuthority(
 
 
 class CanManageStaff(BasePermission):
-    message = (
-        "Staff management access is required."
-    )
+    message = "Staff management access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_manager(request.user)
 
-    def has_object_permission(
-        self,
-        request,
-        view,
-        obj,
-    ):
+    def has_object_permission(self, request, view, obj):
         return user_can_access_object(
             request.user,
             obj,
@@ -484,25 +533,12 @@ class CanManageStaff(BasePermission):
 
 
 class CanManageProducts(BasePermission):
-    message = (
-        "Product management access is required."
-    )
+    message = "Product management access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_manager(request.user)
 
-    def has_object_permission(
-        self,
-        request,
-        view,
-        obj,
-    ):
+    def has_object_permission(self, request, view, obj):
         return user_can_access_object(
             request.user,
             obj,
@@ -510,25 +546,12 @@ class CanManageProducts(BasePermission):
 
 
 class CanManageTables(BasePermission):
-    message = (
-        "Table management access is required."
-    )
+    message = "Table management access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_manager(request.user)
 
-    def has_object_permission(
-        self,
-        request,
-        view,
-        obj,
-    ):
+    def has_object_permission(self, request, view, obj):
         return user_can_access_object(
             request.user,
             obj,
@@ -536,26 +559,12 @@ class CanManageTables(BasePermission):
 
 
 class CanManageSettings(BasePermission):
-    message = (
-        "Restaurant settings access "
-        "is required."
-    )
+    message = "Restaurant settings access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_manager(request.user)
 
-    def has_object_permission(
-        self,
-        request,
-        view,
-        obj,
-    ):
+    def has_object_permission(self, request, view, obj):
         return user_can_access_object(
             request.user,
             obj,
@@ -563,51 +572,28 @@ class CanManageSettings(BasePermission):
 
 
 class CanViewReports(BasePermission):
-    message = (
-        "Financial reports access "
-        "is required."
-    )
+    message = "Financial reports access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_manager(request.user)
 
 
 class CanViewDashboard(BasePermission):
-    message = (
-        "Dashboard access is required."
-    )
+    message = "Dashboard access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return is_manager(
-            request.user
-        )
+    def has_permission(self, request, view):
+        return is_manager(request.user)
 
 
 # ============================================================================
-# POS, cashier, server, and kitchen permissions
+# POS, orders, cashier, and kitchen permissions
 # ============================================================================
 
 
 class CanAccessPOS(BasePermission):
-    message = (
-        "POS access is required."
-    )
+    message = "POS access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
+    def has_permission(self, request, view):
         user = request.user
 
         return bool(
@@ -619,16 +605,9 @@ class CanAccessPOS(BasePermission):
 
 
 class CanAccessCashierShift(BasePermission):
-    message = (
-        "Cashier or manager access "
-        "is required."
-    )
+    message = "Cashier or manager access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
+    def has_permission(self, request, view):
         user = request.user
 
         return bool(
@@ -639,15 +618,9 @@ class CanAccessCashierShift(BasePermission):
 
 
 class CanAccessKitchen(BasePermission):
-    message = (
-        "Kitchen access is required."
-    )
+    message = "Kitchen access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
+    def has_permission(self, request, view):
         user = request.user
 
         return bool(
@@ -658,15 +631,9 @@ class CanAccessKitchen(BasePermission):
 
 
 class CanAccessOrders(BasePermission):
-    message = (
-        "Order access is required."
-    )
+    message = "Order access is required."
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
+    def has_permission(self, request, view):
         user = request.user
 
         return bool(
@@ -677,12 +644,7 @@ class CanAccessOrders(BasePermission):
             or is_server(user)
         )
 
-    def has_object_permission(
-        self,
-        request,
-        view,
-        obj,
-    ):
+    def has_object_permission(self, request, view, obj):
         return user_can_access_object(
             request.user,
             obj,
@@ -690,146 +652,83 @@ class CanAccessOrders(BasePermission):
 
 
 # ============================================================================
-# Subscription permission
+# Combined role and subscription permissions
 # ============================================================================
 
-class HasActiveSubscription(BasePermission):
-    """
-    Blocks access to protected APIs if:
-    - No subscription exists, OR
-    - Subscription status is not 'active' or 'trialing', OR
-    - current_period_end has passed (trial or subscription expired).
-    
-    For Option B (plan selection after trial):
-    - During trial: access granted (status='trialing', current_period_end in future)
-    - After trial expires: access denied until admin approves a plan
-    """
-    
+
+class IsManagerWithSubscription(BasePermission):
     message = (
-        "Your free trial has ended. Select a plan and complete payment "
-        "to continue using BEEPOS."
+        "Manager access with an active subscription is required."
     )
 
     def has_permission(self, request, view):
-        user = request.user
+        manager_permission = IsManagerOrGlobalAuthority()
+        subscription_permission = HasActiveSubscription()
 
-        if not is_authenticated(user):
+        if not manager_permission.has_permission(
+            request,
+            view,
+        ):
+            self.message = manager_permission.message
             return False
 
-        # Allow superusers/global staff
-        if is_global_authority(user):
-            return True
-
-        restaurant = get_user_restaurant(user)
-
-        if restaurant is None:
-            self.message = "Your account is not assigned to a restaurant."
-            return False
-
-        # Use the OneToOne relationship if available
-        try:
-            subscription = restaurant.subscription
-        except Exception:
-            # Fallback to query if related_name doesn't work
-            subscription = (
-                Subscription.objects.filter(restaurant=restaurant)
-                .order_by("-created_at")
-                .first()
-            )
-
-        if subscription is None:
-            self.message = "No subscription was found for this restaurant."
-            return False
-
-        # Expire if needed before checking (ensures status is current)
-        subscription.expire_if_needed()
-
-        now = timezone.now()
-        status = str(subscription.status).lower()
-
-        # Only 'active' and 'trialing' are valid
-        if status not in {"active", "trialing"}:
-            self.message = (
-                "Your trial or subscription has expired. "
-                "Choose a plan to restore access."
-            )
-            return False
-
-        end_date = subscription.current_period_end
-
-        # If end_date exists and is in the past, deny access
-        if end_date is not None and end_date <= now:
-            self.message = (
-                "Your trial or subscription has expired. "
-                "Choose a plan to restore access."
-            )
+        if not subscription_permission.has_permission(
+            request,
+            view,
+        ):
+            self.message = subscription_permission.message
             return False
 
         return True
-    
-# ============================================================================
-# Combined convenience permissions
-# ============================================================================
 
 
-class IsManagerWithSubscription(
-    BasePermission
-):
+class CanAccessPOSWithSubscription(BasePermission):
     message = (
-        "Manager access with an active "
-        "subscription is required."
+        "POS access with an active subscription is required."
     )
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return bool(
-            IsManagerOrGlobalAuthority()
-            .has_permission(request, view)
-            and HasActiveSubscription()
-            .has_permission(request, view)
-        )
+    def has_permission(self, request, view):
+        role_permission = CanAccessPOS()
+        subscription_permission = HasActiveSubscription()
+
+        if not role_permission.has_permission(
+            request,
+            view,
+        ):
+            self.message = role_permission.message
+            return False
+
+        if not subscription_permission.has_permission(
+            request,
+            view,
+        ):
+            self.message = subscription_permission.message
+            return False
+
+        return True
 
 
-class CanAccessPOSWithSubscription(
-    BasePermission
-):
+class CanAccessKitchenWithSubscription(BasePermission):
     message = (
-        "POS access with an active "
-        "subscription is required."
+        "Kitchen access with an active subscription is required."
     )
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return bool(
-            CanAccessPOS()
-            .has_permission(request, view)
-            and HasActiveSubscription()
-            .has_permission(request, view)
-        )
+    def has_permission(self, request, view):
+        role_permission = CanAccessKitchen()
+        subscription_permission = HasActiveSubscription()
 
+        if not role_permission.has_permission(
+            request,
+            view,
+        ):
+            self.message = role_permission.message
+            return False
 
-class CanAccessKitchenWithSubscription(
-    BasePermission
-):
-    message = (
-        "Kitchen access with an active "
-        "subscription is required."
-    )
+        if not subscription_permission.has_permission(
+            request,
+            view,
+        ):
+            self.message = subscription_permission.message
+            return False
 
-    def has_permission(
-        self,
-        request,
-        view,
-    ):
-        return bool(
-            CanAccessKitchen()
-            .has_permission(request, view)
-            and HasActiveSubscription()
-            .has_permission(request, view)
-        )
+        return True

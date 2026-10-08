@@ -75,9 +75,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 # from .permissions import IsOwnerOrManager
-from core.permissions import (
-    CanAccessKitchen,
-)
+
 from django.core.serializers.json import DjangoJSONEncoder
 from rest_framework.response import Response
 from rest_framework.status import HTTP_403_FORBIDDEN, HTTP_200_OK
@@ -96,7 +94,6 @@ from rest_framework import filters
 from .serializers import ModifierOptionSerializer
 
 from django.core.exceptions import PermissionDenied
-from .stripe_utils import create_payment_intent
 from django.views.generic import UpdateView
 
 # TENANT BASE
@@ -170,8 +167,19 @@ from .serializers import (
 )
 
 import secrets
-from .permissions import (CanAccessPOS,
-IsAuthenticatedUser, IsManagerOrGlobalAuthority, HasActiveSubscription)
+
+from core.permissions import (
+    IsAuthenticatedUser,
+    IsManagerWithSubscription,
+    CanAccessPOSWithSubscription,
+    CanAccessKitchenWithSubscription,
+    IsManagerOrGlobalAuthority,
+    HasActiveSubscriptionOrTrial,
+    IsAuthorizedToAccessRestaurant,
+    HasActiveSubscription,
+    CanAccessOrders,
+)
+
 from django.contrib.auth import get_user_model
 from .models import Subscription
 from django.utils.timezone import now
@@ -302,6 +310,7 @@ class MeView(APIView):
         return Response(serializer.data)
 
 
+
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -338,14 +347,20 @@ class RestaurantViewSet(viewsets.ModelViewSet):
         # Create a 14-day trial subscription
         plan = Plan.objects.filter(name="Main Restaurant").first()
         
-        Subscription.objects.create(
-            restaurant=restaurant,
-            plan=plan,
-            status="active",  # Must be ACTIVE for the guard to allow access
-            current_period_start=timezone.now(),
-            current_period_end=timezone.now() + timedelta(days=14),
-            trial_end=timezone.now() + timedelta(days=14),
-        )
+        try:
+            Subscription.objects.create(
+                restaurant=restaurant,
+                plan=plan,
+                status="trialing",  # Changed to trialing
+                current_period_start=timezone.now(),
+                current_period_end=timezone.now() + timedelta(days=14),
+                trial_end=timezone.now() + timedelta(days=14),
+            )
+        except Exception as e:
+            # Handle any errors that occur during subscription creation
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         refresh = RefreshToken.for_user(user)
         
@@ -357,7 +372,7 @@ class RestaurantViewSet(viewsets.ModelViewSet):
                 'email': user.email,
             }
         }, status=status.HTTP_201_CREATED)
-    
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def api_home(request):
@@ -390,9 +405,7 @@ class PosDashboardAPIView(
     APIView,
 ):
     permission_classes = [
-        IsAuthenticatedUser,
-        CanAccessPOS,
-        HasActiveSubscription,
+    IsAuthenticated, HasActiveSubscription
     ]
 
     def get_restaurant(self, request):
@@ -677,7 +690,7 @@ def customer_display_shortcut(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, CanAccessOrders, HasActiveSubscription])
 @transaction.atomic
 def update_order_status(request, order_id):
 
@@ -846,9 +859,9 @@ class AnalyticsAPIView(
     APIView,
 ):
     permission_classes = [
-        IsAuthenticatedUser,
+        IsAuthenticated,
         IsManagerOrGlobalAuthority,
-        HasActiveSubscription,
+        HasActiveSubscriptionOrTrial,
     ]
     def get(self, request):
         restaurant = (
@@ -1827,7 +1840,7 @@ class PlaceOrderAPIView(APIView):
     It manages Table Sessions, Order Items, and Modifiers in a single transaction.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanAccessPOSWithSubscription]
 
     def post(self, request):
         data = request.data
@@ -1989,7 +2002,7 @@ class TableViewSet(viewsets.ModelViewSet):
     serializer_class = TableSerializer
 
     permission_classes = [
-        IsAuthenticatedUser, HasActiveSubscription,
+        IsAuthenticated, HasActiveSubscriptionOrTrial,
     ]
 
     def _get_restaurant(self):
@@ -2387,7 +2400,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
 
     permission_classes = [
-        IsAuthenticatedUser, HasActiveSubscription,
+        IsAuthenticated, HasActiveSubscriptionOrTrial,
     ]
 
     def _get_restaurant(self):
@@ -3926,7 +3939,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 class OrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
     permission_classes = [
-        IsAuthenticatedUser,
+        IsAuthenticated, CanAccessPOSWithSubscription
     ]
 
     def _get_restaurant(self):
@@ -4034,7 +4047,7 @@ class OrderItemViewSet(viewsets.ModelViewSet):
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         user = self.request.user
@@ -4065,7 +4078,7 @@ class ProductViewSet(
     viewsets.ModelViewSet
 ):  # Changed from ReadOnlyModelViewSet to allow updates
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
 
@@ -4145,7 +4158,7 @@ class ProductViewSet(
 
 class ManagerCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         return Category.objects.filter(
@@ -4179,8 +4192,8 @@ class ManagerCategoryViewSet(viewsets.ModelViewSet):
 class ManagerProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [
-        IsAuthenticatedUser,
-        HasActiveSubscription,
+        IsAuthenticated,
+        HasActiveSubscriptionOrTrial,
     ]
 
     def get_queryset(self):
@@ -4201,7 +4214,7 @@ class ManagerProductViewSet(viewsets.ModelViewSet):
 class ManagerMenuViewSet(viewsets.ModelViewSet):
     serializer_class = MenuSerializer
     permission_classes = [
-        IsAuthenticatedUser, HasActiveSubscription
+        IsAuthenticated, HasActiveSubscriptionOrTrial
     ]
 
     def get_queryset(self):
@@ -4258,8 +4271,8 @@ class PublicMenuViewSet(viewsets.ReadOnlyModelViewSet):
 class PosMenuViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MenuSerializer
     permission_classes = [
-        IsAuthenticatedUser,
-        HasActiveSubscription,
+        IsAuthenticated,
+        HasActiveSubscriptionOrTrial,
     ]
 
     def get_queryset(self):
@@ -4283,7 +4296,7 @@ class PosMenuViewSet(viewsets.ReadOnlyModelViewSet):
 
 class ManagerModifierGroupViewSet(viewsets.ModelViewSet):
     serializer_class = ModifierGroupSerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         return ModifierGroup.objects.filter(
@@ -4314,7 +4327,7 @@ class ManagerModifierGroupViewSet(viewsets.ModelViewSet):
 
 class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
     serializer_class = ModifierOptionSerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]   
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]   
 
     def get_queryset(self):
         return ModifierOption.objects.filter(
@@ -4344,7 +4357,7 @@ class ManagerModifierOptionViewSet(viewsets.ModelViewSet):
 
 class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PaymentMethodSerializer
-    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         # Only return methods belonging to the logged-in user's restaurant
@@ -4359,7 +4372,7 @@ class PaymentMethodViewSet(viewsets.ReadOnlyModelViewSet):
 @method_decorator(never_cache, name="dispatch")
 class PaymentSummaryAPIView(APIView):
     permission_classes = [
-        permissions.IsAuthenticated, HasActiveSubscription
+        permissions.IsAuthenticated, HasActiveSubscriptionOrTrial
     ]
 
     def get_restaurant(self, request):
@@ -4707,7 +4720,7 @@ class PaymentSummaryAPIView(APIView):
 
 
 class PosDataView(APIView):
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get(self, request):
         user = request.user
@@ -5072,7 +5085,8 @@ def refund_order(request, order_id):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedUser,
+    IsManagerWithSubscription,])
 def settings_api(request):
     # 1. Check if user is superuser
     if request.user.is_superuser:
@@ -5178,8 +5192,6 @@ def subscription_detail(request):
 
     return Response(serializer.data)
 
-
-stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 @api_view(["POST"])
@@ -5323,7 +5335,7 @@ class RestaurantDashboardView(
     APIView,
 ):
     permission_classes = [
-        IsAuthenticatedUser, HasActiveSubscription
+        IsAuthenticated, HasActiveSubscriptionOrTrial
     ]
 
     def get_restaurant_for_user(self, request):
@@ -6077,8 +6089,7 @@ def orders_badge_count(request):
 
 class KitchenDisplayAPIView(APIView):
     permission_classes = [
-        IsAuthenticatedUser,
-        CanAccessKitchen, HasActiveSubscription
+       CanAccessKitchenWithSubscription
     ]
 
     def get(self, request, *args, **kwargs):
@@ -6135,8 +6146,7 @@ class KitchenDisplayAPIView(APIView):
 
 class KitchenQueueCountAPIView(APIView):
     permission_classes = [
-        IsAuthenticatedUser,
-        CanAccessKitchen, HasActiveSubscription
+        CanAccessKitchenWithSubscription
     ]
 
     def get(self, request, *args, **kwargs):
@@ -6302,7 +6312,8 @@ def ensure_can_manage_staff(request):
 
 
 @api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedUser,
+    IsManagerWithSubscription,])
 def staff_list_create_api(request):
     restaurant = get_request_restaurant(request)
 
@@ -6338,7 +6349,7 @@ def staff_list_create_api(request):
 
 
 @api_view(["GET", "PATCH", "DELETE"])
-@permission_classes([IsAuthenticated, HasActiveSubscription])
+@permission_classes([IsAuthenticated, HasActiveSubscriptionOrTrial])
 def staff_detail_api(request, pk):
     restaurant = get_request_restaurant(request)
 
@@ -6561,7 +6572,7 @@ def remove_item(request, order_id, item_id):
 
 class ModifierOptionViewSet(ModelViewSet):
     serializer_class = ModifierOptionSerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         return ModifierOption.objects.filter(
@@ -6783,7 +6794,7 @@ def _build_subscription_response(subscription):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, HasActiveSubscription])
 def dashboard_api(request):
     """
     Returns dashboard data for the authenticated user's restaurant.
@@ -7100,7 +7111,7 @@ def submit_subscription_request_api(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated, HasActiveSubscription])
+@permission_classes([IsAuthenticated, HasActiveSubscriptionOrTrial])
 def reports_summary(request):
     from .models import Order, OrderItem, Table
 
@@ -7234,7 +7245,7 @@ def reports_summary(request):
 class PrinterViewSet(viewsets.ModelViewSet):
     queryset = Printer.objects.all()
     serializer_class = PrinterSerializer
-    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         queryset = Printer.objects.all()
@@ -7257,7 +7268,7 @@ class PrinterViewSet(viewsets.ModelViewSet):
 class PrintJobViewSet(viewsets.ModelViewSet):
     queryset = PrintJob.objects.select_related("order", "printer").all()
     serializer_class = PrintJobSerializer
-    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         queryset = PrintJob.objects.select_related("order", "printer").all()
@@ -7292,7 +7303,7 @@ class PrintJobViewSet(viewsets.ModelViewSet):
 # ===================================================================
 class CustomerViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasActiveSubscription]
 
     def get_queryset(self):
         # Now 'restaurant' is a valid keyword!
@@ -7325,7 +7336,7 @@ class InventoryViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = InventoryItemSerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         restaurant = getattr(self.request.user, "restaurant", None)
@@ -7374,7 +7385,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = DiscountSerializer
-    permission_classes = [IsAuthenticated, HasActiveSubscription]
+    permission_classes = [IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get_queryset(self):
         restaurant = getattr(self.request.user, "restaurant", None)
@@ -7408,7 +7419,7 @@ class DiscountViewSet(viewsets.ModelViewSet):
 
 
 class WebhookConfigAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated, HasActiveSubscription]
+    permission_classes = [permissions.IsAuthenticated, HasActiveSubscriptionOrTrial]
 
     def get(self, request):
         # Ensure restaurant exists for the user
@@ -7443,7 +7454,7 @@ class WebhookConfigAPIView(APIView):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated, HasActiveSubscription])
+@permission_classes([IsAuthenticated, HasActiveSubscriptionOrTrial])
 def regenerate_api_key(request):
     """
     Endpoint: /api/v1/developer/regenerate-key/
@@ -7530,9 +7541,13 @@ class SessionViewSet(viewsets.ModelViewSet):
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
+    
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
-
+    permission_classes = [
+        IsAuthenticatedUser,
+        CanAccessPOSWithSubscription,
+    ]
     @action(detail=False, methods=["get"])
     def summary(self, request):
         """Logic for your existing PaymentsPage"""

@@ -43,6 +43,7 @@ import HelpPage from "./pages/HelpPage";
 import TutorialsPage from "./pages/TutorialsPage";
 import PrivacyPage from "./pages/PrivacyPage";
 import TermsPage from "./pages/TermsPage";
+// import SubscriptionGuard from "./guards/SubscriptionGuard";
 
 function ProtectedRoute({ children }) {
   const { accessToken, authLoading } = useAuth();
@@ -95,223 +96,27 @@ function App() {
           element={<SubscriptionPage />}
         />
 
-        {/* Protected routes: require login AND active subscription */}
+        {/* Login required + subscription required */}
         <Route
+          path="/dashboard/*"
           element={
             <ProtectedRoute>
-              <SubscriptionGuard />
+              <SubscriptionGuard>
+                <DashboardLayout />
+              </SubscriptionGuard>
             </ProtectedRoute>
-          }>
-          <Route
-            path="/dashboard"
-            element={<DashboardLayout />}>
-            <Route
-              index
-              element={<Dashboard />}
-            />
-            <Route
-              path="orders"
-              element={<Orders />}
-            />
-            <Route
-              path="products"
-              element={<MenuManagement />}
-            />
-            <Route
-              path="kitchen"
-              element={<KitchenDashboard />}
-            />
-            <Route
-              path="pos"
-              element={<POS />}
-            />
-            <Route
-              path="inventory"
-              element={<InventoryPage />}
-            />
-            <Route
-              path="customers"
-              element={<CustomersPage />}
-            />
-            <Route
-              path="staff"
-              element={<StaffPage />}
-            />
-            <Route
-              path="tables"
-              element={<TablesManagement />}
-            />
-            <Route
-              path="floor-plan"
-              element={<FloorPlan />}
-            />
-            <Route
-              path="payments"
-              element={<PaymentsPage />}
-            />
-            <Route
-              path="billing"
-              element={<BillingPage />}
-            />
-            <Route
-              path="reports"
-              element={<Reports />}
-            />
-            <Route
-              path="activity"
-              element={<ActivityPage />}
-            />
-            <Route
-              path="settings"
-              element={<SettingsPage />}
-            />
-            <Route
-              path="profile"
-              element={<ProfilePage />}
-            />
-            <Route
-              path="discounts"
-              element={<DiscountsPage />}
-            />
-            <Route
-              path="categories"
-              element={<Categories />}
-            />
-            <Route
-              path="modifier-groups"
-              element={<ModifierGroupsPage />}
-            />
-            <Route
-              path="developers"
-              element={<DevelopersPage />}
-            />
-            <Route
-              path="files"
-              element={<FilesPage />}
-            />
-            <Route
-              path="help"
-              element={<HelpPage />}
-            />
-            <Route
-              path="tutorials"
-              element={<TutorialsPage />}
-            />
-            <Route
-              path="privacy"
-              element={<PrivacyPage />}
-            />
-            <Route
-              path="terms"
-              element={<TermsPage />}
-            />
-          </Route>
-
-          <Route
-            path="/manager"
-            element={<DashboardLayout />}>
-            <Route
-              index
-              element={<Dashboard />}
-            />
-            <Route
-              path="orders"
-              element={<Orders />}
-            />
-            <Route
-              path="products"
-              element={<MenuManagement />}
-            />
-            <Route
-              path="kitchen"
-              element={<KitchenDashboard />}
-            />
-            <Route
-              path="pos"
-              element={<POS />}
-            />
-            <Route
-              path="inventory"
-              element={<InventoryPage />}
-            />
-            <Route
-              path="customers"
-              element={<CustomersPage />}
-            />
-            <Route
-              path="staff"
-              element={<StaffPage />}
-            />
-            <Route
-              path="tables"
-              element={<TablesManagement />}
-            />
-            <Route
-              path="floor-plan"
-              element={<FloorPlan />}
-            />
-            <Route
-              path="payments"
-              element={<PaymentsPage />}
-            />
-            <Route
-              path="billing"
-              element={<BillingPage />}
-            />
-            <Route
-              path="reports"
-              element={<Reports />}
-            />
-            <Route
-              path="activity"
-              element={<ActivityPage />}
-            />
-            <Route
-              path="settings"
-              element={<SettingsPage />}
-            />
-            <Route
-              path="profile"
-              element={<ProfilePage />}
-            />
-            <Route
-              path="discounts"
-              element={<DiscountsPage />}
-            />
-            <Route
-              path="categories"
-              element={<Categories />}
-            />
-            <Route
-              path="modifier-groups"
-              element={<ModifierGroupsPage />}
-            />
-            <Route
-              path="developers"
-              element={<DevelopersPage />}
-            />
-            <Route
-              path="files"
-              element={<FilesPage />}
-            />
-            <Route
-              path="help"
-              element={<HelpPage />}
-            />
-            <Route
-              path="tutorials"
-              element={<TutorialsPage />}
-            />
-            <Route
-              path="privacy"
-              element={<PrivacyPage />}
-            />
-            <Route
-              path="terms"
-              element={<TermsPage />}
-            />
-          </Route>
-        </Route>
+          }
+        />
+        <Route
+          path="/manager/*"
+          element={
+            <ProtectedRoute>
+              <SubscriptionGuard>
+                <DashboardLayout />
+              </SubscriptionGuard>
+            </ProtectedRoute>
+          }
+        />
 
         {/* Fallback */}
         <Route
